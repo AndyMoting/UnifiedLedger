@@ -8,20 +8,21 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-PHASES = ("prepare", "chain", "reopen", "replay", "final-reopen")
-# D-217 round 21 (closure review): `traversal` immediately follows `reopen` —
-# the walk is a sibling stage registered only after the reopen stage fully
-# completes (a traversal nested inside reopen starts after reopen started and
-# can never satisfy the strictly increasing startedMs rule validated below).
+PHASES = ("prepare", "chain", "reopen", "replay", "final-reopen", "traversal")
+# D-353 (runs 21/23/24): the traversal walk has its own LAST phase. It used to run inside the reopen
+# phase, between the write-path re-verifications, so a walk failure made `same_request_replay` and
+# `final_reopen` unexecutable — three runs in a row. The walk is the least load-bearing phase (the
+# core acceptance plan RL-01..06 carries no scale UI-traversal requirement, D-349) and it writes
+# nothing (the phase's own tail re-reads the oracle), so it goes last.
 # D-337 (2026-11-16): `batch_confirmation` leads `group_disposition`. The batch authorize is the
 # ONLY stage that books a transaction, and the group leg disposes the whole duplicate group; run
 # 43783363684 proved the order is load-bearing — with the batch leg skipped the ledger never got
 # its transaction, the next stage found an empty book (no month selector to await) and burned its
 # whole 180s budget, and every phase after it stayed NOT_RUN. The startedMs rule below reads this
-# declaration order, so the tuple mirrors the rig's chain order.
+# declaration order, so the tuple mirrors the rig's execution order (D-353: `traversal` last).
 STAGES = ("preparation", "coldstart", "saf_import", "detail_decision",
           "batch_confirmation", "group_disposition", "detail_monthly_refresh", "reopen",
-          "traversal", "same_request_replay", "final_reopen")
+          "same_request_replay", "final_reopen", "traversal")
 EXPECTED = {"preparedCandidates": 51000, "preparedRelations": 100000, "preparedDispositions": 100,
             "finalCandidates": 61000, "finalRelations": 150000,
             "mainGroupRelations": 50000, "groupDispositions": 50000,
@@ -236,7 +237,7 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     if report.get("mode") != "maximum":
         raise ValueError("maximum evidence mode required")
     # D-216 authority boundary: a local diagnostic run (opt-in runner flag) is
-    # never acceptance evidence, even when it targeted the five-phase maximum
+    # never acceptance evidence, even when it targeted the six-phase maximum
     # mode. The runner stamps `authority: local-diagnostic` on that channel and
     # nothing ever stamps `cloud`, so a cloud report simply omits the key: any
     # present value — including a hand-rewritten `cloud` — is refused.
@@ -273,10 +274,11 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # stays bounded by `traversal`'s own entry. The 18000s host phase budget remains the outer bound.
     # D-342/D-345 raised `reopen` to 9000000ms while the production read path was quadratic and a
     # reopen cost 5000-9000s. D-350 tightens it back after D-348 fixed that path: run 44111466778
-    # reopened in 166s, so 1800000ms keeps ~11x headroom. `traversal` follows it down from 14400000ms
-    # to 2400000ms, because D-349 replaced the exhaustive walk with the bounded prefix (~14 min of
-    # work, so ~2.8x headroom). The workflow's outer deadline, the step/job timeouts and the driver's
-    # mode limit are upper bounds and stay as they are.
+    # reopened in 166s, so 1800000ms keeps ~11x headroom. D-353 then moved the walk out of that phase
+    # into its own last one, so `traversal` is the only stage the walk's phase carries and it keeps
+    # D-350's 2400000ms; D-352's load-then-walk adds the 11 page loads and the return to the top
+    # around the same 600-row pass. The workflow's outer deadline, the step/job timeouts and the
+    # driver's mode limit are upper bounds and stay as they are.
     limits = {"preparation": 14400000, "saf_import": 1800000, "group_disposition": 5400000,
               "reopen": 1800000, "traversal": 2400000,
               # D-338: the detail stage now carries both batch submits (the decision-incomplete
@@ -300,12 +302,14 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
     # in the app-stopped phases. The traversal no longer aligns against the
     # spec order in-chain (the list renders class groups in query order), so
     # the scope label reflects the collect-then-align design.
-    # D-349: the walk covers a bounded contiguous prefix and proves it at every page seam, so the
+    # D-349: the walk covers a bounded contiguous prefix and proves it as an exact multiset, so the
     # evidence states that shape instead of claiming a whole-list walk: pages covered, rows that is,
     # clicks it took, and the pages of the list left untouched. `firstLastObserved` was the
-    # whole-list claim and is gone with it. D-351 adds the window basis the seam equality was
-    # measured against: pages load by candidate id, so the covered window is the candidate-id prefix
-    # and not the whole population's class-major order.
+    # whole-list claim and is gone with it. D-351 adds the window basis the equality was measured
+    # against: pages load by candidate id, so the covered window is the candidate-id prefix and not
+    # the whole population's class-major order. D-352 loads every page before the walk and proves the
+    # window once at the end, so `traversalPages` is the pages loaded and `traversalPageClicks` the
+    # clicks those loads took — the same 12 and 11 this block pins.
     prefix_rows = TRAVERSAL_PREFIX_PAGES * TRAVERSAL_PAGE_ROWS
     if (device.get("traversalScope") != "bounded-contiguous-prefix"
             or device.get("traversalWindowOrder") != "candidate-id-prefix"
@@ -328,7 +332,10 @@ def validate_evidence(directory: Path, expected_sha: str) -> dict:
         instrumentation_pass((directory / f"instrumentation-{phase}.txt").read_text(encoding="utf-8"))
     root = ET.parse(directory / "junit.xml").getroot()
     cases = root.findall("testcase")
-    if (root.get("tests"), root.get("failures"), root.get("errors"), root.get("skipped")) != ("5", "0", "0", "0"):
+    # D-353: the aggregate is derived from PHASES — the runner writes one case per phase — so a
+    # phase-matrix change cannot leave a frozen "5" behind to reject every honest run.
+    aggregate = (root.get("tests"), root.get("failures"), root.get("errors"), root.get("skipped"))
+    if aggregate != (str(len(PHASES)), "0", "0", "0"):
         raise ValueError("JUnit aggregate not clean")
     if [case.get("name") for case in cases] != list(PHASES) or any(len(case) for case in cases) or any(case.get("classname") != TEST_CLASS for case in cases):
         raise ValueError("JUnit cases missing/failed/skipped")

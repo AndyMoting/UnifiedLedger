@@ -46,8 +46,8 @@ private const val FIRST_PAGE_JUMP_INDEX = 0
 /**
  * D-349: how many pages of the review list the maximum-scale traversal covers before it stops —
  * 12 pages of [IMPORT_REVIEW_PAGE_ROWS] rows = 600 rows, 11 「加载更多导入候选」 clicks. The list
- * holds `spec.finalCandidates` (61,000) rows, so the walk is a contiguous PREFIX by construction,
- * and every page seam is proven against the oracle's own prefix inside `collectTraversal`.
+ * holds `spec.finalCandidates` (61,000) rows, so the walk is a contiguous PREFIX by construction;
+ * D-352 loads all 12 pages first and proves that prefix's exact multiset once, at the end of the walk.
  */
 private const val TRAVERSAL_PREFIX_PAGES = 12
 
@@ -74,7 +74,7 @@ private const val GROUP_ENUM_TRACE_TAG = "ULStartup"
  */
 private fun groupCardDisclosureText(relations: Int): String = "将逐条提交人工审核判定为重复，每条独立生效；某一条失败不影响其余各条。共 $relations 条。"
 
-/** Five host-separated phases; the continuous UI chain has no process restart or DB reset. */
+/** Six host-separated phases (D-353 moved the walk to its own last phase); no process restart or DB reset inside a phase. */
 @RunWith(AndroidJUnit4::class)
 class AndroidScaleLongInstrumentedTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -133,24 +133,19 @@ class AndroidScaleLongInstrumentedTest {
             when (phase) {
                 "prepare" -> stage("preparation", 14400000) { prepare() }
                 "chain" -> chain()
-                // D-217 round 21 (closure review): the reopen phase registers
-                // two SIBLING stages — the quiescent reopen stage and, after
-                // it fully completes, the traversal walk stage. The walk used
-                // to be nested INSIDE the reopen stage's action, which broke
-                // result.py two ways: its STAGES order requires strictly
-                // increasing startedMs across stages, so a traversal that
-                // starts after reopen started can never validate (reopen is
-                // validated after the walk in the tuple), and reopen's
-                // elapsedMs swallowed the up-to-4h walk under a 180s default
-                // cap that result.py's limits has no reopen entry for. The
-                // dispatch also keeps both stages exactly-once: reopenPhase()
-                // runs only for phase "reopen", and final-reopen re-enters
-                // the shared assertions through finalReopen(), which
-                // registers only "final_reopen" — the "stage must not be
-                // retried" guard can never fire.
+                // D-353 (runs 21/23/24): the write-path phases run first and the UI walk has its own
+                // LAST phase. While the walk lived inside the reopen phase, every walk failure made
+                // same_request_replay and final_reopen unexecutable — the two phases that had never
+                // run once in three consecutive runs. The walk is the least load-bearing of the six
+                // (the core acceptance plan RL-01..06 carries no scale UI-traversal requirement,
+                // D-349) and it writes nothing (reopenTail asserts it), so the write-path phases must
+                // not be hostage to it. Each phase registers only its own stages, so the "stage must
+                // not be retried" guard below still never fires: reopenPhase() registers "reopen",
+                // traversalPhase() registers "traversal", finalReopen() registers "final_reopen".
                 "reopen" -> reopenPhase()
                 "replay" -> stage("same_request_replay") { replay() }
                 "final-reopen" -> stage("final_reopen") { finalReopen() }
+                "traversal" -> traversalPhase()
                 else -> error("unknown scale phase")
             }
         } finally {
@@ -1375,14 +1370,11 @@ class AndroidScaleLongInstrumentedTest {
     }
 
     /**
-     * D-217 round 21 (closure review): the reopen phase's two sibling
-     * stages. The traversal walk used to be registered as a stage NESTED
-     * inside the reopen stage's action — see the `when` dispatch comment in
-     * [maximumScalePhase] for why that could never validate — so it now
-     * registers only after the reopen stage has fully completed (PASS
-     * status and elapsedMs written, phase deadline restored). The explicit
-     * `if (phase == "reopen")` gate keeps the walk exactly-once even if a
-     * future caller re-enters this function from another phase.
+     * D-353: the reopen phase registers ONLY the quiescent reopen stage. The walk was a sibling stage
+     * here (D-217 round 21, so that the strictly increasing `startedMs` rule could validate), and
+     * because it sat between this phase and the two write-path phases that follow it, a walk failure
+     * made `same_request_replay` and `final_reopen` unexecutable. It now has its own last phase
+     * ([traversalPhase]).
      */
     private fun reopenPhase() {
         // D-342 (run 43891956497, 2026-11-17): the reopen stage ran 1801.9s and was cut by its
@@ -1391,60 +1383,81 @@ class AndroidScaleLongInstrumentedTest {
         // D-345 (run 43955867697, 2026-11-17): 5400000ms was still an edge, not a ceiling, so the
         // bound moved to 9000000ms on a box that was measurably ~25% slower.
         // D-350 (run 44111466778, 2026-11-18): both raises were buying time for a quadratic read
-        // path that D-348 then fixed with one index — that same reopen took 166s, and the traversal
-        // that follows is the D-349 bounded prefix (~14 min), so both bounds come back down:
-        // reopen 9000000→1800000ms (~11x headroom) and traversal 14400000→2400000ms (~2.8x). The
-        // workflow's outer envelope, the step/job timeouts and the driver's mode limit are upper
+        // path that D-348 then fixed with one index — that same reopen took 166s. D-353 keeps the
+        // bound where D-350 put it and gives the walk its own phase, so this stage carries the
+        // quiescent read alone: reopen 9000000→1800000ms (~11x headroom).
+        // The workflow's outer envelope, the step/job timeouts and the driver's mode limit are upper
         // bounds and stay as they are.
-        val snapshot = stage("reopen", 1800000) { reopen() }
-        if (phase == "reopen") {
-            stage("traversal", 2400000) {
-                traversalWalk(snapshot)
-                // D-344: how many of the walk's scrolls the accessibility scroll action served
-                // because gesture injection was refused. A fallback-served walk is still a walk,
-                // but the reading says so — injected gestures and accessibility actions are not
-                // the same evidence.
-                evidence.put("traversalScrollFallbacks", ui.scrollActionFallbacks)
-                reopenTail(snapshot)
-            }
+        stage("reopen", 1800000) { reopen() }
+    }
+
+    /**
+     * D-353: the traversal walk's own phase, last of the six. The host force-stopped the app before
+     * this phase, so [reopen]'s oracle reads run with no live writer — the same quiescent point the
+     * reopen phase used, reused rather than duplicated. [reopen] registers no stage of its own and
+     * the walk lives inside the "traversal" stage, so the "stage must not be retried" guard never
+     * fires.
+     *
+     * The stage's bound covers the three things it now carries: the quiescent read (D-350 measured
+     * 166s), the walk (D-352: 11 page loads, one return to the top, one 600-row pass over the static
+     * list) and [reopenTail]'s state-silence re-read. A walk that overruns fails here, in its own
+     * phase, with the write-path phases already recorded.
+     */
+    private fun traversalPhase() {
+        stage("traversal", 2400000) {
+            val snapshot = reopen()
+            traversalWalk(snapshot)
+            // D-344: how many of the walk's scrolls the accessibility scroll action served
+            // because gesture injection was refused. A fallback-served walk is still a walk,
+            // but the reading says so — injected gestures and accessibility actions are not
+            // the same evidence.
+            evidence.put("traversalScrollFallbacks", ui.scrollActionFallbacks)
+            reopenTail(snapshot)
         }
     }
 
     /**
      * D-217 round 12 (evidence20): the traversal walk moved out of the
-     * chain into the reopen phase. In the chain it ran BEFORE
+     * chain into the post-chain quiescent phase (D-353: now its own last
+     * phase; then the reopen phase). In the chain it ran BEFORE
      * group_disposition and batch_confirmation, so the signatures it
      * collected reflected the CHAIN-TIME state (main-session rows still
      * DEFERRED, the unique row unconfirmed), while the multiset comparison
      * below checked them against the POST-chain quiescent snapshot (those
      * same rows CONFIRMED_DUPLICATE, the unique row confirmed) — roughly 21
      * signatures drifted, so the equality was unsatisfiable BY DESIGN. The
-     * walk runs after ui.launch() (the reopen stage's tail): the relaunched
+     * walk runs after ui.launch() (the quiescent read's tail): the relaunched
      * UI displays exactly the snapshot-consistent final list, so both sides
      * of the comparison observe the SAME state.
      *
      * State-silence invariant: the relaunch plus the collect-only walk (scroll gestures and the
      * page-load clicks below, which are read triggers) must not write to the database between the
-     * snapshot (read with the app stopped) and this walk. The traversal stage's own tail
-     * ([reopenTail]) re-reads the oracle after the walk, so a stray write fails in the same phase,
-     * and final-reopen re-runs [reopen] on a fresh snapshot — if the relaunch or walk wrote
-     * anything, its assertions would fail there too. The walk is proven state-silent on every run.
+     * snapshot (read with the app stopped) and this walk. The traversal phase's own tail
+     * ([reopenTail]) re-reads the oracle after the walk, so a stray write fails in the same phase —
+     * D-353: the phase opens with its own quiescent read, so that tail compares against what this
+     * phase observed, and the walk is proven state-silent on every run. The two write-path phases run
+     * BEFORE this one (D-353) and cannot prove it for the walk; their own tails prove their own steps.
      *
      * D-349: the walk covers a bounded contiguous prefix — [TRAVERSAL_PREFIX_PAGES] pages of the
-     * review list's own page size — instead of all `spec.finalCandidates` rows, and proves it at
-     * every page seam. The exhaustive multiset comparison this replaced was the harness's own
-     * requirement (D-217 lineage), not a core-acceptance one: the review list is paged behind a
-     * click, so on 61,000 rows it needs ~21.9h and 1,220 clicks (run 44111466778 measured 1.01s
-     * per scan at 0.78 rows per scan). Exhaustive full-list equality stays where it is affordable —
-     * preflight and the b6 scale.
+     * review list's own page size — instead of all `spec.finalCandidates` rows, and proves it as an
+     * exact multiset once, at the end (D-352). The exhaustive multiset comparison this replaced was
+     * the harness's own requirement (D-217 lineage), not a core-acceptance one: the review list is
+     * paged behind a click, so on 61,000 rows it needs ~21.9h and 1,220 clicks (run 44111466778
+     * measured 1.01s per scan at 0.78 rows per scan). Exhaustive full-list equality stays where it is
+     * affordable — preflight and the b6 scale.
      *
-     * D-351: the seam expectation is the candidate-id prefix the pages load, which is
+     * D-351: the window expectation is the candidate-id prefix the pages load, which is
      * `snapshot.rows` itself — the oracle reads `ORDER BY c.candidate_id` (AndroidScaleOracle.kt),
      * the same order the product's page query serves (`candidate_id > cursor ORDER BY candidate_id
      * LIMIT 50`, cursor "" for the first page) and `AppendImportReviewPage` appends. It is NOT
      * `displayRows.take(n)`: that is the whole population's class-major order, and run 44127054663
      * failed at 50/50 because the chain confirmed one candidate of the loaded page, which moved a
      * row out of the class prefix and pulled an unloaded row in.
+     *
+     * D-352: [collectTraversal] loads every page before it reads a row, returns to the top once and
+     * walks the now-static list. Loading page two re-renders the whole loaded slice class-major, so
+     * run 44144034199's page-two load left the viewport non-adjacent to the collected tail and the
+     * walk threw "traversal window did not overlap" at the first of eleven page boundaries.
      */
     private fun traversalWalk(snapshot: ScaleSnapshot) {
         // The app relaunched to the home screen; the drawer's 导入账单 row opens
@@ -1456,7 +1469,7 @@ class AndroidScaleLongInstrumentedTest {
         ui.await { ui.has("支付宝账单（CSV）") }
         // D-351: the covered window is the oracle's own row sequence, take(n) — no re-sort, no
         // class mapping, no re-implementation of the page order. The size guard keeps the dependency
-        // visible: a partial snapshot would silently shorten every seam expectation.
+        // visible: a partial snapshot would silently shorten the window expectation.
         val pageOrderRows = snapshot.rows
         check(pageOrderRows.size == spec.finalCandidates) {
             "oracle snapshot is not the whole candidate population (rows=${pageOrderRows.size} expected=${spec.finalCandidates})"
@@ -1471,12 +1484,12 @@ class AndroidScaleLongInstrumentedTest {
             )
         state.put("observedSignatures", JSONArray(collected))
         // D-349/D-351 records the covered shape instead of claiming a whole-list walk: the page count
-        // it covered, the rows that is, the clicks it took, and how many pages of the list stay
-        // untouched (the deep-row reachability the prefix cannot cover). Each page seam is proven
-        // inside collectTraversal against the candidate-id prefix the pages load — the window basis
-        // is recorded too, so the artifact states what the equality was measured against instead of
-        // leaving it to the code. The snapshot was read with the app stopped and the walk writes
-        // nothing (invariant above), so the comparison is same-state by construction.
+        // it loaded, the rows that is, the clicks it took, and how many pages of the list stay
+        // untouched (the deep-row reachability the prefix cannot cover). The prefix's exact multiset
+        // is proven inside collectTraversal against the candidate-id prefix the pages load — the
+        // window basis is recorded too, so the artifact states what the equality was measured against
+        // instead of leaving it to the code. The snapshot was read with the app stopped and the walk
+        // writes nothing (invariant above), so the comparison is same-state by construction.
         evidence
             .put("observedCandidates", collected.size)
             .put("traversalRowsCollected", collected.size)
@@ -1489,11 +1502,14 @@ class AndroidScaleLongInstrumentedTest {
     }
 
     /**
-     * The post-launch tail shared by the reopen and final-reopen phases:
+     * The post-launch tail shared by the traversal and final-reopen phases:
      * re-reads the oracle after the traversal walk (or, in final-reopen,
      * after the relaunch alone) and fails on any stray write. D-217 round
      * 21 (closure review): the app is LIVE here — ui.launch() ran — so this
      * read's safety rests on post-chain quiescence, not on the force-stop.
+     * D-353: this is the tail of the traversal phase (which also owns the walk, so the walk's
+     * state-silence is proven here against that phase's own quiescent read) and of final-reopen
+     * (which re-reads after its own relaunch).
      */
     private fun reopenTail(snapshot: ScaleSnapshot) {
         checkEconomicUi()
@@ -1505,10 +1521,10 @@ class AndroidScaleLongInstrumentedTest {
 
     /**
      * The final-reopen phase: the shared quiescent assertions plus the tail
-     * inside the final_reopen stage, with NO traversal stage — the walk ran
-     * exactly once, in the reopen phase (D-217 round 21: this branch never
-     * touches the "reopen"/"traversal" registrations, so the "stage must
-     * not be retried" guard never fires).
+     * inside the final_reopen stage, with NO traversal stage — the walk runs
+     * exactly once, in the traversal phase, which is its own last phase (D-353:
+     * this branch never touches the "reopen"/"traversal" registrations, so the
+     * "stage must not be retried" guard never fires).
      */
     private fun finalReopen() {
         reopenTail(reopen())

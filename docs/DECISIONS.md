@@ -7702,3 +7702,57 @@ D-347 曾把「把比对搬到 host 侧」列为恢复逐行穷尽的正确做�
 **残留风险：** ①窗口依赖「覆盖范围内每个候选恰好渲染一行」——会话一的候选没有 subject 侧重复关系（重复对以较晚的一份为 subject），故前 12 页成立；若目标跨进会话二之后（每候选 1 + 伙伴数行），`50 × 页数` 的页缝模型会提前触发并以「prefix incomplete」响亮失败，而不是静默通过。②两份完整列表在 600 行时约百 KB 量级，只出现在失败轮。③`traversalSeamMismatch` 不参与通过判定（失败轮的 stage 本身已红），未加 reducer 校验。
 
 **关联决定：** D-349（本条取代其页缝期望对象，其余机制保留）、D-217（重叠合并与停住判定的来源）、D-320（被确认行是首页首个可确认行，正是本条反例的来源）、D-350（段预算，本条不动）。
+
+## D-352 traversal 改为 load-then-walk：分类组重排让「页缝之间的走查」结构性不成立
+
+**状态：** 已批准（2026-11-18；rig 第二十四跑 `44144034199` 实测 + 用户裁决；**取代 D-351 的逐页缝机制，D-351 的窗口口径与精确多重集等式保留**）
+
+**背景：** 第二十四跑（max `44144034199` @ `be83c03e0e881e6d4302afcee736e41252be7427`）：`prepare` 851.9s PASS、`chain` 869.5s PASS、`reopen` 相位 FAILED（instrumentation `Time: 193.627`，junit 记 `195.818`），`replay` / `final-reopen` 记 `NOT_RUN after earlier failure` —— 这两个相位连续第三跑零执行。失败点 = `java.lang.IllegalStateException: traversal window did not overlap`，抛在 `AndroidScaleUi.kt:1292`（D-217 滚动重叠纪律里的 `check(++retries <= 4)`），栈为 `collectTraversal` ← `traversalWalk`（`AndroidScaleLongInstrumentedTest.kt:1465`）← `reopenPhase`（`:1401`）← `maximumScalePhase`（`:151`）。
+
+**D-351 的页缝本身通过了（实测）：** `logcat.txt` 里 `collect seam` 的匹配数为 **0**（无 `collect seam mismatch` 行）；最后一次收集扫描是 `collect scan scans=64 rows=6 collected=50 growth=1 stationaryCount=1 first=1972.44 CNY|类型 ordinary_ last=1971.99 CNY|类型 ordinary_` —— 首页 50 行整页覆盖，尾部正是 chain 确认的 ordinal-0 行。此后循环执行 `loadNextPage()`，`collect scan` 行再没有出现过。
+
+**归因（代码层 + 现场）：** 装载新页会让**整个已装载切片**重排。`reduceAppendImportReviewPage` 把新页追加在已装载行之后（`P503Reducer.kt:2348` 的 `rows = view.rows + result.rows`）；`importCandidateClassGroups` 按 `IMPORT_CANDIDATE_CLASS_DISPLAY_ORDER`（`P503ImportReviewPresentation.kt:100-121`，`RESOLVED` 在末秩）过滤重排。于是首页渲染 = 49 行待确认 + 1 行 `已确认`（index 49）；装载第二页后 = 99 行待确认 + 同一行 `已确认`（index 99），而视口保持像素偏移 ⇒ 视口不再是 `collected` 尾部 `[…, 1972.48, 1971.99]` 的相邻窗口，任何 k 都不满足 `collected.tail(k) == window.head(k)`，四次后退重试全部落空。该机制在 11 道页边界上**同形复发**，所以重试预算或滚动比例的任何调整都治不了它——它不是参数问题。
+
+**裁决（D-352）：** 把 `collectTraversal` 改成 **load-then-walk**：
+1. **先装完、再走**：按 `targetRows / IMPORT_REVIEW_PAGE_ROWS - 1` 次 `loadNextPage()`（点「加载更多导入候选」+ 有界增长等待）一次装完 12 页，装载之间不读任何一行。`traversalPages`（= 12）与 `traversalPageClicks`（= 11）**不改名、不改值**，语义变为「装载的页数 / 装载发出的点击数」，`result.py` 的两条等式原样成立。
+2. `seekBackToTop()` 回到顶部**一次**（装载把视口留在 600 行底部，故该调用带一个与前缀行数相称的步数上界；helper 的默认 40 步形状不变），随后在**静态列表**上用既有几何走一遍，收集 `targetRows` 行。
+3. 走满后 `verifyTraversalWindow(collected, expectedWindow, targetRows, onSeamMismatch)` **无条件执行一次**。旧的后循环页缝条件（`collected.size == targetRows && traversalPages * IMPORT_REVIEW_PAGE_ROWS < targetRows`）在新形态下**恒假**（页已装完，`traversalPages` 已等于 `targetRows / 50`），该分支显式删除，代码注释写明它为什么是死分支而不是留着。
+4. 删除循环顶部的页边界分支与递增的 `pageRows`；目标从第一步起就是 `targetRows`。
+5. **每次装载打一行 logcat**：`collect page load pages=… click=… attempt=… revealSteps=… itemCount=before..after grew=… waitedMs=…`，把露出尝试次数与增长等待写成证据，让卡住的 affordance 从 logcat 就能判读，而不必再花一跑。
+6. **不动**：0.12 走查步长、唯一连续重叠合并、停住判定、安全上限 `targetRows*4 + 200`、点击与等待的有界纪律、四类分开报告的失败、`traversalSeamMismatch` 载荷形状（两份完整列表 + 两个方向的多重集差 + 走查顺序列表）、`traversalWindowOrder = "candidate-id-prefix"`、`stage("traversal", 2400000)` 与 `result.py` 的 `limits["traversal"]`。
+
+**写手实施偏差登记（两处，均为几何所迫，已写进常量注释）：** ①`PAGE_REVEAL_SCROLLS` 8 → **24**，露出步长 0.12 → **0.6**：D-349 的露出是「走查停在页底、affordance 就在下一行」，8 步足够；load-then-walk 的露出从切片顶部做起，要跨最多一整页（约 35-50 步 × 0.12），8 步必然失败。露出不读任何行，且 affordance 是列表**最后一项**，过冲只会被列表自身的末端截住（最后一项因此可见），所以用 `seek` 早已在用的 0.6 步长是安全的。②`seekBackToTop` 增一个可选 `maxSteps`（默认 40 不变），`collectTraversal` 的回顶调用按 `targetRows / 3 * 2` 给上界（0.25 手势 ≈ 3 行是既有读数）。两处都只改「走到已知目标的有界预算」，不碰走查本身的任何几何。
+
+**判据强度不变（明写）：** 仍是同一个 600 行窗口、仍是**精确多重集等式**（两个方向都查），只是从「12 道页缝各查一次」变成「末尾查一次」；载荷仍带两份完整列表与走查顺序列表，定位仍能从产物恢复。D-352 不改 D-351 的窗口对象（候选 id 前缀），也不改 D-349 的前缀口径。
+
+**相位内代价（算术推算，非实测）：** 走查本体约 13 min（第二十四跑 50 行 / 64 扫、每扫 ~1.0s）；11 次露出按 0.6 步长约 7 步/页、每步 ~1.5s ⇒ 约 2 min；回顶 600 行按 0.25 手势约 200 步 ⇒ 约 4-5 min；相位内还含一次静止 oracle 读（D-350 实测 166s）。合计约 21-23 min，仍在 `stage("traversal", 2400000)` 的 40 min 内（约 1.7-1.9 倍余量）。
+
+**实证边界：** 机制结论由第二十四跑产物（`logcat.txt` 的 seam 计数 0、最后一条 `collect scan`、`instrumentation-reopen.txt` 的栈帧）与产品代码直接读出；**新形态一次都没在真机跑过**，上面的时间账是算出来的。
+
+**边界：** 入 = `AndroidScaleUi.collectTraversal`/`verifyTraversalWindow`/`loadNextPage`/`revealLoadMoreAffordance`/`seekBackToTop` 与其常量、`AndroidScaleLongInstrumentedTest.traversalWalk` 的注释与证据键说明、`ImportReviewPagingInstrumentedTest` 的两处注释（断言一字不动）、`result.py` 的 traversal 注释块、本条。出 = 不改产品代码（分类组重排是产品现行行为，本条只适配它）、不改 0.12 走查步长/重叠合并/停住判定/安全上限、不改 `traversalPages`/`traversalPageClicks` 的名字与取值、不改任何段预算或 workflow、不改 `traversalWindowOrder`、不回改 D-349/D-351 的历史记录。
+
+**残留风险：** ①露出改 0.6 步长是**判断**：它依赖「affordance 恒为列表最后一项」（已读代码确认渲染末尾是 LoadMore 项）；若将来列表尾部出现别的项，过冲可能越过 affordance。②`traversalPageClicks` 仍被 reducer 钉成恰好 11：一次 `PAGE_LOAD_ATTEMPTS` 重试就会把它变成 12 而整轮证据被拒——这是 D-349 既有行为，本条未改也未掩盖。③回顶 600 行是按「0.25 手势 ≈ 3 行」**推算**的；若实测每手势只走 1 行，2400s 段预算只剩约 1.2 倍余量，届时按实测数字再调预算，而不是先抬数字。④`ImportReviewPagingFixtureSupport.kt:31-33` 仍写「在每个页边界点击下一页」，属本批可写清单外的同形陈旧表述，登记为残余。
+
+**关联决定：** D-349（前缀口径与「加载更多」点击，本条沿用）、D-350（段预算，本条不动）、D-351（本条取代其逐页缝机制；窗口口径与精确多重集等式保留）、D-217（重叠合并与停住判定）、D-353（同批：把走查移出 reopen 相位）。
+
+## D-353 traversal 拆成独立末相位：UI 走查失败不得再让两个写路径相位不可执行
+
+**状态：** 已批准（2026-11-18；runs `44111466778` / `44127054663` / `44144034199` 三连跑实测 + 用户裁决）
+
+**背景：** 五个相位长期是 `prepare, chain, reopen, replay, final-reopen`（`tools/python/android_scale/result.py:11` 的 `PHASES`；`tools/python/android_scale/runner.py` 的 `PHASE_BUDGETS`），而走查阶段跑在 `reopen` 相位**内部**（`AndroidScaleLongInstrumentedTest.reopenPhase` 的 `stage("traversal", 2400000)`）。它夹在 `reopen` 与 `replay` 之间，于是任何走查失败都让 `same_request_replay` 与 `final_reopen` 不可执行：第二十一跑（`44111466778`）、第二十三跑（`44127054663`）、第二十四跑（`44144034199`）三连跑里，这两个相位一次都没执行过（`junit.xml` 记 `NOT_RUN after earlier failure`）。
+
+**裁决：**
+1. 相位表改为 `prepare, chain, reopen, replay, final-reopen, traversal`：`PHASES` 增加 `"traversal"` 并置于末位；`PHASE_BUDGETS` 增加 `"traversal": 3000`。3000s 的依据是它必须**大于**测试侧 `stage("traversal", 2400000)` 的上界，多出的 600s 覆盖 instrumentation 启动与相位自身的证据落盘——与既有「相上界 > 段上界」的形状一致；它不是第二个走查预算，也不改任何段字面量。
+2. 测试侧 `when (phase)` 加 `"traversal" -> traversalPhase()`；`reopenPhase` 只留 `stage("reopen", 1800000) { reopen() }`。
+3. `traversalPhase()` 自己取一次静止点：宿主在本相位前已 force-stop，故直接**复用** `reopen()`（不复制它的断言）读快照并 `ui.launch()`，随后 `traversalWalk(snapshot)`，再跑既有的 `reopenTail(snapshot)` 做状态沉默复验。`reopen()` 是普通函数、不注册 stage，本相位只注册 `"traversal"`，因此「stage must not be retried」守卫仍不会触发。
+4. `STAGES` 顺序随之改为 `…, reopen, same_request_replay, final_reopen, traversal`：校验器按声明序检查 `startedMs` 单调，顺序不改则每条诚实时间线都会被拒。
+5. **手写死字面量一并归零**：`result.py` 的 junit 聚合断言由 `"5"` 改为按 `str(len(PHASES))` 派生（driver 每相位写一条用例，聚合数本应派生）；`tests/python/test_android_scale_result.py` 的 `tests="5"`、`"6"`、`"4"` 同样改为按 `PHASES` 派生；`test_prepare_chain_share_global_budget_and_short_phases_have_caps` 的 `PHASES[3:]` 改为显式相位名并新增 `traversal == 3000 > 2400` 的绑定断言；`test_traversal_is_a_sibling_stage_immediately_after_reopen` 改为 `test_traversal_is_the_last_stage_after_final_reopen`（含 `PHASES` 与 `STAGES` 结构断言），round-21 时间线用例改为「写路径两相位在前、走查在末」。
+6. **顺序理由**：走查是六个相位里**最不承重**的一个——核心验收计划 RL-01..06 本就不含规模 UI 遍历（D-349 已登记），且它**不写状态**（`reopenTail` 的 `reopened == snapshot` 断言证明）；而 `same_request_replay`（幂等 replay，写路径验收）与 `final_reopen`（在全新快照上重跑全套账务断言）属写路径，不能成为 UI 走查的人质。「长期挂着不收口」的直接修补。
+
+**已知代价（判读）：** 各相位上界之和（reopen 18000 + replay 480 + final-reopen 480 + traversal 3000）大于 driver 自身的 19800s 全局预算，因此靠后的相位仍可能被全局截止时间切掉；`reopen` 的 18000s 封套在本条之后只包住它自己一个 1800s 段，本条按「不抬不砍既有上界」保持原值——若下一跑出现 reopen 吃掉全局预算把后续相位饿死，那是下一次收紧的对象。
+
+**边界：** 入 = `result.py` 的 `PHASES`/`STAGES`/`limits` 注释/junit 聚合断言、`runner.py` 的 `PHASE_BUDGETS` 与注释、`tests/python/test_android_scale_result.py` 的相位夹具/结构断言/预算断言/junit 派生断言、`AndroidScaleLongInstrumentedTest` 的 `when` 分派/`reopenPhase`/新增 `traversalPhase`/相关 KDoc、本条。出 = 不改任何段字面量（reopen 1800000、traversal 2400000 原值）、不改 `mode_limit`/外层 deadline/step 与 job 超时、不改 workflow（`android-scale.yml` 只调 driver 入口，不枚举相位）、不改产品代码、不改 `tools/ci/android-scale-run.py` 与 `tools/ci/android-scale-validate.py`（两者不含相位字面量，已核）。
+
+**残留风险：** ①`docs/CONTRIBUTING.md:184` 仍写「`reopen`、`replay`、`final-reopen` 各最多 480 秒」与「全局预算 13,800 秒」——两处在本条前后**都已是陈旧值**（`PHASE_BUDGETS` 早就是 reopen 18000、driver 早就是 19800），该文件不在本批可写清单内，登记为本批外残余。②`docs/specs/2026-11-13-maxrig-firstpage-target-design.md:123` 的 V-3 判据冻结了五相位 `phases` 与 `STAGES` 集合，属历史设计快照（与 D-348/D-350 同处置，不回改）。③新形态首次执行：`traversal` 相位是否在 3000s 内完成、`same_request_replay`/`final_reopen` 是否首次 PASS，都要等 run 25 的读数。
+
+**关联决定：** D-349（走查是 harness 自加要求，故可退到末位）、D-350（段预算，本条不抬不砍）、D-351（页缝窗口口径）、D-352（同批：load-then-walk，本条的相位内代价按它的新形状算）、D-217（round 21 曾把走查做成 reopen 相内的兄弟 stage，本条再向前一步把它移出该相）。

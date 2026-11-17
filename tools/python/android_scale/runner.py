@@ -99,11 +99,14 @@ ACTIVITY_RESUMED = re.compile(r"(?m)^\s*(?:ResumedActivity|mResumedActivity)\s*[
 COMPONENT = re.compile(r"([A-Za-z0-9_.]+)/[.A-Za-z0-9_$]+")
 
 # Preparation and chain deliberately share the remaining global budget.
-# Only the three short reopen/replay phases have independent host limits.
-# D-217 round 12: the traversal walk moved into reopen(), so that phase hosts
-# both stages. Its 18000s is a phase envelope above their own stage bounds
-# (D-350: reopen 1800s + traversal 2400s), so it stays as it is.
-PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 18000, "replay": 480, "final-reopen": 480}
+# The other phases each carry an independent host limit.
+# D-350/D-353: `reopen` keeps the 18000s envelope it carried while it hosted both stages (an upper
+# bound, not a reservation); replay/final-reopen stay short. D-353 gives the walk its own last phase,
+# whose 3000s is an envelope above the test-side `stage("traversal", 2400000)` bound — the extra
+# 600s covers instrumentation start and the phase's own evidence save, the same shape as the other
+# envelopes — and not a second walk budget.
+PHASE_BUDGETS = {"prepare": None, "chain": None, "reopen": 18000, "replay": 480,
+                 "final-reopen": 480, "traversal": 3000}
 DIAGNOSTIC_SECONDS = 120
 CLEANUP_RESERVE_SECONDS = 30
 
