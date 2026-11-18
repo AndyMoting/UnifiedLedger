@@ -893,7 +893,7 @@ class LedgerLeaseScope(
                 manualRefundCandidateRead = facade.readManualRefundCandidates != null,
                 manualRefundSubmit = facade.submitEntry?.hasRefundDelegate == true,
                 manualRefundRecovery = facade.resolveManualRefundCommitStatus != null,
-                // P8-06 batch b (taskbook item 1; D-343 section 3.2.2): the account-postings read
+                // P8-06 batch b (D-343 section 3.2.2): the account-postings read
                 // surface. A pure null check of the session-only query, never an invocation, so the
                 // asset row renders the account-flow entry only when that capability exists.
                 p806AccountPostings = facade.p806AccountPostingsQuery != null,
@@ -933,7 +933,7 @@ class LedgerLeaseScope(
     fun isCurrentGeneration(generation: Generation?): Boolean = !shouldDiscardLandingResult(generation, owner.activeGeneration)
 
     /**
-     * P8-06 batch b (taskbook item 2): the active graph's session catalog version, read on the
+     * P8-06 batch b (D-343 section 3.7): the active graph's session catalog version, read on the
      * landing hop for COMPARISON only — never used to stamp a payload or to fill a missing capture.
      * The current graph only (no last-facade fallback): a not-Ready runtime answers `null`, which
      * the account landing decision treats as a mismatch.
@@ -964,7 +964,7 @@ class LedgerLeaseScope(
     fun <T> probe(block: (P503LedgerFacade) -> T): T? = withFacade { facade, _ -> block(facade) }
 
     /**
-     * P8-06 batch b (taskbook item 2): the acquire-first lease order for the account reads.
+     * P8-06 batch b (D-343 section 3.7): the acquire-first lease order for the account reads.
      *
      * [leased]/[withFacade] resolve the facade BEFORE acquiring; a graph swap in that window could
      * pair the old facade with the new generation. This path acquires first and resolves the
@@ -1083,7 +1083,7 @@ data class LedgerSurfaces(
     // A pure field probe, never an invocation, so the drawer renders the 导出账目 row only when
     // the surface exists (the same "no dead affordance" convention as [backupExport]).
     val readableExport: Boolean = false,
-    // P8-06 batch b (taskbook item 1; D-343 section 3.2.2): the composition root's catalog session
+    // P8-06 batch b (D-343 section 3.2.2): the composition root's catalog session
     // built the account-postings read. A pure field probe, never an invocation, so the asset row
     // renders the account-flow entry only when the surface can actually be read.
     val p806AccountPostings: Boolean = false,

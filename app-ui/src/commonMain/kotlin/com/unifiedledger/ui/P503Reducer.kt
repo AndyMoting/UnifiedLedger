@@ -1779,12 +1779,35 @@ class P503ReducerImpl(
                     // or without a cursor) must be retryable, and a never-loaded surface must be
                     // able to request its first page — only the failureless ended walk absorbs.
                     !state.hasMorePages && state.totalCount != null && state.failure == null -> state
-                    else -> state.copy(rowsLoading = true, pageRequestToken = event.requestToken)
+                    else -> {
+                        // A continuation may only run while the page set's provenance still
+                        // matches the active graph and catalog. When it does not, the cursor is
+                        // dropped BEFORE the read is issued, so the host requests the first page
+                        // and its success replaces the set whole (never a splice of two worlds).
+                        val generationAdvanced =
+                            state.nextCursor != null &&
+                                (event.currentGeneration == null || event.currentGeneration != state.loadedGeneration)
+                        val catalogAdvanced =
+                            state.nextCursor != null &&
+                                (event.currentCatalogVersion == null || event.currentCatalogVersion != state.loadedCatalogVersion)
+                        val provenanceAdvanced = generationAdvanced || catalogAdvanced
+                        state.copy(
+                            rowsLoading = true,
+                            pageRequestToken = event.requestToken,
+                            nextCursor = if (provenanceAdvanced) null else state.nextCursor,
+                            failure =
+                                when {
+                                    generationAdvanced -> com.unifiedledger.application.P806SnapshotFailure.Unavailable
+                                    catalogAdvanced -> com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch
+                                    else -> state.failure
+                                },
+                        )
+                    }
                 }
             is P503UiEvent.AccountFlowPageLanded ->
                 when (val decision = p806AccountLandingDecision(state, event.read, event.currentGeneration, event.currentCatalogVersion)) {
-                    // A superseded/duplicated landing changes nothing: the newer request keeps its
-                    // own loading marker (taskbook item 3: 清除只匹配请求).
+                    // A non-active/superseded/duplicated landing changes nothing: the current
+                    // request (if any) keeps its own state.
                     P806AccountLandingDecision.STALE_REQUEST -> state
                     // The matching request's graph was replaced: end only its loading, keep the
                     // old payload labelled as old context and retry from the first page.
@@ -1795,12 +1818,30 @@ class P503ReducerImpl(
                             nextCursor = null,
                         )
                     // The catalog advanced: the old cursor must not be reused on the new catalog;
-                    // the explicit retry reads the first page (taskbook item 3).
+                    // the explicit retry reads the first page (D-343 section 3.7).
                     P806AccountLandingDecision.CATALOG_ADVANCED ->
                         state.copy(
                             rowsLoading = false,
                             failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch,
                             nextCursor = null,
+                        )
+                    // The continuation's page set was read under another catalog/generation: the
+                    // old cursor was never sent to the port; retry from the first page, which
+                    // replaces the set whole.
+                    P806AccountLandingDecision.PROVENANCE_ADVANCED ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure =
+                                (event.read as? P806AccountPageRead.StaleProvenance)?.failure
+                                    ?: com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch,
+                            nextCursor = null,
+                        )
+                    // The matching active request answered a payload from another ledger/account:
+                    // the payload is dropped and only this request ends, as a typed failure.
+                    P806AccountLandingDecision.PAYLOAD_REJECTED ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.InvalidState,
                         )
                     P806AccountLandingDecision.ACCEPTED -> applyAccountFlowPage(state, event.read)
                 }
@@ -2128,12 +2169,14 @@ class P503ReducerImpl(
     }
 
     /**
-     * P8-06 batch b (taskbook item 3): one ACCEPTED account-page read lands whole. A first-page
+     * P8-06 batch b (D-343 section 3.7): one ACCEPTED account-page read lands whole. A first-page
      * read (cursor-less request — the open, a retry after a generation/catalog change) REPLACES
      * the row set and count; a continuation page appends its rows and replaces the count with the
-     * snapshot's own exact total. The page order is the read's order (no re-sort), a typed failure
-     * keeps the rows/count/cursor (a catalog mismatch resets the cursor so the retry reads the
-     * first page), a refused lease is the typed Unavailable and an unwired graph is its own state
+     * snapshot's own exact total. The landed payload records its provenance (lease generation +
+     * query catalog version), which the next continuation must still match. The page order is the
+     * read's order (no re-sort), a typed failure keeps the rows/count/cursor (a catalog mismatch
+     * resets the cursor so the retry reads the first page), a refused lease is the typed
+     * Unavailable, an unwired graph is its own state and a stale-provenance read resets the cursor
      * — never an empty account.
      */
     private fun applyAccountFlowPage(
@@ -2153,6 +2196,8 @@ class P503ReducerImpl(
                             rowsLoading = false,
                             failure = null,
                             unwired = false,
+                            loadedGeneration = read.capture.generation,
+                            loadedCatalogVersion = read.capture.catalogVersion,
                         )
                     }
                     is com.unifiedledger.application.P806SnapshotResult.Failed ->
@@ -2171,6 +2216,8 @@ class P503ReducerImpl(
                 state.copy(rowsLoading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable)
             is P806AccountPageRead.Unwired ->
                 state.copy(rowsLoading = false, unwired = true)
+            is P806AccountPageRead.StaleProvenance ->
+                state.copy(rowsLoading = false, failure = read.failure, nextCursor = null)
         }
 
     /**

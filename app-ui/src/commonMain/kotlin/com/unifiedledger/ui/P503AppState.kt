@@ -496,6 +496,14 @@ sealed interface P503AppState {
         val failure: com.unifiedledger.application.P806SnapshotFailure? = null,
         /** This graph wires no P806 account query: an explicit state, never an empty account. */
         val unwired: Boolean = false,
+        /**
+         * The provenance of the loaded page set: the lease generation and the query-instance
+         * catalog version the last success was read under. A continuation may only run (and only
+         * append) while both still match; otherwise the surface retries from the first page and
+         * replaces the set whole (D-343 section 3.7).
+         */
+        val loadedGeneration: Generation? = null,
+        val loadedCatalogVersion: Long? = null,
         /** The host-assigned monotonic request identity of the account-page read (see the KDoc). */
         val pageRequestToken: Long = 0L,
         /**

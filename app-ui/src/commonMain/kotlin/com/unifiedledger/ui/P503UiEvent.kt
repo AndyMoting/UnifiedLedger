@@ -498,12 +498,17 @@ sealed interface P503UiEvent {
      * [AccountFlowPageLanded]). [requestToken] is the HOST-assigned monotonic identity: it keeps
      * increasing across closes and same-account reopens (a per-surface counter would collide with a
      * read still in flight from the previous open), and the reducer stores it as the surface's
-     * current request identity (a token not newer than the stored one is absorbed). Effect on
-     * AccountFlow is the single-flight marker + that token (不切态 — the host action owns the read;
-     * the search surface's RequestSearchPage precedent). Absorbed everywhere else.
+     * current request identity (a token not newer than the stored one is absorbed).
+     * [currentGeneration]/[currentCatalogVersion] are the values the host sampled on the main thread
+     * before the read: when a continuation's page-set provenance no longer matches them, the reducer
+     * drops the cursor so the host reads the FIRST page. Effect on AccountFlow is the single-flight
+     * marker + the token (不切态 — the host action owns the read; the search surface's
+     * RequestSearchPage precedent). Absorbed everywhere else.
      */
     data class RequestAccountFlowMorePage(
         val requestToken: Long,
+        val currentGeneration: Generation?,
+        val currentCatalogVersion: Long?,
     ) : P503UiEvent
 
     /**

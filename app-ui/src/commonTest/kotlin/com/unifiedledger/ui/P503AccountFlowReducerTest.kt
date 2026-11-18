@@ -25,7 +25,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
- * P8-06 batch b (taskbook items 1-3) state-machine tests for the account-flow surface: the open
+ * P8-06 batch b (D-343 sections 1.3/3.2.2/3.7) state-machine tests for the account-flow surface: the open
  * lands in the explicit not-loaded state; the first and continuation reads are single-flight;
  * a landing applies only while its request identity, generation and catalog version still match;
  * a superseded landing never touches a newer request, while a matching request whose generation
@@ -159,8 +159,21 @@ class P503AccountFlowReducerTest {
     private fun enterAccountFlow(source: P503AppState.OverviewEmpty = overview()): P503AppState.AccountFlow =
         assertIs<P503AppState.AccountFlow>(reducer.reduce(source, openEvent()))
 
-    private fun requestPage(state: P503AppState.AccountFlow): P503AppState.AccountFlow =
-        assertIs<P503AppState.AccountFlow>(reducer.reduce(state, P503UiEvent.RequestAccountFlowMorePage(++issuedTokens)))
+    private fun requestPage(
+        state: P503AppState.AccountFlow,
+        currentGeneration: Generation? = generation,
+        currentCatalogVersion: Long? = catalogVersion,
+    ): P503AppState.AccountFlow =
+        assertIs<P503AppState.AccountFlow>(
+            reducer.reduce(
+                state,
+                P503UiEvent.RequestAccountFlowMorePage(
+                    requestToken = ++issuedTokens,
+                    currentGeneration = currentGeneration,
+                    currentCatalogVersion = currentCatalogVersion,
+                ),
+            ),
+        )
 
     private fun land(
         state: P503AppState.AccountFlow,
@@ -178,7 +191,7 @@ class P503AccountFlowReducerTest {
         return land(requesting, landing(landedPage(1, rows, nextCursor, totalCount)))
     }
 
-    // ---- open + first background page (taskbook A) ----
+    // ---- open + first background page ----
 
     @Test
     fun theOpenLandsInTheExplicitNotLoadedStateWithTheSampledScroll() {
@@ -225,6 +238,9 @@ class P503AccountFlowReducerTest {
         assertEquals(cursor(), landed.nextCursor)
         assertTrue(!landed.rowsLoading)
         assertNull(landed.failure)
+        // The landed payload records the provenance a continuation must still match.
+        assertEquals(generation, landed.loadedGeneration)
+        assertEquals(catalogVersion, landed.loadedCatalogVersion)
         assertEquals(AccountFlowBodyFace.LIST, accountFlowBodyFace(landed))
     }
 
@@ -235,23 +251,43 @@ class P503AccountFlowReducerTest {
         assertNull(landed.failure)
         assertEquals(AccountFlowBodyFace.EMPTY, accountFlowBodyFace(landed))
         // Nothing more to request on the honest empty end.
-        assertSame(landed, reducer.reduce(landed, P503UiEvent.RequestAccountFlowMorePage(++issuedTokens)))
+        assertSame(
+            landed,
+            reducer.reduce(
+                landed,
+                P503UiEvent.RequestAccountFlowMorePage(++issuedTokens, generation, catalogVersion),
+            ),
+        )
     }
 
     @Test
     fun aRefusedLeaseAndAnUnwiredGraphAreDistinctTypedStates() {
         val requesting = requestPage(enterAccountFlow())
-        val refused = land(requesting, landing(P806AccountPageRead.Refused(identity(1))))
+        // A refused lease carries no generation, so it is not gated on one: the matching active
+        // request ends as the typed Unavailable.
+        val refused = land(requesting, landing(P806AccountPageRead.Refused(identity(1)), currentGeneration = otherGeneration))
         assertEquals(P806SnapshotFailure.Unavailable, refused.failure)
         assertTrue(!refused.unwired)
         assertEquals(AccountFlowBodyFace.FAILED, accountFlowBodyFace(refused))
-        val unwired = land(requestPage(refused), landing(P806AccountPageRead.Unwired(identity(2))))
+        // An acquired-but-unwired graph carries the acquire generation and is gated on it.
+        val unwiredRequesting = requestPage(refused)
+        val unwired = land(unwiredRequesting, landing(P806AccountPageRead.Unwired(identity(2), generation)))
         assertTrue(unwired.unwired)
         assertNull(unwired.totalCount)
         assertEquals(AccountFlowBodyFace.UNWIRED, accountFlowBodyFace(unwired))
+        // A stale acquire generation never turns into the unwired state (it ends this request as
+        // the typed graph-swap failure instead).
+        val freshRequesting = requestPage(enterAccountFlow())
+        val staleUnwired =
+            land(
+                freshRequesting,
+                landing(P806AccountPageRead.Unwired(identity(freshRequesting.pageRequestToken), otherGeneration)),
+            )
+        assertTrue(!staleUnwired.unwired)
+        assertEquals(P806SnapshotFailure.Unavailable, staleUnwired.failure)
     }
 
-    // ---- the request identity gate (taskbook B) ----
+    // ---- the request identity gate ----
 
     @Test
     fun aDuplicateRequestDoesNotAdvanceTheTokenOrStartASecondRead() {
@@ -263,39 +299,52 @@ class P503AccountFlowReducerTest {
     @Test
     fun aStaleForeignOrCursorMismatchedLandingChangesNothing() {
         val loaded = loadedFlow()
-        // An old token, another account, another ledger and a cursor the surface is no longer at
-        // are all stale: the surface is returned unchanged (a newer request keeps its own state).
-        assertSame(loaded, reducer.reduce(loaded, landing(landedPage(0, listOf(posting(postingId = "posting-x"))))))
+        // An ACTIVE continuation exists; a completion with an old token, another account, another
+        // ledger or a cursor the surface is no longer at is stale — the request keeps its state.
+        val active = requestPage(loaded)
+        assertSame(active, reducer.reduce(active, landing(landedPage(1, listOf(posting(postingId = "posting-x"))))))
         val foreignAccount =
             P806AccountPageRead.Landed(
-                capture = P806AccountReadCapture(identity(1, accountId = otherAccountId), generation, catalogVersion),
+                capture = P806AccountReadCapture(identity(active.pageRequestToken, accountId = otherAccountId, cursor = cursor()), generation, catalogVersion),
                 result = P806SnapshotResult.Success(view(listOf(posting(postingId = "posting-x")), null, 1, accountId = otherAccountId)),
             )
-        assertSame(loaded, reducer.reduce(loaded, landing(foreignAccount)))
+        assertSame(active, reducer.reduce(active, landing(foreignAccount)))
         val foreignLedger =
             P806AccountPageRead.Landed(
-                capture = P806AccountReadCapture(identity(1, ledgerId = otherLedgerId), generation, catalogVersion),
+                capture = P806AccountReadCapture(identity(active.pageRequestToken, ledgerId = otherLedgerId, cursor = cursor()), generation, catalogVersion),
                 result = P806SnapshotResult.Success(view(listOf(posting(postingId = "posting-x")), null, 1, ledgerId = otherLedgerId)),
             )
-        assertSame(loaded, reducer.reduce(loaded, landing(foreignLedger)))
-        val wrongCursor = landedPage(1, listOf(posting(postingId = "posting-x")), requestCursor = cursor(9_999L))
-        assertSame(loaded, reducer.reduce(loaded, landing(wrongCursor)))
+        assertSame(active, reducer.reduce(active, landing(foreignLedger)))
+        val wrongCursor = landedPage(active.pageRequestToken, listOf(posting(postingId = "posting-x")), requestCursor = cursor(9_999L))
+        assertSame(active, reducer.reduce(active, landing(wrongCursor)))
     }
 
     @Test
-    fun aSuccessPayloadWhoseLedgerOrAccountDiffersIsRejectedWhole() {
+    fun aCompletionAfterTheRequestSettledChangesNothing() {
+        // A duplicate completion, and any completion that arrives after a read-only return, finds
+        // no ACTIVE request: it never writes rows/count/cursor.
+        val settled = loadedFlow()
+        assertSame(settled, reducer.reduce(settled, landing(landedPage(1, listOf(posting(postingId = "posting-again")), nextCursor = null, totalCount = 9))))
+    }
+
+    @Test
+    fun aSuccessPayloadWhoseLedgerOrAccountDiffersFailsTheActiveRequestOnly() {
         val loaded = loadedFlow()
         val requesting = requestPage(loaded)
         val mismatchedPayload =
             P806AccountPageRead.Landed(
-                capture = P806AccountReadCapture(identity(2, cursor()), generation, catalogVersion),
+                capture = P806AccountReadCapture(identity(requesting.pageRequestToken, cursor()), generation, catalogVersion),
                 result = P806SnapshotResult.Success(view(listOf(posting(postingId = "posting-x")), null, 9, accountId = otherAccountId)),
             )
-        // The view itself echoes the requested account, so this fixture represents a payload from
-        // another account; the identity comparison rejects it and the request keeps loading.
+        // The identity matches the active request, but the payload names another account: the
+        // payload is dropped and only this request ends, as the typed InvalidState — the loaded
+        // page set and its cursor stay.
         val rejected = land(requesting, landing(mismatchedPayload))
-        assertEquals(requesting, rejected)
-        assertTrue(rejected.rowsLoading)
+        assertEquals(loaded.loadedRows, rejected.loadedRows)
+        assertEquals(loaded.totalCount, rejected.totalCount)
+        assertEquals(cursor(), rejected.nextCursor)
+        assertTrue(!rejected.rowsLoading)
+        assertEquals(P806SnapshotFailure.InvalidState, rejected.failure)
     }
 
     @Test
@@ -356,7 +405,7 @@ class P503AccountFlowReducerTest {
         val loaded = loadedFlow()
         // The host's monotonic token must be newer than the stored one: a stale host call is
         // absorbed whole (no loading marker, no token move).
-        assertSame(loaded, reducer.reduce(loaded, P503UiEvent.RequestAccountFlowMorePage(1L)))
+        assertSame(loaded, reducer.reduce(loaded, P503UiEvent.RequestAccountFlowMorePage(1L, generation, catalogVersion)))
         val newer = requestPage(loaded)
         assertEquals(2L, newer.pageRequestToken)
         assertTrue(newer.rowsLoading)
@@ -386,7 +435,53 @@ class P503AccountFlowReducerTest {
         assertTrue(requesting.rowsLoading)
     }
 
-    // ---- failures, retries and continuation (taskbook C) ----
+    @Test
+    fun aContinuationIsNeverIssuedUnderAnAdvancedCatalogOrGeneration() {
+        val loaded = loadedFlow(rows = listOf(posting(postingId = "posting-1")), nextCursor = cursor(), totalCount = 5)
+        // The catalog moved BEFORE the read was issued: the reducer drops the cursor, so the host
+        // requests the first page and never sends the old cursor into the new catalog.
+        val catalogAdvanced = requestPage(loaded, currentCatalogVersion = otherCatalogVersion)
+        assertNull(catalogAdvanced.nextCursor)
+        assertEquals(P806SnapshotFailure.CatalogVersionMismatch, catalogAdvanced.failure)
+        assertTrue(catalogAdvanced.rowsLoading)
+        // The first-page retry replaces rows/count instead of splicing two page sets.
+        val replaced =
+            land(
+                catalogAdvanced,
+                landing(landedPage(catalogAdvanced.pageRequestToken, listOf(posting(postingId = "posting-a")), nextCursor = null, totalCount = 6)),
+            )
+        assertEquals(listOf("posting-a"), replaced.loadedRows.map { it.postingId.value })
+        assertEquals(6, replaced.totalCount)
+        assertNull(replaced.failure)
+        // The replacement page set records its own provenance (the landing fixture's version).
+        assertEquals(catalogVersion, replaced.loadedCatalogVersion)
+        // A generation change before the read gets the same reset, with the Unavailable reason.
+        val generationAdvanced = requestPage(loaded, currentGeneration = otherGeneration)
+        assertNull(generationAdvanced.nextCursor)
+        assertEquals(P806SnapshotFailure.Unavailable, generationAdvanced.failure)
+    }
+
+    @Test
+    fun aContinuationWhosePageSetProvenanceAdvancedIsReplacedWhole() {
+        // The in-lease check can still find a provenance mismatch (a catalog advance between the
+        // pre-check and the acquire): the read reports StaleProvenance without sending the old
+        // cursor; the surface keeps the old rows/count and retries from the first page.
+        val loaded = loadedFlow(rows = listOf(posting(postingId = "posting-1")), nextCursor = cursor(), totalCount = 5)
+        val requesting = requestPage(loaded)
+        val stale =
+            P806AccountPageRead.StaleProvenance(
+                request = identity(requesting.pageRequestToken, cursor()),
+                failure = P806SnapshotFailure.CatalogVersionMismatch,
+            )
+        val reset = land(requesting, landing(stale, currentCatalogVersion = otherCatalogVersion))
+        assertEquals(loaded.loadedRows, reset.loadedRows)
+        assertEquals(5, reset.totalCount)
+        assertEquals(P806SnapshotFailure.CatalogVersionMismatch, reset.failure)
+        assertNull(reset.nextCursor)
+        assertTrue(!reset.rowsLoading)
+    }
+
+    // ---- failures, retries and continuation ----
 
     @Test
     fun aFirstPageFailureRetriesTheFirstPageAndAContinuationFailureKeepsTheCursor() {
@@ -427,7 +522,7 @@ class P503AccountFlowReducerTest {
     @Test
     fun anEndedWalkWithoutFailureRequestsNothing() {
         val ended = loadedFlow(rows = listOf(posting()), nextCursor = null, totalCount = 1)
-        assertSame(ended, reducer.reduce(ended, P503UiEvent.RequestAccountFlowMorePage(++issuedTokens)))
+        assertSame(ended, reducer.reduce(ended, P503UiEvent.RequestAccountFlowMorePage(++issuedTokens, generation, catalogVersion)))
     }
 
     // ---- exits and scroll restoration (unchanged mechanisms) ----
@@ -483,6 +578,12 @@ class P503AccountFlowReducerTest {
         val returned = assertIs<P503AppState.AccountFlow>(reducer.reduce(queue, P503UiEvent.Back))
         assertSame(queue.returnTo, returned)
         assertTrue(!returned.rowsLoading)
+        // The read that was in flight when the queue opened completes AFTER the return: with no
+        // active request on the returned surface it must not write (and the return issues no read).
+        assertSame(
+            returned,
+            reducer.reduce(returned, landing(landedPage(1, listOf(posting(postingId = "posting-late"))))),
+        )
     }
 
     @Test
@@ -517,7 +618,7 @@ class P503AccountFlowReducerTest {
         everyNonOverviewState { state ->
             assertSame(state, reducer.reduce(state, openEvent()))
             assertSame(state, reducer.reduce(state, P503UiEvent.CloseAccountFlow))
-            assertSame(state, reducer.reduce(state, P503UiEvent.RequestAccountFlowMorePage(++issuedTokens)))
+            assertSame(state, reducer.reduce(state, P503UiEvent.RequestAccountFlowMorePage(++issuedTokens, generation, catalogVersion)))
             assertSame(state, reducer.reduce(state, landing(landedPage(1, listOf(posting())))))
         }
         // The guard absorbs re-entry dispatches on the flow surface itself too.

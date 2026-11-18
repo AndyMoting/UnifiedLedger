@@ -1287,21 +1287,21 @@ fun P503App(
     // ---------------------------------------------------------------- P8-00 b3 account-flow host surface (V-5)
 
     /**
-     * P8-06 batch b (taskbook item 1; D-343 sections 1.3/3.2.2): the account reads run through the
+     * P8-06 batch b (D-343 sections 1.3/3.2.2): the account reads run through the
      * owner's acquire-first lease order ([LedgerLeaseScope.leasedAccountRead]) — the existing
      * generic `leased`/`probe` callers keep their own order untouched.
      */
     val accountReadLease = remember(ledger) { LeaseScopeAccountReadSeam(ledger) }
 
     /**
-     * P8-06 batch b (taskbook item 3): the monotonic request-token sequence behind [accountReadLease].
+     * P8-06 batch b (D-343 section 3.7): the monotonic request-token sequence behind [accountReadLease].
      * It outlives the surface state, so a close + same-account reopen can never reuse a token a
      * previous open's in-flight read is still carrying.
      */
     val accountFlowRequestSequence = remember(ledger) { P806AccountRequestSequence() }
 
     /**
-     * P8-06 batch b (taskbook items 2/3): one account-page read (first page, 加载更多, or the
+     * P8-06 batch b (D-343 section 3.7): one account-page read (first page, 加载更多, or the
      * explicit retry). The host's monotonic sequence assigns the request token and the reducer
      * stores it synchronously; the identity captured here binds that token, the account, the ledger
      * and the cursor this read continues from. The read runs under the acquire-first lease and
@@ -1316,17 +1316,27 @@ fun P503App(
         // event too; skipping the dispatch keeps the read off). A failure's retry and the
         // not-loaded first page are both requests.
         if (!current.hasMorePages && current.totalCount != null && current.failure == null) return
-        val cursor = current.nextCursor
         val requestToken = accountFlowRequestSequence.next()
-        dispatch(P503UiEvent.RequestAccountFlowMorePage(requestToken))
+        dispatch(
+            P503UiEvent.RequestAccountFlowMorePage(
+                requestToken = requestToken,
+                currentGeneration = ledger.activeGenerationForLanding(),
+                currentCatalogVersion = ledger.currentCatalogVersion,
+            ),
+        )
         val requesting = latestState.value as? P503AppState.AccountFlow ?: return
         if (!requesting.rowsLoading || requesting.pageRequestToken != requestToken) return
+        // The reducer drops the cursor when the page set's provenance no longer matches, so this
+        // read can never send an old cursor into a new catalog/generation.
+        val cursor = requesting.nextCursor
         val request =
             P806AccountRequestIdentity(
                 token = requestToken,
                 ledgerId = requesting.overview.state.ledgerId,
                 accountId = requesting.accountId,
                 cursor = cursor,
+                pageSetGeneration = if (cursor == null) null else requesting.loadedGeneration,
+                pageSetCatalogVersion = if (cursor == null) null else requesting.loadedCatalogVersion,
             )
         scope.launch(Dispatchers.Default) {
             val read = readP806AccountPage(accountReadLease, request)
@@ -1344,38 +1354,33 @@ fun P503App(
 
     /**
      * P8-00 b3 (V-5); P8-06 batch b read source: opens the read-only account-flow page from an
-     * asset-screen account row. The host resolves the header (the asset row's exact display
-     * balance + 副行) from the already-loaded overview and dispatches the open event; the first
-     * account page is then requested as one background P806 snapshot ([requestAccountFlowMorePage]),
-     * so the unindexed account scan never runs in the click handler. The sampled
-     * [originListScroll] rides the event (the scroll-restoration mechanism). The entry itself is
-     * gated on the P806 account capability probe at the call site, so no dead entry renders.
+     * asset-screen account row. The header is projected by the SAME rule the asset row renders
+     * ([p806AccountFlowHeader]: balance row wins, a never-posted account falls back to its declared
+     * display currency and the row's 0 display amount) — the account is reachable whenever its
+     * asset row is, even with no balance row. The first account page is then requested as one
+     * background P806 snapshot ([requestAccountFlowMorePage]), so the unindexed account scan never
+     * runs in the click handler. The sampled [originListScroll] rides the event (the
+     * scroll-restoration mechanism). The entry itself is gated on the P806 account capability probe
+     * at the call site, so no dead entry renders.
      */
     fun selectAccountFlow(
         accountId: AccountId,
         originListScroll: ListScrollPosition? = null,
     ) {
         val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
-        val accountName = overview.state.accountNames[accountId] ?: accountId.value
-        val balance = overview.state.balances.firstOrNull { balance -> balance.accountId == accountId }
-        val balanceCurrency = balance?.currency ?: return
-        val balanceMinorUnits = balance.displayMinorUnits
-        val kindText =
-            overview.catalogSnapshot
-                ?.manageableAccounts
-                ?.firstOrNull { account -> account.accountId == accountId }
-                ?.let { account -> accountKindText(account.kind) }
-        // 副行 (canvas 06 「招商储蓄卡 · 资产 · CNY」): name · type · currency. A type-less
-        // account (a balance row outside the manageable projection) degrades honestly to
-        // name · currency.
-        val balanceLine =
-            listOfNotNull(accountName, kindText, balanceCurrency.code).joinToString(" · ")
+        val header =
+            p806AccountFlowHeader(
+                accountId = accountId,
+                accountNames = overview.state.accountNames,
+                accounts = overview.catalogSnapshot?.manageableAccounts.orEmpty(),
+                balances = overview.state.balances,
+            ) ?: return
         dispatch(
             P503UiEvent.SelectAccountFlow(
                 accountId = accountId,
-                balanceLine = balanceLine,
-                balanceMinorUnits = balanceMinorUnits,
-                balanceCurrency = balanceCurrency,
+                balanceLine = header.balanceLine,
+                balanceMinorUnits = header.displayMinorUnits,
+                balanceCurrency = header.currency,
                 originListScroll = originListScroll,
             ),
         )
@@ -5114,7 +5119,7 @@ fun P503App(
                                             // P7-08 08.C: the same cached authority feeds the two new
                                             // sections (null = loading/unwired: honest 载入中 placeholder).
                                             tagMerchantAuthority = cachedTagMerchantAuthority,
-                                            // P8-06 batch b (taskbook item 1): the account-flow entry
+                                            // P8-06 batch b (D-343 section 3.2.2): the account-flow entry
                                             // consumes the P806 account-postings read — the capability
                                             // probe gates it, so an unwired graph renders no dead entry.
                                             // The open dispatches, then reads the first page in the

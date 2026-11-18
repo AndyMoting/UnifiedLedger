@@ -36,7 +36,7 @@ import com.unifiedledger.ui.theme.LocalP8Palette
  * [formatMinorUnits] (Long minor units, never floating point). The success count is the
  * snapshot's exact posting count rendered as 「N 条账户变动」.
  *
- * 显式六态 (taskbook item 4): an unwired graph, the not-loaded window, an in-flight read, a typed
+ * 显式六态 (D-343 sections 3.7/3.8): an unwired graph, the not-loaded window, an in-flight read, a typed
  * failure, an empty success and a non-empty success are distinct faces. A loading or failed
  * request keeps the last success visible and LABELS it as old context — it never renders as a new
  * zero; only an empty SUCCESS renders 「该账户暂无流水」. The typed failure copy is per failure
@@ -114,12 +114,16 @@ internal fun P503AccountFlowScreen(
             AccountFlowBodyFace.FAILED -> AccountFlowRetryFace(state, onRetryLoadMore)
             AccountFlowBodyFace.EMPTY -> Text(ACCOUNT_FLOW_EMPTY_TEXT, style = MaterialTheme.typography.bodyLarge)
             AccountFlowBodyFace.LIST -> {
-                Text(
-                    accountFlowCountText(state.totalCount ?: 0),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = palette.onSurfaceVariant,
-                )
-                // 旧上下文 (taskbook item 4): a loading/failed request keeps the last success
+                // The count is the last successful snapshot's exact posting count; a surface that
+                // never succeeded has none (the earlier faces cover it), so no zero is invented.
+                state.totalCount?.let { totalCount ->
+                    Text(
+                        accountFlowCountText(totalCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.onSurfaceVariant,
+                    )
+                }
+                // 旧上下文 (D-343 section 3.7): a loading/failed request keeps the last success
                 // visible, labelled as the previous payload — never disguised as a new zero.
                 accountFlowOldContextText(state)?.let { oldContext ->
                     Text(
@@ -129,13 +133,16 @@ internal fun P503AccountFlowScreen(
                     )
                 }
                 // A failed continuation shows its typed copy beside the previous payload — the
-                // failure is never disguised as the last page.
-                state.failure?.let { failure ->
-                    Text(
-                        accountFlowFailureText(failure),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                // failure is never disguised as the last page. While the retry is in flight the
+                // footer already says so, so the stale failure copy is not repeated.
+                if (!state.rowsLoading) {
+                    state.failure?.let { failure ->
+                        Text(
+                            accountFlowFailureText(failure),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
                 state.loadedRows.forEach { row ->
                     P8AccountFlowRow(row, accountName)
@@ -148,7 +155,7 @@ internal fun P503AccountFlowScreen(
 }
 
 /**
- * P8-06 batch b (taskbook item 4): the body-face decision over the surface's explicit state.
+ * P8-06 batch b (D-343 sections 3.7/3.8): the body-face decision over the surface's explicit state.
  * [UNWIRED] is a graph without the account read; [NOT_LOADED] is the not-requested window (never
  * an empty claim); [LOADING] is a first-page read in flight; [FAILED] is a typed failure with no
  * success yet; [EMPTY] is an empty SUCCESS; [LIST] is a non-empty success — also the shape where a
@@ -191,7 +198,7 @@ internal const val ACCOUNT_FLOW_EMPTY_TEXT: String = "该账户暂无流水。"
 internal fun accountFlowCountText(totalCount: Int): String = "$totalCount 条账户变动"
 
 /**
- * P8-06 batch b (taskbook item 4): the old-context label of a previous success kept beside a
+ * P8-06 batch b (D-343 section 3.7): the old-context label of a previous success kept beside a
  * loading or failed request (`null` = no previous success, or the request is settled). The label
  * never turns a failed/loading request into a zero or a fresh payload.
  */
