@@ -217,8 +217,7 @@ internal const val ACCOUNT_FLOW_LOAD_ACTION_TEXT: String = "加载账户流水"
  * button calls the SAME request handler as 加载更多 — it never re-reads automatically and the
  * already-discarded late result is never re-accepted.
  */
-internal fun accountFlowLoadActionLabel(face: AccountFlowBodyFace): String? =
-    if (face == AccountFlowBodyFace.NOT_LOADED) ACCOUNT_FLOW_LOAD_ACTION_TEXT else null
+internal fun accountFlowLoadActionLabel(face: AccountFlowBodyFace): String? = if (face == AccountFlowBodyFace.NOT_LOADED) ACCOUNT_FLOW_LOAD_ACTION_TEXT else null
 
 /**
  * P8-06 batch b (D-343 section 3.7): the old-context label of a previous success kept beside a
@@ -304,8 +303,7 @@ private fun P8AccountFlowRow(
 }
 
 /** The visible headline of one posting row: 「资金发生日期」 + the Shanghai local day + the note/kind. */
-internal fun accountFlowRowHeadlineText(row: P806AccountPostingRow): String =
-    "资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + " · " + (row.note ?: row.kind.name)
+internal fun accountFlowRowHeadlineText(row: P806AccountPostingRow): String = "资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + " · " + (row.note ?: row.kind.name)
 
 /**
  * The posting row's accessibility label: effective kind, the SAME 「资金发生日期」 + Shanghai local

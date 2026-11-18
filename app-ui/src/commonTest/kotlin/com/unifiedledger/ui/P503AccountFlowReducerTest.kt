@@ -165,8 +165,7 @@ class P503AccountFlowReducerTest {
             originScroll = originScroll,
         )
 
-    private fun enterAccountFlow(source: P503AppState.OverviewEmpty = overview()): P503AppState.AccountFlow =
-        assertIs<P503AppState.AccountFlow>(reducer.reduce(source, openEvent()))
+    private fun enterAccountFlow(source: P503AppState.OverviewEmpty = overview()): P503AppState.AccountFlow = assertIs<P503AppState.AccountFlow>(reducer.reduce(source, openEvent()))
 
     private fun requestPage(
         state: P503AppState.AccountFlow,
