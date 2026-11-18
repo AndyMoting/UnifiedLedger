@@ -1,6 +1,7 @@
 package com.unifiedledger.application
 
 import com.unifiedledger.domain.LedgerId
+import kotlin.concurrent.Volatile
 
 /**
  * Fail-closed signal raised by a composition root when the authoritative catalog cannot be
@@ -51,6 +52,12 @@ class CatalogConsumerSession(
     // pre-P7-03 constructions valid (the monthly surface stays absent).
     private val clock: LedgerClock? = null,
 ) {
+    /**
+     * P8-06 foundation: single-field safe publication. Readers on other threads see one fully
+     * constructed authority or the previous one; this says nothing about atomicity across the
+     * whole refreshed field group, and the rest of the session stays unchanged.
+     */
+    @Volatile
     var authority: CatalogAuthority = initialAuthority
         private set
 
@@ -105,18 +112,22 @@ class CatalogConsumerSession(
      * catalog already serves, so the request's expected catalog version is the session's. `null`
      * without an injected reporting clock (relative periods and the future marker need "today").
      */
+    @Volatile
     var p806ReportQuery: P806ReportQuery? = clock?.let { P806ReportQuery(readPort, ledgerId, authority, it) }
         private set
 
     /** P8-06 batch a (D-343): the calendar read surface; `null` without a reporting clock. */
+    @Volatile
     var p806CalendarQuery: P806CalendarQuery? = clock?.let { P806CalendarQuery(readPort, ledgerId, authority, it) }
         private set
 
     /** P8-06 batch a (D-343): the detail-list surface (period/category come from the caller). */
+    @Volatile
     var p806DrilldownQuery: P806DrilldownQuery = P806DrilldownQuery(readPort, ledgerId, authority)
         private set
 
     /** P8-06 batch a (D-343): the account postings surface. */
+    @Volatile
     var p806AccountPostingsQuery: P806AccountPostingsQuery = P806AccountPostingsQuery(readPort, ledgerId, authority)
         private set
 

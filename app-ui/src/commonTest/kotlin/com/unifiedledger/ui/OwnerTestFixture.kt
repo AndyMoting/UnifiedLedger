@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CommitOnceInvocationTracker
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedExpenseTransactionFactory
@@ -44,6 +45,9 @@ internal fun minimalP503LedgerFacade(
     // P7-08 08.B-2: the tag/merchant selection read source, defaulted null so every existing call
     // site keeps its frozen "no selector" behavior; the selection tests pass a stub reader.
     tagMerchantCatalogReader: (() -> com.unifiedledger.application.TagMerchantCatalogReader?)? = null,
+    // P8-06 foundation: the shared catalog session the facade's session-only P806 getters read;
+    // null keeps every existing call site on the unwired P806 surface (no fallback, no root change).
+    catalogSession: CatalogConsumerSession? = null,
 ): P503LedgerFacade {
     val ledgerId = LedgerId("ledger-local-test")
     val currency = CurrencyUnit("CNY", 2)
@@ -112,5 +116,6 @@ internal fun minimalP503LedgerFacade(
         baseSummarizeActivity = SummarizeLedgerActivity(catalog),
         importConfirmUseCases = importConfirmUseCases,
         tagMerchantCatalogReader = tagMerchantCatalogReader,
+        catalogSession = catalogSession,
     )
 }
