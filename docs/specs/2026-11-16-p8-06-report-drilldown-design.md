@@ -1,6 +1,6 @@
 # P8-06 报表与下钻设计（周期、日均、收支日历、分类/账户下钻与详情回程）
 
-状态：approved（2026-11-17，`D-343` 设计批准；**设计已批准；批 a 读面已实现（2026-11-18，PR #400 squash = `d029a30e`），查询版本自证与 facade 只读访问器基础批已落地（2026-11-18，PR #404 squash = `0facb7f`），账户流水换读源批已落地（2026-11-18，PR #407 squash = `577fd39a`），报表/日历呈现、typed `returnTo`、账户行交易详情与设备证据未交付**。后续实施批另立批次，按仓库既有高风险变更路由（独立审查 + 云端 CI）推进；本规格不构成实现、迁移或发布授权）
+状态：approved（2026-11-17，`D-343` 设计批准；**设计已批准；批 a 读面已实现（2026-11-18，PR #400 squash = `d029a30e`），查询版本自证与 facade 只读访问器基础批已落地（2026-11-18，PR #404 squash = `0facb7f`），批 b–c 中只有账户面换读源这一片已落地（账户流水批，2026-11-18，PR #407 squash = `577fd39a`），报表/日历呈现、typed `returnTo`、账户行交易详情与设备证据未交付**。后续实施批另立批次，按仓库既有高风险变更路由（独立审查 + 云端 CI）推进；本规格不构成实现、迁移或发布授权）
 
 **Revision:** v1（2026-11-17 批准）。本版冻结：期间模型与上海半开窗口、普通收支贡献集合与每 surface 一个复合 typed 快照、当地日桶与完整自然日分母、有符号舍入、未来标注口径、目录/轴/`occurred_at` 解析三类前置校验、载荷六态与回程语义、账户资金视图局部显示例外。变更以本文件与 `docs/DECISIONS.md` 的 `D-343` 为准。
 
@@ -378,6 +378,6 @@ p806LatestEffectiveStatisticsAt      -- MAX(statistics_at_epoch_nanos)（MIN 已
 
 - **落地**：PR #407 squash = `577fd39a6e6acc28cab24d557f322a6839b39fad`（唯一父 `d0422465`），被测 head `59002871c83b000a4574a2e824c9aab203a2b364`、CI 预览 `a7d56e78`、落地同树 `930ef15977195c5a129be1799eb86f5a35a935b6`；四门 run `44233040421` success（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`），合并树守卫 run `44234027482` 记 zero action（squash evidence complete、landed commit trace scan、zero action）。相对 `main` 恰 13 个任务书授权路径：7 产品 + 5 commonTest + 1 androidTest fixture。零 schema/DDL/迁移、零账务写入、零对账机制改动。
 - **范围**：现资产页进入的账户流水改读账户分录分页与同快照计数（页 100、全历史窗口）；行按解析 `occurred_at` 排序，显示上海「资金发生日期」（§1.3 局部显示例外的实现面）与本账户精确带符号腿金额；计数用「N 条账户变动」；无余额行账户可进入并按资产行同一投影显示。落地只认活跃请求——旧 token／异账户／异账本／错游标／非法载荷整块丢弃；续页在发起前与持租约两处校验页集出处；目录或代际推进后旧游标不进读端口，重试回首屏整体替换。对账回程保留已成功页、计数与一次滚动位，首读被取消后可手动再读、不自动补读。
-- **测试**：`P503AccountFlowReducerTest` 25、`P806AccountFlowReadTest` 12、`P8B3SecondaryNavPresentationTest` 12 由 core 的 `:ledger-application:jvmTest` 与 `:app-ui:jvmTest` 实际执行；逐类汇总按类计数（无逐方法 XML），模块汇总 `ledger-application` 95 类 / 829 tests、`app-ui` 81 类 / 1278 tests。
-- **未交付**：报表区与日历面、typed `returnTo`、账户行打开交易详情、完整请求身份（V-6/V-7 整向量）、空成功之外的 as-of 标注、视觉 T2/T9、索引/性能阈值与设备基线；四门绿与 JVM 测试不构成 P8-06 整体 PASS，也不构成设备证据（§5 证据归属不变）。
+- **测试**：`P503AccountFlowReducerTest` 25、`P806AccountFlowReadTest` 12、`P8B3SecondaryNavPresentationTest` 12 三个类都属 `app-ui`；本次 core 的 `:ledger-application:jvmTest` 与 `:app-ui:jvmTest` 两个任务都实际执行（非 UP-TO-DATE），逐类汇总按类计数（无逐方法 XML），模块汇总 `app-ui` 81 类 / 1278 tests，`ledger-application` 仍 95 类 / 829 tests。
+- **未交付**：报表区与日历面、typed `returnTo`、账户行打开交易详情、V-6（载荷六态）与 V-7（请求身份）的整向量、空成功之外的 as-of 标注、视觉 T2/T9、索引/性能阈值与设备基线；四门绿与 JVM 测试不构成 P8-06 整体 PASS，也不构成设备证据（§5 证据归属不变）。
 - **边界**：本节只登记本批事实，不改 §4 向量、§5 证据归属、`D-343` 与 approved 机制；批 a 与基础批记录保持原语境。
