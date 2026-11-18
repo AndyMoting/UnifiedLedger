@@ -172,8 +172,7 @@ class P806QueryCatalogVersionIdentityTest {
 
     // ---------------------------------------------------------------- fixtures
 
-    private fun failureOf(result: P806SnapshotResult<*>): P806SnapshotFailure =
-        assertIs<P806SnapshotResult.Failed>(result).failure
+    private fun failureOf(result: P806SnapshotResult<*>): P806SnapshotFailure = assertIs<P806SnapshotResult.Failed>(result).failure
 
     private fun reportSnapshot(
         version: Long,
