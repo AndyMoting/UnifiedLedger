@@ -470,10 +470,11 @@ sealed interface P503UiEvent {
      * SelectTransaction precedent — the reducer effect is unconditional, the UI affordance
      * restricts). [accountId] names the target account; [balanceLine] is the host-projected
      * header副行 (「名称 · 类型 · 币种」 display text resolved from the same authoritative
-     * snapshot × balances the row rendered, so the reducer never re-derives names); [firstPage]
-     * is the typed first flow page the host read BEFORE dispatching (the host reads the first
-     * batch, the SelectTransaction host-resolved-payload precedent); [originListScroll] is the
-     * ACCOUNTS list position sampled at click time (the scroll-restoration mechanism). Absorbed
+     * snapshot × balances the row rendered, so the reducer never re-derives names);
+     * [originListScroll] is the ACCOUNTS list position sampled at click time (the
+     * scroll-restoration mechanism). The first account page is NOT read here: the host requests it
+     * as a background read after this event (P8-06 batch b), so the surface opens in its explicit
+     * not-loaded state and the unindexed account scan never occupies the click handler. Absorbed
      * in every state other than OverviewEmpty (table 6.2a).
      */
     data class SelectAccountFlow(
@@ -481,7 +482,6 @@ sealed interface P503UiEvent {
         val balanceLine: String,
         val balanceMinorUnits: Long,
         val balanceCurrency: com.unifiedledger.domain.CurrencyUnit,
-        val firstPage: com.unifiedledger.application.LedgerFlowPageResult,
         val originListScroll: ListScrollPosition? = null,
     ) : P503UiEvent
 
@@ -493,24 +493,37 @@ sealed interface P503UiEvent {
     data object CloseAccountFlow : P503UiEvent
 
     /**
-     * Requests one more flow page for the open account-flow surface (the 加载更多 intent; the
-     * host runs the paged read and lands [AccountFlowMorePageLanded]). Effect on AccountFlow is
-     * the request-token advance + the single-flight marker (不切态 — the host action owns the
-     * read; the search surface's RequestSearchPage precedent). Absorbed everywhere
-     * else.
+     * Requests one account page for the open account-flow surface: the first page on open, the
+     * 加载更多 intent, and the retry after a typed failure (the host runs the P806 read and lands
+     * [AccountFlowPageLanded]). [requestToken] is the HOST-assigned monotonic identity: it keeps
+     * increasing across closes and same-account reopens (a per-surface counter would collide with a
+     * read still in flight from the previous open), and the reducer stores it as the surface's
+     * current request identity (a token not newer than the stored one is absorbed).
+     * [currentGeneration]/[currentCatalogVersion] are the values the host sampled on the main thread
+     * before the read: when a continuation's page-set provenance no longer matches them, the reducer
+     * drops the cursor so the host reads the FIRST page. Effect on AccountFlow is the single-flight
+     * marker + the token (不切态 — the host action owns the read; the search surface's
+     * RequestSearchPage precedent). Absorbed everywhere else.
      */
-    data object RequestAccountFlowMorePage : P503UiEvent
+    data class RequestAccountFlowMorePage(
+        val requestToken: Long,
+        val currentGeneration: Generation?,
+        val currentCatalogVersion: Long?,
+    ) : P503UiEvent
 
     /**
-     * One more filtered flow page landed for the open account-flow surface. Applies only when
-     * the landing's request token is still the surface's current one (a read superseded by a
-     * newer request can never append — the RequestSearchPage token gate); a typed failure keeps
-     * the loaded rows and surfaces the retry state (fail-closed, never a silent truncation).
-     * Absorbed in every state other than AccountFlow.
+     * One account page read landed for the open account-flow surface (P8-06 batch b). The landing
+     * applies only when [read]'s request identity is still the surface's current one AND — for a
+     * landed read — its captured generation and catalog version match the values the host captured
+     * on the main thread ([currentGeneration], [currentCatalogVersion]) at landing time. A
+     * superseded landing changes nothing; a matching request whose generation/catalog advanced
+     * ends its own loading and keeps the old rows/count labelled as old context, with the retry
+     * reset to the first page. Absorbed in every state other than AccountFlow.
      */
-    data class AccountFlowMorePageLanded(
-        val requestToken: Long,
-        val result: com.unifiedledger.application.LedgerFlowPageResult,
+    data class AccountFlowPageLanded(
+        val read: P806AccountPageRead,
+        val currentGeneration: Generation?,
+        val currentCatalogVersion: Long?,
     ) : P503UiEvent
 
     // ---- P8-01a i3a reconciliation events (D-308; spec sections 2.2/2.3/2.4/2.5/2.6) ----
@@ -520,8 +533,8 @@ sealed interface P503UiEvent {
     /**
      * Entry A (spec section 2.2): opens the account reconciliation queue from the account-flow
      * header. The host reads the FIRST queue page and the summary BEFORE dispatching (the
-     * SelectAccountFlow host-resolved-payload precedent); both are typed results, so a failed read
-     * lands as its own failure flag instead of an empty queue (V-9). [originScroll] is the
+     * host-resolved-payload precedent); both are typed results, so a failed read lands as its own
+     * failure flag instead of an empty queue (V-9). [originScroll] is the
      * account-flow position sampled at the click and carried into the flow the queue returns to
      * (V-10 返回保留滚动位). Effect only on AccountFlow.
      */

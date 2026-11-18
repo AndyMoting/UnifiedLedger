@@ -893,6 +893,10 @@ class LedgerLeaseScope(
                 manualRefundCandidateRead = facade.readManualRefundCandidates != null,
                 manualRefundSubmit = facade.submitEntry?.hasRefundDelegate == true,
                 manualRefundRecovery = facade.resolveManualRefundCommitStatus != null,
+                // P8-06 batch b (D-343 section 3.2.2): the account-postings read
+                // surface. A pure null check of the session-only query, never an invocation, so the
+                // asset row renders the account-flow entry only when that capability exists.
+                p806AccountPostings = facade.p806AccountPostingsQuery != null,
             )
         }
 
@@ -929,6 +933,15 @@ class LedgerLeaseScope(
     fun isCurrentGeneration(generation: Generation?): Boolean = !shouldDiscardLandingResult(generation, owner.activeGeneration)
 
     /**
+     * P8-06 batch b (D-343 section 3.7): the active graph's session catalog version, read on the
+     * landing hop for COMPARISON only — never used to stamp a payload or to fill a missing capture.
+     * The current graph only (no last-facade fallback): a not-Ready runtime answers `null`, which
+     * the account landing decision treats as a mismatch.
+     */
+    val currentCatalogVersion: Long?
+        get() = owner.facade?.currentCatalogVersion
+
+    /**
      * Runs [block] while holding an operation lease over the facade. Returns null (and runs
      * nothing) when the owner is not Ready — the typed `RuntimeNotReady` path, never a blocked
      * UI thread.
@@ -949,6 +962,31 @@ class LedgerLeaseScope(
 
     /** [withFacade] without the generation capture, for call sites that need no landing discard. */
     fun <T> probe(block: (P503LedgerFacade) -> T): T? = withFacade { facade, _ -> block(facade) }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the acquire-first lease order for the account reads.
+     *
+     * [leased]/[withFacade] resolve the facade BEFORE acquiring; a graph swap in that window could
+     * pair the old facade with the new generation. This path acquires first and resolves the
+     * facade of THAT graph, and the lease is released in `finally` in both outcomes. Every
+     * existing caller keeps the old order — this seam is only for the account-flow reads.
+     */
+    fun <T> leasedAccountRead(block: (P503LedgerFacade, Generation) -> T): LeaseOutcome<T> =
+        when (val acquired = owner.acquireLease()) {
+            LeaseAcquireResult.RuntimeNotReady -> LeaseOutcome.NotReady
+            is LeaseAcquireResult.Acquired -> {
+                try {
+                    val facade = owner.facade
+                    if (facade == null) {
+                        LeaseOutcome.NotReady
+                    } else {
+                        LeaseOutcome.Completed(acquired.lease.generation, block(facade, acquired.lease.generation))
+                    }
+                } finally {
+                    acquired.lease.close()
+                }
+            }
+        }
 
     /**
      * Section 4.3/4.4: like [withFacade], but reports whether a lease was acquired so a landing
@@ -1045,6 +1083,10 @@ data class LedgerSurfaces(
     // A pure field probe, never an invocation, so the drawer renders the 导出账目 row only when
     // the surface exists (the same "no dead affordance" convention as [backupExport]).
     val readableExport: Boolean = false,
+    // P8-06 batch b (D-343 section 3.2.2): the composition root's catalog session
+    // built the account-postings read. A pure field probe, never an invocation, so the asset row
+    // renders the account-flow entry only when the surface can actually be read.
+    val p806AccountPostings: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean

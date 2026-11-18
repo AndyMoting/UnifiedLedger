@@ -450,24 +450,26 @@ sealed interface P503AppState {
     ) : P503AppState
 
     /**
-     * P8-00 b3 (V-5; D-301 spec sections 1.3/2.6): the read-only account-flow secondary surface,
-     * reached only from an asset-screen account row (仅资产行可达). [overview] is carried so every
-     * exit restores the exact tab/month/payload (the preserved-overview discipline, C03).
+     * P8-00 b3 (V-5; D-301 spec sections 1.3/2.6), read source replaced by P8-06 batch b: the
+     * read-only account-flow secondary surface, reached only from an asset-screen account row
+     * (仅资产行可达). [overview] is carried so every exit restores the exact tab/month/payload (the
+     * preserved-overview discipline, C03).
      *
-     * The flow rows come from the EXISTING whole-ledger keyset page source
-     * ([com.unifiedledger.application.QueryLedgerFlowPage]); the host filters each page by the
-     * account's postings in memory (当前 200 行/页约定内， no data-layer change) and lands typed
-     * pages through [P503UiEvent.AccountFlowMorePageLanded]. [loadedRows] accumulates the
-     * filtered rows; [hasMoreWholeLedgerPages] mirrors the whole-ledger cursor (`null` = the
-     * whole-ledger walk ended — the honest end, never a fabricated total). No transaction-count
-     * claim is ever displayed (no per-account total exists); the loaded count renders as-is
-     * (「已加载 N 笔」). [rowsLoading]/[rowsLoadFailed]/[pageRequestToken] are the single-flight,
-     * fail-closed and late-write-guard triple, the [Search] page-token precedent.
+     * The rows are the account's OWN postings, read page by page through one P806 account
+     * snapshot per request ([com.unifiedledger.application.P806AccountPostingsQuery], page 100,
+     * its frozen order and cursor, full history). [loadedRows] accumulates the landed pages;
+     * [totalCount] is the snapshot's own exact posting count (`null` = no success yet, never a
+     * fabricated zero). The surface displays 「N 条账户变动」 from [totalCount] and per-row
+     * 「资金发生日期」 + this account's exact signed amount (D-343 section 3.2.2).
      *
-     * [pageRequestToken] is the monotonic request identity of the more-page read: every
-     * RequestAccountFlowMorePage dispatch advances it, the host presents it back on the landing,
-     * and the reducer applies a landing only when its token is still current — a read superseded
-     * by a newer request (or duplicated) can never append. Pure bookkeeping, never rendered.
+     * [nextCursor] is the P806 continuation cursor (`null` = the last page, or no success yet).
+     * [failure] is the last request's typed failure: the loaded rows/count stay visible beside it
+     * (fail-closed, never a silent truncation) and the cursor is kept so a retry re-requests the
+     * same page — except after a catalog advance, where the reducer resets the cursor so the
+     * retry reads the first page. [unwired] marks a graph without the account read (no empty
+     * claim). [pageRequestToken] is the HOST-assigned monotonic request identity: it outlives this
+     * state, so a close + same-account reopen keeps issuing newer tokens, and a landing applies
+     * only when its capture still matches (the search surface's late-write discipline).
      *
      * The surface's own scroll position rides [listScroll]: it is written by the reducer's
      * synchronous `SelectReconciliationQueue` transition (the sampled position from the event) and
@@ -482,24 +484,27 @@ sealed interface P503AppState {
         /** The account's exact display balance (minor units + currency) for the header大字. */
         val balanceMinorUnits: Long,
         val balanceCurrency: com.unifiedledger.domain.CurrencyUnit,
-        /** Filtered rows accumulated so far, in display order (the host's frozen sort). */
-        val loadedRows: List<com.unifiedledger.application.LedgerEntryRow>,
-        /**
-         * The whole-ledger walk's continuation cursor (`null` = the whole-ledger walk ended; with
-         * [rowsLoadFailed] also true, `null` = the FIRST read failed and its retry re-runs the
-         * first page — the F-Q1/F-Q2 fix round).
-         */
-        val nextWholeLedgerCursor: com.unifiedledger.application.LedgerCurrentStateReadPort.LedgerFlowCursor?,
-        /** True while a more-page read is in flight (a duplicate request is absorbed, 一次一页). */
+        /** The account's landed posting rows, in the read's own order (no re-sort). */
+        val loadedRows: List<com.unifiedledger.application.P806AccountPostingRow> = emptyList(),
+        /** The last successful snapshot's exact posting count (`null` = never succeeded). */
+        val totalCount: Int? = null,
+        /** The P806 continuation cursor (`null` = last page, or no success yet). */
+        val nextCursor: com.unifiedledger.application.P806AccountCursor? = null,
+        /** True while one account-page read is in flight (a duplicate request is absorbed). */
         val rowsLoading: Boolean = false,
+        /** The last request's typed failure; the loaded rows/count stay beside it. */
+        val failure: com.unifiedledger.application.P806SnapshotFailure? = null,
+        /** This graph wires no P806 account query: an explicit state, never an empty account. */
+        val unwired: Boolean = false,
         /**
-         * The last flow-read failure, fail-closed: a more-page failure keeps the loaded rows
-         * visible beside the retry, and the FIRST page's typed Unavailable lands here too
-         * (P8-00 b3 fix round F-Q1) — an unavailable first read must never degrade into the
-         * 「该账户暂无流水」 empty copy (R-Q06-4).
+         * The provenance of the loaded page set: the lease generation and the query-instance
+         * catalog version the last success was read under. A continuation may only run (and only
+         * append) while both still match; otherwise the surface retries from the first page and
+         * replaces the set whole (D-343 section 3.7).
          */
-        val rowsLoadFailed: Boolean = false,
-        /** The monotonic request identity of the more-page read (see the state KDoc). */
+        val loadedGeneration: Generation? = null,
+        val loadedCatalogVersion: Long? = null,
+        /** The host-assigned monotonic request identity of the account-page read (see the KDoc). */
         val pageRequestToken: Long = 0L,
         /**
          * P8-01a i3a (V-10 返回保留滚动位): the account-flow position sampled when the queue was
@@ -507,11 +512,8 @@ sealed interface P503AppState {
          */
         val listScroll: ListScrollPosition? = null,
     ) : P503AppState {
-        /** The honest loaded count: exactly the rows on screen, never a ledger-wide total. */
-        val loadedCount: Int get() = loadedRows.size
-
-        /** Whether more whole-ledger pages may still carry rows for this account. */
-        val hasMoreWholeLedgerPages: Boolean get() = nextWholeLedgerCursor != null
+        /** Whether the account postings walk may still continue. */
+        val hasMorePages: Boolean get() = nextCursor != null
     }
 
     /**

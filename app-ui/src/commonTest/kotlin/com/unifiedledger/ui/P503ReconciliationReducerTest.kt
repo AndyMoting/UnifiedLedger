@@ -83,7 +83,6 @@ class P503ReconciliationReducerTest {
             balanceMinorUnits = -3_580L,
             balanceCurrency = cny,
             loadedRows = emptyList(),
-            nextWholeLedgerCursor = null,
         )
 
     private fun queueRow(

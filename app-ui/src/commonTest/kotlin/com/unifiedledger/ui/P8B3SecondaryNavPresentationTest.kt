@@ -2,8 +2,9 @@ package com.unifiedledger.ui
 
 import com.unifiedledger.application.CreationEntry
 import com.unifiedledger.application.LedgerCurrentState
-import com.unifiedledger.application.LedgerCurrentStateReadPort
-import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.P806AccountCursor
+import com.unifiedledger.application.P806AccountPostingRow
+import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailLeg
 import com.unifiedledger.application.TransactionReconciliationProjection
@@ -29,15 +30,14 @@ import kotlin.time.Instant
  * P8-00 b3 (V-6/V-5) presentation decisions: the canvas-04 headline amount never fabricates a
  * net for a multi-leg transfer, the sub-line always renders, the version-history line carries
  * version number + both times + note (可空 → 无) + the current-version marker, and the
- * account-flow surface's filter/footer/empty/failure-face decisions are honest (a not-loaded
- * state never reads as empty; a typed Unavailable first read renders the failure face with its
- * retry — never the empty copy, the F-Q1 fix round; no total is ever claimed beyond the loaded
- * count; the row labels announce account names, F-Q5). Pure functions — no Compose runtime.
+ * account-flow surface's face/footer/count decisions are honest (P8-06 batch b: the explicit
+ * six faces with 「N 条账户变动」 and the occurred-at Shanghai local 「资金发生日期」 row axis; a
+ * loading or failed request keeps the previous payload labelled as old context, never a new
+ * zero; a typed failure renders its own copy and retry). Pure functions — no Compose runtime.
  */
 class P8B3SecondaryNavPresentationTest {
     private val cny = CurrencyUnit("CNY", 2)
     private val assetId = AccountId("account-asset")
-    private val expenseId = AccountId("account-expense")
     private val occurredAt = Instant.parse("2026-11-06T04:30:00Z")
 
     private fun detail(
@@ -127,163 +127,140 @@ class P8B3SecondaryNavPresentationTest {
         assertTrue(older.endsWith("备注：无"))
     }
 
-    // ---- 件 3: the account-flow presentation decisions ----
+    // ---- 件 3: the account-flow presentation decisions (P8-06 batch b) ----
+
+    private fun flowRow(
+        occurredAt: Instant = Instant.parse("2026-11-05T18:30:00Z"),
+        note: String? = "工作午餐",
+        amountMinor: Long = -3_200L,
+    ): P806AccountPostingRow =
+        P806AccountPostingRow(
+            postingId = PostingId("posting-a"),
+            transactionId = TransactionId("tx-1"),
+            occurredAt = occurredAt,
+            note = note,
+            kind = TransactionKind.EXPENSE,
+            amount = Money.ofMinor(amountMinor, cny),
+        )
+
+    private fun surface(
+        rows: List<P806AccountPostingRow> = emptyList(),
+        totalCount: Int? = null,
+        nextCursor: P806AccountCursor? = null,
+        rowsLoading: Boolean = false,
+        failure: P806SnapshotFailure? = null,
+        unwired: Boolean = false,
+    ): P503AppState.AccountFlow =
+        P503AppState.AccountFlow(
+            overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-p8b3"), transactions = emptyList(), balances = emptyList())),
+            accountId = assetId,
+            balanceLine = "默认支付账户 · 资产 · CNY",
+            balanceMinorUnits = 0L,
+            balanceCurrency = cny,
+            loadedRows = rows,
+            totalCount = totalCount,
+            nextCursor = nextCursor,
+            rowsLoading = rowsLoading,
+            failure = failure,
+            unwired = unwired,
+        )
 
     @Test
-    fun theRowHeadlineIsTheStatisticsDatePlusTheNoteOrTheKind() {
-        val row =
-            LedgerEntryRow(
-                transactionId = TransactionId("tx-1"),
-                currentVersionId = TransactionVersionId("version-1"),
-                kind = TransactionKind.EXPENSE,
-                occurredAt = occurredAt,
-                statisticsAt = occurredAt,
-                note = "工作午餐",
-                postings = emptyList(),
-            )
-        assertEquals("2026-11-06 · 工作午餐", accountFlowRowHeadlineText(row))
-        assertEquals("2026-11-06 · EXPENSE", accountFlowRowHeadlineText(row.copy(note = null)))
+    fun theRowHeadlineCarriesTheFundsDateInShanghaiLocalTime() {
+        // 2026-11-05T18:30:00Z is 2026-11-06 02:30 in Asia/Shanghai: the row must show the local
+        // funding day, not the UTC day — the same axis the P806 account page is sorted by.
+        assertEquals("资金发生日期 2026-11-06 · 工作午餐", accountFlowRowHeadlineText(flowRow()))
+        assertEquals("资金发生日期 2026-11-06 · EXPENSE", accountFlowRowHeadlineText(flowRow(note = null)))
     }
 
     @Test
-    fun theRowAccessibilityLabelAnnouncesAccountNamesNeverBareIds() {
-        // F-Q5 fix round: the flow-row label joins the flowRowContentDescription family (the
-        // P503LedgerViewPresentation.kt:412 shape) — legs announce the account NAME when known,
-        // falling back to the bare id only when the name table lacks the account.
-        val row =
-            LedgerEntryRow(
-                transactionId = TransactionId("tx-1"),
-                currentVersionId = TransactionVersionId("version-1"),
-                kind = TransactionKind.EXPENSE,
-                occurredAt = occurredAt,
-                statisticsAt = occurredAt,
-                note = "工作午餐",
-                postings =
-                    listOf(
-                        com.unifiedledger.domain.Posting(PostingId("posting-a"), expenseId, Money.ofMinor(-3_200L, cny)),
-                        com.unifiedledger.domain.Posting(PostingId("posting-b"), assetId, Money.ofMinor(3_200L, cny)),
-                    ),
-            )
-        val names = mapOf(expenseId to "餐费账户", assetId to "默认支付账户")
-        val label = accountFlowRowContentDescription(row, names)
-        assertTrue(label.startsWith("EXPENSE，统计时间 $occurredAt，备注 工作午餐；"))
-        assertTrue(label.contains("餐费账户 -32.00 CNY"))
-        assertTrue(label.contains("默认支付账户 32.00 CNY"))
-        assertFalse(label.contains("account-expense"))
-        assertFalse(label.contains("account-asset"))
-        // The unknown-name fallback stays the bare id (the family's degradation, honest).
-        val fallback = accountFlowRowContentDescription(row, emptyMap())
-        assertTrue(fallback.contains("account-expense -32.00 CNY"))
-        assertTrue(fallback.contains("account-asset 32.00 CNY"))
+    fun theRowAccessibilityLabelUsesTheSameFundsDateAxisAndTheExactLegAmount() {
+        val label = accountFlowRowContentDescription(flowRow(), "默认支付账户")
+        assertTrue(label.startsWith("EXPENSE，资金发生日期 2026-11-06，备注 工作午餐；"))
+        assertTrue(label.contains("默认支付账户 -32.00 CNY"))
+        // The bare account id never reaches TalkBack when the name is known.
+        assertFalse(label.contains("asset"))
     }
 
     @Test
-    fun theFooterFollowsTheWalkAndTheFailureMarkers() {
-        val base =
-            P503AppState.AccountFlow(
-                overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-p8b3"), transactions = emptyList(), balances = emptyList())),
-                accountId = assetId,
-                balanceLine = "默认支付账户 · 资产 · CNY",
-                balanceMinorUnits = 0L,
-                balanceCurrency = cny,
-                loadedRows = emptyList(),
-                nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0"),
-            )
+    fun theCountUsesTheAccountMovementWordingAndOnlyASuccessRendersIt() {
+        assertEquals("3 条账户变动", accountFlowCountText(3))
+        // The count is the snapshot's exact posting count — the rows on screen may be fewer only
+        // while a later page is loading, and a never-loaded surface has no count at all.
+        val loaded = surface(rows = listOf(flowRow()), totalCount = 3, nextCursor = P806AccountCursor(1_000L, "posting-a"))
+        assertEquals(3, loaded.totalCount)
+        assertNull(surface().totalCount)
+    }
+
+    @Test
+    fun theFailureCopyIsTypedPerReasonAndNeverAZero() {
+        val unavailable = accountFlowFailureText(P806SnapshotFailure.Unavailable)
+        val catalogAdvanced = accountFlowFailureText(P806SnapshotFailure.CatalogVersionMismatch)
+        assertTrue(unavailable.contains("重试"))
+        assertTrue(catalogAdvanced.contains("从第一页重试"))
+        assertEquals(
+            "账户目录引用不一致（缺账户 / 跨账本 / 币种不符），不可用。",
+            accountFlowFailureText(P806SnapshotFailure.CatalogReference(unresolvedAccount = 1L, crossLedgerAccount = 0L, currencyMismatch = 0L)),
+        )
+        assertEquals(
+            "存在无法解析的资金发生时间，账户流水不可用。",
+            accountFlowFailureText(P806SnapshotFailure.OccurredAtUnparseable),
+        )
+        assertEquals(
+            4,
+            setOf(
+                unavailable,
+                catalogAdvanced,
+                accountFlowFailureText(P806SnapshotFailure.InvalidState),
+                accountFlowFailureText(P806SnapshotFailure.MissingProjection),
+            ).size,
+        )
+    }
+
+    @Test
+    fun theBodyFacesAreExplicitAndAFailureNeverReadsAsAnEmptyAccount() {
+        assertEquals(AccountFlowBodyFace.NOT_LOADED, accountFlowBodyFace(surface()))
+        assertEquals(AccountFlowBodyFace.LOADING, accountFlowBodyFace(surface(rowsLoading = true)))
+        assertEquals(AccountFlowBodyFace.FAILED, accountFlowBodyFace(surface(failure = P806SnapshotFailure.Unavailable)))
+        assertEquals(AccountFlowBodyFace.EMPTY, accountFlowBodyFace(surface(totalCount = 0)))
+        assertEquals(AccountFlowBodyFace.LIST, accountFlowBodyFace(surface(rows = listOf(flowRow()), totalCount = 1)))
+        assertEquals(AccountFlowBodyFace.UNWIRED, accountFlowBodyFace(surface(unwired = true)))
+        // A loading continuation with a previous success stays the LIST face (rows + count kept),
+        // never the empty copy and never a fabricated zero.
+        val loadingMore = surface(rows = listOf(flowRow()), totalCount = 2, nextCursor = P806AccountCursor(1_000L, "posting-a"), rowsLoading = true)
+        assertEquals(AccountFlowBodyFace.LIST, accountFlowBodyFace(loadingMore))
+        assertEquals("以下为上次成功读取的内容，可能已过期。", accountFlowOldContextText(loadingMore))
+        assertNull(accountFlowOldContextText(surface(rows = listOf(flowRow()), totalCount = 2)))
+        // The empty copy belongs to the empty SUCCESS only.
+        assertEquals("该账户暂无流水。", ACCOUNT_FLOW_EMPTY_TEXT)
+        assertEquals("尚未加载账户流水。", ACCOUNT_FLOW_NOT_LOADED_TEXT)
+        assertEquals("账户流水不可用（本版本未接线）。", ACCOUNT_FLOW_UNWIRED_TEXT)
+    }
+
+    @Test
+    fun theNotLoadedFaceOffersAnExplicitLoadAction() {
+        // A surface whose first read never landed (no success, no failure) is NOT_LOADED and owns a
+        // real, explicitly labelled action — the screen renders it with the existing request handler,
+        // so nothing is re-read automatically.
+        assertEquals(AccountFlowBodyFace.NOT_LOADED, accountFlowBodyFace(surface()))
+        assertEquals("加载账户流水", accountFlowLoadActionLabel(AccountFlowBodyFace.NOT_LOADED))
+        assertEquals(ACCOUNT_FLOW_LOAD_ACTION_TEXT, accountFlowLoadActionLabel(AccountFlowBodyFace.NOT_LOADED))
+        // Every other face leaves the action to its own affordance (the footer's paging/retry) or
+        // offers nothing here; the empty success does not grow a load button.
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.LOADING))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.FAILED))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.EMPTY))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.LIST))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.UNWIRED))
+    }
+
+    @Test
+    fun theFooterFollowsTheP806CursorAndTheFailureMarker() {
+        val base = surface(totalCount = 1, nextCursor = P806AccountCursor(1_000L, "posting-a"))
         assertEquals(FlowFooterState.FETCH_MORE, accountFlowFooterState(base))
         assertEquals(FlowFooterState.LOADING, accountFlowFooterState(base.copy(rowsLoading = true)))
-        assertEquals(FlowFooterState.RETRY, accountFlowFooterState(base.copy(rowsLoadFailed = true)))
-        // cursor = null → the honest whole-ledger end.
-        assertEquals(FlowFooterState.END, accountFlowFooterState(base.copy(nextWholeLedgerCursor = null)))
-    }
-
-    @Test
-    fun anEmptyFlowIsHonestNeverAFabricatedZero() {
-        val surface =
-            P503AppState.AccountFlow(
-                overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-p8b3"), transactions = emptyList(), balances = emptyList())),
-                accountId = assetId,
-                balanceLine = "默认支付账户 · 资产 · CNY",
-                balanceMinorUnits = 0L,
-                balanceCurrency = cny,
-                loadedRows = emptyList(),
-                nextWholeLedgerCursor = null,
-            )
-        assertEquals("该账户暂无流水。", accountFlowEmptyText(surface))
-        // A walk still open with nothing loaded yet: the not-loaded state never reads as empty (F2).
-        assertEquals("该账户的流水尚未加载完成。", accountFlowEmptyText(surface.copy(nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0"))))
-    }
-
-    @Test
-    fun theLoadedCountIsExactlyTheRowsOnScreenNeverALedgerTotal() {
-        val row =
-            LedgerEntryRow(
-                transactionId = TransactionId("tx-1"),
-                currentVersionId = TransactionVersionId("version-1"),
-                kind = TransactionKind.EXPENSE,
-                occurredAt = occurredAt,
-                statisticsAt = occurredAt,
-                note = null,
-                postings = emptyList(),
-            )
-        val surface =
-            P503AppState.AccountFlow(
-                overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-p8b3"), transactions = emptyList(), balances = emptyList())),
-                accountId = assetId,
-                balanceLine = "默认支付账户 · 资产 · CNY",
-                balanceMinorUnits = 0L,
-                balanceCurrency = cny,
-                loadedRows = listOf(row, row.copy(transactionId = TransactionId("tx-2"))),
-                nextWholeLedgerCursor = null,
-            )
-        assertEquals(2, surface.loadedCount)
-        // hasMore mirrors the whole-ledger cursor only — never a per-account claim.
-        assertFalse(surface.hasMoreWholeLedgerPages)
-        assertTrue(surface.copy(nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0")).hasMoreWholeLedgerPages)
-    }
-
-    @Test
-    fun anUnavailableFirstPageRendersTheUnavailableFaceNeverTheEmptyCopy() {
-        // F-Q1 fix round: an Unavailable first page lands as the failure marker (rowsLoadFailed),
-        // and the body-face decision renders the UNAVAILABLE face — the failure copy with its
-        // retry affordance, NEVER the 「该账户暂无流水」 empty copy (the former test pinned the
-        // degradation; the contract is the opposite).
-        val surface =
-            P503AppState.AccountFlow(
-                overview = P503AppState.OverviewEmpty(LedgerCurrentState(LedgerId("ledger-p8b3"), transactions = emptyList(), balances = emptyList())),
-                accountId = assetId,
-                balanceLine = "默认支付账户 · 资产 · CNY",
-                balanceMinorUnits = 0L,
-                balanceCurrency = cny,
-                loadedRows = emptyList(),
-                nextWholeLedgerCursor = null,
-                rowsLoadFailed = true,
-            )
-        assertEquals(0, surface.loadedCount)
-        assertFalse(surface.hasMoreWholeLedgerPages)
-        assertEquals(AccountFlowBodyFace.UNAVAILABLE, accountFlowBodyFace(surface))
-        // The face decision never consults the empty copy on the failure path: the empty text
-        // still maps the END walk to 暂无流水, but the face routing keeps that copy UNREACHABLE
-        // while rowsLoadFailed holds.
-        assertEquals("该账户暂无流水。", accountFlowEmptyText(surface.copy(rowsLoadFailed = false)))
-        assertEquals(AccountFlowBodyFace.EMPTY_ENDED, accountFlowBodyFace(surface.copy(rowsLoadFailed = false)))
-        // The other faces hold their shapes. A more-page failure with zero rows BUT an open
-        // cursor (first page landed 0 account rows, then the more page failed — reachable) is
-        // still the UNAVAILABLE face: the failure outranks, and the retry continues at the
-        // cursor. A failureless open walk with zero rows stays LIST (已加载 0 笔 + 加载更多,
-        // never an empty claim); a failureless ended walk is the honest empty.
-        assertEquals(
-            AccountFlowBodyFace.UNAVAILABLE,
-            accountFlowBodyFace(surface.copy(nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0"))),
-        )
-        assertEquals(
-            AccountFlowBodyFace.LIST,
-            accountFlowBodyFace(
-                surface.copy(
-                    rowsLoadFailed = false,
-                    nextWholeLedgerCursor = LedgerCurrentStateReadPort.LedgerFlowCursor(0L, "tx-0"),
-                ),
-            ),
-        )
-        assertEquals(AccountFlowBodyFace.EMPTY_ENDED, accountFlowBodyFace(surface.copy(rowsLoadFailed = false, nextWholeLedgerCursor = null)))
+        assertEquals(FlowFooterState.RETRY, accountFlowFooterState(base.copy(failure = P806SnapshotFailure.Unavailable)))
+        // The P806 cursor exhausted: the honest end.
+        assertEquals(FlowFooterState.END, accountFlowFooterState(base.copy(nextCursor = null)))
     }
 }
