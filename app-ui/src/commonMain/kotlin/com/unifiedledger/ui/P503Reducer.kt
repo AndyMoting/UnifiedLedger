@@ -380,7 +380,7 @@ class P503ReducerImpl(
      * P8-00 b3 (V-5): the account-flow event family is state-preserving outside its designed
      * states (the backup-export family's central-guard shape). `SelectAccountFlow` has its one
      * effect on OverviewEmpty; `CloseAccountFlow`/`RequestAccountFlowMorePage`/
-     * `AccountFlowMorePageLanded` act only on AccountFlow. Everywhere else (including Ready
+     * `AccountFlowPageLanded` act only on AccountFlow. Everywhere else (including Ready
      * before the overview exists) every family event is absorbed, so a late/stale dispatch can
      * never reach `unhandled` and turn into an ISE (table 6.2a: 新事件在非设计态全部吸收).
      */
@@ -391,8 +391,8 @@ class P503ReducerImpl(
         when (event) {
             is P503UiEvent.SelectAccountFlow -> state !is P503AppState.OverviewEmpty
             P503UiEvent.CloseAccountFlow,
-            P503UiEvent.RequestAccountFlowMorePage,
-            is P503UiEvent.AccountFlowMorePageLanded,
+            is P503UiEvent.RequestAccountFlowMorePage,
+            is P503UiEvent.AccountFlowPageLanded,
             -> state !is P503AppState.AccountFlow
             else -> false
         }
@@ -1440,11 +1440,12 @@ class P503ReducerImpl(
                             state.copy(originListScroll = event.originScroll)
                         },
                 )
-            // P8-00 b3 (V-5): the asset-screen account row opens the read-only account-flow
-            // surface, the SelectTransaction shape (the host resolved the first page and the
-            // header line before dispatching; the reducer performs zero IO). The exact overview
-            // is preserved as the back-target with the sampled ACCOUNTS list position (the
-            // scroll-restoration mechanism; reference-identical when nothing was sampled).
+            // P8-00 b3 (V-5); P8-06 batch b read source: the asset-screen account row opens the
+            // read-only account-flow surface. The exact overview is preserved as the back-target
+            // with the sampled ACCOUNTS list position (the scroll-restoration mechanism;
+            // reference-identical when nothing was sampled). The surface opens in its explicit
+            // not-loaded state: the host requests the first P806 account page as a background read
+            // right after this event, so the reducer still performs zero IO.
             is P503UiEvent.SelectAccountFlow ->
                 P503AppState.AccountFlow(
                     overview =
@@ -1457,12 +1458,6 @@ class P503ReducerImpl(
                     balanceLine = event.balanceLine,
                     balanceMinorUnits = event.balanceMinorUnits,
                     balanceCurrency = event.balanceCurrency,
-                    loadedRows = accountFlowFilteredRows(event.firstPage, event.accountId),
-                    nextWholeLedgerCursor = (event.firstPage as? com.unifiedledger.application.LedgerFlowPageResult.Success)?.page?.nextCursor,
-                    // F-Q1 fix round: a typed Unavailable FIRST page rides the state as the
-                    // failure marker (rowsLoadFailed) — the surface renders the Unavailable copy
-                    // (never the empty-account copy) and the retry re-runs the first page.
-                    rowsLoadFailed = event.firstPage !is com.unifiedledger.application.LedgerFlowPageResult.Success,
                 )
             // P8-01a i3a (spec section 2.2 entry B): the import candidate row's
             // 「用于核对既有分录」 action opens the SAME candidate surface in evidence-focused mode,
@@ -1610,7 +1605,7 @@ class P503ReducerImpl(
             // the overview shows the fresh payload.
             is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
             // NOTE: the account-flow family (SelectAccountFlow/CloseAccountFlow/
-            // RequestAccountFlowMorePage/AccountFlowMorePageLanded), the version-history landing
+            // RequestAccountFlowMorePage/AccountFlowPageLanded), the version-history landing
             // and ListScrollRestored have no labels here — their central guards absorb them
             // everywhere outside their designed states BEFORE dispatch (a label would be a dead
             // branch, the OpenImportSurface precedent).
@@ -1724,15 +1719,17 @@ class P503ReducerImpl(
         }
 
     /**
-     * P8-00 b3 (V-5): the read-only account-flow state (D-301 spec sections 1.3/2.6). Only its
-     * designed events react: CloseAccountFlow/Back return to the exact preserved overview (tab,
-     * month and monthly payload kept — the C03 semantics, with the sampled ACCOUNTS scroll
-     * position riding it), RequestAccountFlowMorePage advances the single-flight marker and the
-     * request token, AccountFlowMorePageLanded applies a page only when its token is still
-     * current (the search surface's late-write discipline), and MonthlyActivityResult follows
-     * the read-only detail's 详情态同语义 precedent. Every other new event is absorbed (the
-     * central guards already keep the family non-throwing in every other state); every
-     * pre-existing event stays unlisted (ISE, G-B). The page has zero write entries.
+     * P8-00 b3 (V-5); P8-06 batch b read source: the read-only account-flow state (D-301 spec
+     * sections 1.3/2.6). Only its designed events react: CloseAccountFlow/Back return to the exact
+     * preserved overview (tab, month and monthly payload kept — the C03 semantics, with the
+     * sampled ACCOUNTS scroll position riding it), RequestAccountFlowMorePage sets the
+     * single-flight marker and stores the host's newer request token, AccountFlowPageLanded applies
+     * a page only when the production landing decision ([p806AccountLandingDecision]) still accepts
+     * its request identity, and MonthlyActivityResult follows the read-only detail's 详情态同语义
+     * precedent.
+     * Every other new event is absorbed (the central guards already keep the family non-throwing
+     * in every other state); every pre-existing event stays unlisted (ISE, G-B). The page has zero
+     * write entries.
      */
     private fun reduceAccountFlow(
         state: P503AppState.AccountFlow,
@@ -1743,11 +1740,18 @@ class P503ReducerImpl(
             // The host read the first queue page and the summary already; the two typed results
             // become the queue's two INDEPENDENT failure flags, so neither failure erases the other
             // payload (V-9).
-            is P503UiEvent.SelectReconciliationQueue ->
+            is P503UiEvent.SelectReconciliationQueue -> {
+                // The position sampled when the queue opened rides the carried flow, so 返回 from
+                // the queue lands on the same row (V-10 返回保留滚动位, F6). Leaving drops any
+                // in-flight account-page read's marker: the carried flow must not show a
+                // permanently-loading footer, and the return issues no read (P8-06 batch b:
+                // 回程不补读). The request token stays — it belongs to the host's monotonic
+                // sequence, and a landing that arrives after the return is still that same
+                // request, never a newer one. A flow with nothing in flight and no sample is
+                // carried by reference (no churn).
+                val carried = if (state.rowsLoading) state.copy(rowsLoading = false) else state
                 P503AppState.ReconciliationQueue(
-                    // The position sampled when the queue opened rides the carried flow, so 返回 from
-                    // the queue lands on the same row (V-10 返回保留滚动位, F6).
-                    returnTo = if (event.originScroll == null) state else state.copy(listScroll = event.originScroll),
+                    returnTo = if (event.originScroll == null) carried else carried.copy(listScroll = event.originScroll),
                     accountId = event.accountId,
                     accountLine = event.accountLine,
                     rows = accountReconciliationPageRows(event.firstPage),
@@ -1756,54 +1760,50 @@ class P503ReducerImpl(
                     rowsLoadFailed = event.firstPage !is com.unifiedledger.application.P801AccountReconciliationPageResult.Success,
                     summaryLoadFailed = event.summary !is com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success,
                 )
+            }
             // The flow's own restore slot is consumed exactly once (the queue slot's shape, F6).
             P503UiEvent.ListScrollRestored ->
                 if (state.listScroll == null) state else state.copy(listScroll = null)
             P503UiEvent.CloseAccountFlow -> state.overview
             // System back = CloseAccountFlow semantics (the CloseTransactionDetail back bullet).
             P503UiEvent.Back -> state.overview
-            P503UiEvent.RequestAccountFlowMorePage ->
+            is P503UiEvent.RequestAccountFlowMorePage ->
                 when {
                     // 一次一页: a request while one page read is in flight is absorbed (the token
-                    // does not advance — the in-flight read's landing stays appliable).
+                    // does not move — the in-flight read's landing stays appliable).
                     state.rowsLoading -> state
-                    // The whole-ledger walk ended and nothing failed; nothing more to request. A
-                    // FIRST-read failure also holds no cursor, but its retry must re-run the first
-                    // page (F-Q2 fix round) — only a failureless ended walk absorbs here.
-                    !state.hasMoreWholeLedgerPages && !state.rowsLoadFailed -> state
-                    else ->
+                    // The host's monotonic token must be NEWER than the stored one: a stale host
+                    // call (or a token that collided with a previous open) never restarts a read.
+                    event.requestToken <= state.pageRequestToken -> state
+                    // The walk ended and nothing failed; nothing more to request. A failure (with
+                    // or without a cursor) must be retryable, and a never-loaded surface must be
+                    // able to request its first page — only the failureless ended walk absorbs.
+                    !state.hasMorePages && state.totalCount != null && state.failure == null -> state
+                    else -> state.copy(rowsLoading = true, pageRequestToken = event.requestToken)
+                }
+            is P503UiEvent.AccountFlowPageLanded ->
+                when (val decision = p806AccountLandingDecision(state, event.read, event.currentGeneration, event.currentCatalogVersion)) {
+                    // A superseded/duplicated landing changes nothing: the newer request keeps its
+                    // own loading marker (taskbook item 3: 清除只匹配请求).
+                    P806AccountLandingDecision.STALE_REQUEST -> state
+                    // The matching request's graph was replaced: end only its loading, keep the
+                    // old payload labelled as old context and retry from the first page.
+                    P806AccountLandingDecision.STALE_GENERATION ->
                         state.copy(
-                            rowsLoading = true,
-                            // The failure marker is the LANDING's to clear or re-set (the fix
-                            // round): clearing it here would flash the empty copy over a
-                            // first-page retry in flight (zero rows, no cursor, no failure).
-                            pageRequestToken = state.pageRequestToken + 1,
+                            rowsLoading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable,
+                            nextCursor = null,
                         )
+                    // The catalog advanced: the old cursor must not be reused on the new catalog;
+                    // the explicit retry reads the first page (taskbook item 3).
+                    P806AccountLandingDecision.CATALOG_ADVANCED ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch,
+                            nextCursor = null,
+                        )
+                    P806AccountLandingDecision.ACCEPTED -> applyAccountFlowPage(state, event.read)
                 }
-            is P503UiEvent.AccountFlowMorePageLanded -> {
-                // Late-write guard: a landing whose read was superseded by a newer request (or
-                // duplicated) can never append — the token gate is the search surface's P8-02
-                // precedent. A landing for an absent marker is also dropped (fail-closed).
-                if (!state.rowsLoading || event.requestToken != state.pageRequestToken) {
-                    state
-                } else {
-                    when (val result = event.result) {
-                        is com.unifiedledger.application.LedgerFlowPageResult.Success -> {
-                            val filtered = accountFlowFilteredRows(result, state.accountId)
-                            state.copy(
-                                rowsLoading = false,
-                                rowsLoadFailed = false,
-                                loadedRows = state.loadedRows + filtered,
-                                nextWholeLedgerCursor = result.page.nextCursor,
-                            )
-                        }
-                        // Fail-closed: the loaded rows stay visible beside the retry state; the
-                        // cursor is kept so the retry re-requests the same page.
-                        com.unifiedledger.application.LedgerFlowPageResult.Unavailable ->
-                            state.copy(rowsLoading = false, rowsLoadFailed = true)
-                    }
-                }
-            }
             // 详情态同语义 (the read-only detail precedent): the monthly cycle landing updates the
             // stored overview in place; a typed failure leaves into the READ failure with this
             // overview preserved as the monthlyOverview.
@@ -2128,19 +2128,49 @@ class P503ReducerImpl(
     }
 
     /**
-     * P8-00 b3 (V-5): the account-filtered view of one whole-ledger flow page — the rows whose
-     * postings include [accountId], page-key order preserved (the display sort is applied by the
-     * host over the accumulated rows). The current 200-rows/page convention bounds the in-memory
-     * filter; no data-layer change exists behind it (the registered batch trade-off).
+     * P8-06 batch b (taskbook item 3): one ACCEPTED account-page read lands whole. A first-page
+     * read (cursor-less request — the open, a retry after a generation/catalog change) REPLACES
+     * the row set and count; a continuation page appends its rows and replaces the count with the
+     * snapshot's own exact total. The page order is the read's order (no re-sort), a typed failure
+     * keeps the rows/count/cursor (a catalog mismatch resets the cursor so the retry reads the
+     * first page), a refused lease is the typed Unavailable and an unwired graph is its own state
+     * — never an empty account.
      */
-    private fun accountFlowFilteredRows(
-        page: com.unifiedledger.application.LedgerFlowPageResult,
-        accountId: com.unifiedledger.domain.AccountId,
-    ): List<com.unifiedledger.application.LedgerEntryRow> =
-        when (page) {
-            is com.unifiedledger.application.LedgerFlowPageResult.Success ->
-                page.page.rows.filter { row -> row.postings.any { posting -> posting.accountId == accountId } }
-            com.unifiedledger.application.LedgerFlowPageResult.Unavailable -> emptyList()
+    private fun applyAccountFlowPage(
+        state: P503AppState.AccountFlow,
+        read: P806AccountPageRead,
+    ): P503AppState.AccountFlow =
+        when (read) {
+            is P806AccountPageRead.Landed ->
+                when (val result = read.result) {
+                    is com.unifiedledger.application.P806SnapshotResult.Success -> {
+                        val view = result.snapshot
+                        val firstPage = read.capture.request.cursor == null
+                        state.copy(
+                            loadedRows = if (firstPage) view.page.rows else state.loadedRows + view.page.rows,
+                            totalCount = view.totalCount,
+                            nextCursor = view.page.nextCursor,
+                            rowsLoading = false,
+                            failure = null,
+                            unwired = false,
+                        )
+                    }
+                    is com.unifiedledger.application.P806SnapshotResult.Failed ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = result.failure,
+                            nextCursor =
+                                if (result.failure == com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch) {
+                                    null
+                                } else {
+                                    state.nextCursor
+                                },
+                        )
+                }
+            is P806AccountPageRead.Refused ->
+                state.copy(rowsLoading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable)
+            is P806AccountPageRead.Unwired ->
+                state.copy(rowsLoading = false, unwired = true)
         }
 
     /**

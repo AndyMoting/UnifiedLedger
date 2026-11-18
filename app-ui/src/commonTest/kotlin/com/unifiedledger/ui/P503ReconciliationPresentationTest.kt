@@ -742,7 +742,6 @@ class P503ReconciliationPresentationTest {
                     balanceMinorUnits = 0L,
                     balanceCurrency = cny,
                     loadedRows = emptyList(),
-                    nextWholeLedgerCursor = null,
                 ),
             accountId = accountId,
             accountLine = "招商储蓄卡 · 资产 · CNY",

@@ -1287,12 +1287,69 @@ fun P503App(
     // ---------------------------------------------------------------- P8-00 b3 account-flow host surface (V-5)
 
     /**
-     * P8-00 b3 (V-5): opens the read-only account-flow page from an asset-screen account row. The
-     * host reads the FIRST whole-ledger flow page (and resolves the header's exact display
-     * balance + 副行) BEFORE dispatching — the SelectTransaction host-resolved-payload precedent;
-     * the reducer performs zero IO. The sampled [originListScroll] rides the event (the
-     * scroll-restoration mechanism). The typed Unavailable page lands too: the surface renders
-     * the honest failure copy, never an empty account (R-Q06-4).
+     * P8-06 batch b (taskbook item 1; D-343 sections 1.3/3.2.2): the account reads run through the
+     * owner's acquire-first lease order ([LedgerLeaseScope.leasedAccountRead]) — the existing
+     * generic `leased`/`probe` callers keep their own order untouched.
+     */
+    val accountReadLease = remember(ledger) { LeaseScopeAccountReadSeam(ledger) }
+
+    /**
+     * P8-06 batch b (taskbook item 3): the monotonic request-token sequence behind [accountReadLease].
+     * It outlives the surface state, so a close + same-account reopen can never reuse a token a
+     * previous open's in-flight read is still carrying.
+     */
+    val accountFlowRequestSequence = remember(ledger) { P806AccountRequestSequence() }
+
+    /**
+     * P8-06 batch b (taskbook items 2/3): one account-page read (first page, 加载更多, or the
+     * explicit retry). The host's monotonic sequence assigns the request token and the reducer
+     * stores it synchronously; the identity captured here binds that token, the account, the ledger
+     * and the cursor this read continues from. The read runs under the acquire-first lease and
+     * lands with the CURRENT generation and catalog version captured on the main thread — the
+     * landing decision compares them against the read's own capture, so a superseded read never
+     * touches a newer request (and a token from a closed surface can never match a reopened one).
+     */
+    fun requestAccountFlowMorePage() {
+        val current = latestState.value as? P503AppState.AccountFlow ?: return
+        if (current.rowsLoading) return
+        // The walk ended and nothing failed: nothing more to request (the reducer absorbs the
+        // event too; skipping the dispatch keeps the read off). A failure's retry and the
+        // not-loaded first page are both requests.
+        if (!current.hasMorePages && current.totalCount != null && current.failure == null) return
+        val cursor = current.nextCursor
+        val requestToken = accountFlowRequestSequence.next()
+        dispatch(P503UiEvent.RequestAccountFlowMorePage(requestToken))
+        val requesting = latestState.value as? P503AppState.AccountFlow ?: return
+        if (!requesting.rowsLoading || requesting.pageRequestToken != requestToken) return
+        val request =
+            P806AccountRequestIdentity(
+                token = requestToken,
+                ledgerId = requesting.overview.state.ledgerId,
+                accountId = requesting.accountId,
+                cursor = cursor,
+            )
+        scope.launch(Dispatchers.Default) {
+            val read = readP806AccountPage(accountReadLease, request)
+            scope.launch {
+                dispatch(
+                    P503UiEvent.AccountFlowPageLanded(
+                        read = read,
+                        currentGeneration = ledger.activeGenerationForLanding(),
+                        currentCatalogVersion = ledger.currentCatalogVersion,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * P8-00 b3 (V-5); P8-06 batch b read source: opens the read-only account-flow page from an
+     * asset-screen account row. The host resolves the header (the asset row's exact display
+     * balance + 副行) from the already-loaded overview and dispatches the open event; the first
+     * account page is then requested as one background P806 snapshot ([requestAccountFlowMorePage]),
+     * so the unindexed account scan never runs in the click handler. The sampled
+     * [originListScroll] rides the event (the scroll-restoration mechanism). The entry itself is
+     * gated on the P806 account capability probe at the call site, so no dead entry renders.
      */
     fun selectAccountFlow(
         accountId: AccountId,
@@ -1313,51 +1370,18 @@ fun P503App(
         // name · currency.
         val balanceLine =
             listOfNotNull(accountName, kindText, balanceCurrency.code).joinToString(" · ")
-        val firstPage =
-            ledger.probe { facade -> facade.queryLedgerFlowPage?.firstPage() }
-                ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
         dispatch(
             P503UiEvent.SelectAccountFlow(
                 accountId = accountId,
                 balanceLine = balanceLine,
                 balanceMinorUnits = balanceMinorUnits,
                 balanceCurrency = balanceCurrency,
-                firstPage = firstPage,
                 originListScroll = originListScroll,
             ),
         )
-    }
-
-    /**
-     * P8-00 b3 (V-5): one more whole-ledger flow page behind the open account-flow surface. The
-     * reducer's request event assigned the request token synchronously (a landing whose token is
-     * no longer current can never append — the search surface's P8-02 token gate is the same
-     * discipline); the read runs under a lease and lands typed. A cursor-less surface whose walk
-     * ENDED requests nothing.
-     *
-     * P8-00 b3 fix round (F-Q2): a cursor-less surface carrying the FIRST-read failure
-     * ([P503AppState.AccountFlow.rowsLoadFailed], zero rows) retries the FIRST page —
-     * [com.unifiedledger.application.QueryLedgerFlowPage.firstPage], since the initial read never
-     * landed. Without this branch the retry used to return silently at the cursor gate.
-     */
-    fun requestAccountFlowMorePage() {
-        val current = latestState.value as? P503AppState.AccountFlow ?: return
-        if (current.rowsLoading) return
-        val cursor = current.nextWholeLedgerCursor
-        // The walk ended and nothing failed: nothing more to request (the reducer absorbs the
-        // event too; skipping the dispatch keeps the read off).
-        if (cursor == null && !current.rowsLoadFailed) return
-        dispatch(P503UiEvent.RequestAccountFlowMorePage)
-        val requestToken = (latestState.value as? P503AppState.AccountFlow)?.pageRequestToken ?: return
-        val result =
-            ledger.probe { facade ->
-                facade.queryLedgerFlowPage?.let { query ->
-                    // Retry-the-first-page (F-Q2) when no cursor exists to continue from; the
-                    // ordinary 加载更多 continues the walk at the cursor.
-                    if (cursor != null) query.pageAfter(cursor) else query.firstPage()
-                }
-            } ?: com.unifiedledger.application.LedgerFlowPageResult.Unavailable
-        dispatch(P503UiEvent.AccountFlowMorePageLanded(requestToken, result))
+        // One background P806 account snapshot for the first page: the request token is assigned
+        // here, the read runs off the UI thread and lands through the identity gate.
+        requestAccountFlowMorePage()
     }
 
     /**
@@ -1466,7 +1490,7 @@ fun P503App(
     /**
      * P8-01a i3a (spec section 2.2 entry A; D-308 items 2/6/8): opens the account reconciliation queue
      * from the account-flow header. The host reads the FIRST queue page and the summary BEFORE
-     * dispatching (the SelectAccountFlow host-resolved-payload precedent). The two reads are
+     * dispatching (the host-resolved-payload precedent). The two reads are
      * INDEPENDENT and each maps its own failure to its own typed result, so a failed read lands as
      * its own flag instead of an empty queue or a zero total (spec section 2.3, V-9).
      */
@@ -5090,11 +5114,13 @@ fun P503App(
                                             // P7-08 08.C: the same cached authority feeds the two new
                                             // sections (null = loading/unwired: honest 载入中 placeholder).
                                             tagMerchantAuthority = cachedTagMerchantAuthority,
-                                            // P8-00 b3 (V-5): the account-flow entry — the open reads the
-                                            // first page and dispatches (the host-resolved-payload
-                                            // precedent); the scroll pair rides the seam (返回保滚动位).
+                                            // P8-06 batch b (taskbook item 1): the account-flow entry
+                                            // consumes the P806 account-postings read — the capability
+                                            // probe gates it, so an unwired graph renders no dead entry.
+                                            // The open dispatches, then reads the first page in the
+                                            // background; the scroll pair rides the seam (返回保滚动位).
                                             onOpenAccountFlow =
-                                                if (ledger.surfaces.ledgerView) {
+                                                if (ledger.surfaces.p806AccountPostings) {
                                                     { accountId -> selectAccountFlow(accountId, accountsScrollSampler()) }
                                                 } else {
                                                     null

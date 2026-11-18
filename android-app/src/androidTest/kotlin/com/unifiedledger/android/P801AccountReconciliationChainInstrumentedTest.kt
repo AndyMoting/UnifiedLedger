@@ -233,7 +233,6 @@ class P801AccountReconciliationChainInstrumentedTest {
                 balanceMinorUnits = 0L,
                 balanceCurrency = P801ChainFacts.currency,
                 loadedRows = emptyList(),
-                nextWholeLedgerCursor = null,
             )
 
         val originScroll = ListScrollPosition(3, 24)

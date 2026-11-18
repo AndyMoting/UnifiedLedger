@@ -20,41 +20,36 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.P806AccountPostingRow
+import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.ui.theme.LocalP8Palette
 
 /**
- * P8-00 b3 (V-5; D-301 spec sections 1.3/2.6): the read-only account-flow secondary surface —
- * the canvas-06 face reached from an asset-screen account row. The header is the account's
- * balance headline + the 「名称 · 类型 · 币种」-style副行 the host projected at open time; the
- * rows are the account's legs filtered from the existing whole-ledger keyset pages (200 行/页
- * 约定内的内存过滤， no data-layer change), each carrying date + note/kind + that account's exact
- * leg amount through [formatMinorUnits] (Long minor units, never floating point).
+ * P8-00 b3 (V-5; D-301 spec sections 1.3/2.6); read source replaced by P8-06 batch b (D-343
+ * sections 1.3/3.2.2/3.7): the read-only account-flow secondary surface — the canvas-06 face
+ * reached from an asset-screen account row. The header is the account's balance headline + the
+ * 「名称 · 类型 · 币种」-style副行 the host projected at open time; the rows are the account's own
+ * postings from one P806 account snapshot per request (page 100, the read's own order and cursor,
+ * full history), each carrying 「资金发生日期」 (the occurred-at Shanghai local day, the same axis
+ * as the read's sort) + note/kind + that account's exact signed leg amount through
+ * [formatMinorUnits] (Long minor units, never floating point). The success count is the
+ * snapshot's exact posting count rendered as 「N 条账户变动」.
  *
- * 诚实呈现: no per-account total exists, so NO count is ever claimed beyond the rows actually
- * loaded ([P503AppState.AccountFlow.loadedCount], rendered as-is); the footer follows the loaded
- * whole-ledger cursor — 加载更多 while the walk continues, 已到末页 once it ends (an honest
- * whole-ledger end, not a per-account claim), and the typed retry state keeps every loaded row
- * visible beside it (R-Q06-4 fail-closed, never a silent truncation). An empty flow renders the
- * honest empty copy — never a fabricated zero (the canvas-06 空态 ruling; the widget-snapshot
- * 不可用-over-zero precedent).
+ * 显式六态 (taskbook item 4): an unwired graph, the not-loaded window, an in-flight read, a typed
+ * failure, an empty success and a non-empty success are distinct faces. A loading or failed
+ * request keeps the last success visible and LABELS it as old context — it never renders as a new
+ * zero; only an empty SUCCESS renders 「该账户暂无流水」. The typed failure copy is per failure
+ * reason (a catalog advance says the retry starts from the first page).
  *
- * 空流水判定 is itself a pure function ([accountFlowEmptyText]): an empty first page of a walk
- * that has ended is the honest 「该账户暂无流水」; an empty first page with the walk still open
- * says the account's flow has not loaded yet — a not-loaded state never reads as empty (the F2
- * 月度数据未加载 precedent). The FIRST read's typed Unavailable outranks every empty copy
- * ([accountFlowBodyFace], the F-Q1 fix round): an unavailable read renders the failure face with
- * its real retry affordance — it is never degraded into 「该账户暂无流水」.
- *
- * The body scrolls ([androidx.compose.foundation.verticalScroll], the F-Q3 fix round): multi-page
- * content is physically reachable. P8-01a i3a (F6/V-10): the surface's [ScrollState] is HOISTED the
- * way the assets list already is, so the position sampled when the reconciliation queue opened is
- * restored on return and consumed once through `ListScrollRestored`.
+ * The body scrolls ([androidx.compose.foundation.verticalScroll]); the surface's [ScrollState] is
+ * hoisted the way the assets list already is, so the position sampled when the reconciliation
+ * queue opened is restored on return and consumed once through `ListScrollRestored`.
  *
  * Zero write paths, zero reconciliation writes, zero accounting semantics change: the surface is
  * display-only; the only exits are 返回 (the host's Back dispatch) and the body/footer's
- * load-more/retry (both read-only page reads).
+ * load-more/retry (both read-only page reads). No transaction-detail entry exists here (P8-06
+ * batch b leaves the typed return target to a later batch).
  */
 @Composable
 internal fun P503AccountFlowScreen(
@@ -111,25 +106,39 @@ internal fun P503AccountFlowScreen(
             color = palette.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
+        val accountName = accountNames[state.accountId] ?: state.accountId.value
         when (accountFlowBodyFace(state)) {
-            // F-Q1 fix round: the typed Unavailable FIRST read renders the failure face with its
-            // real retry affordance (F-Q2) — never the 「该账户暂无流水」 empty copy.
-            AccountFlowBodyFace.UNAVAILABLE -> AccountFlowRetryFace(state, onRetryLoadMore)
-            AccountFlowBodyFace.EMPTY_ENDED ->
-                Text(
-                    accountFlowEmptyText(state),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            // The list face — also the zero-rows-with-an-open-walk shape (已加载 0 笔 + 加载更多,
-            // never an empty claim); a failed more-page keeps it with the footer's RETRY.
+            AccountFlowBodyFace.UNWIRED -> Text(ACCOUNT_FLOW_UNWIRED_TEXT, style = MaterialTheme.typography.bodyLarge)
+            AccountFlowBodyFace.NOT_LOADED -> Text(ACCOUNT_FLOW_NOT_LOADED_TEXT, style = MaterialTheme.typography.bodyLarge)
+            AccountFlowBodyFace.LOADING -> Text(ACCOUNT_FLOW_LOADING_TEXT, style = MaterialTheme.typography.bodyLarge)
+            AccountFlowBodyFace.FAILED -> AccountFlowRetryFace(state, onRetryLoadMore)
+            AccountFlowBodyFace.EMPTY -> Text(ACCOUNT_FLOW_EMPTY_TEXT, style = MaterialTheme.typography.bodyLarge)
             AccountFlowBodyFace.LIST -> {
                 Text(
-                    "已加载 ${state.loadedCount} 笔",
+                    accountFlowCountText(state.totalCount ?: 0),
                     style = MaterialTheme.typography.bodySmall,
                     color = palette.onSurfaceVariant,
                 )
+                // 旧上下文 (taskbook item 4): a loading/failed request keeps the last success
+                // visible, labelled as the previous payload — never disguised as a new zero.
+                accountFlowOldContextText(state)?.let { oldContext ->
+                    Text(
+                        oldContext,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.onSurfaceVariant,
+                    )
+                }
+                // A failed continuation shows its typed copy beside the previous payload — the
+                // failure is never disguised as the last page.
+                state.failure?.let { failure ->
+                    Text(
+                        accountFlowFailureText(failure),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 state.loadedRows.forEach { row ->
-                    P8AccountFlowRow(row, accountNames)
+                    P8AccountFlowRow(row, accountName)
                     HorizontalDivider(color = palette.divider)
                 }
                 AccountFlowFooter(state, onLoadMore, onRetryLoadMore)
@@ -139,41 +148,76 @@ internal fun P503AccountFlowScreen(
 }
 
 /**
- * P8-00 b3 fix round (F-Q1): the body face decision over the surface's own markers. A typed
- * Unavailable FIRST read rides the state as [P503AppState.AccountFlow.rowsLoadFailed] with zero
- * rows, so the failure face outranks the empty copy (a typed failure never degrades into
- * 暂无流水, R-Q06-4). A more-page failure WITH loaded rows keeps the LIST face — the loaded rows
- * stay visible beside the footer's retry (the fail-closed 失败保行 discipline, unchanged); the
- * zero-rows open-walk shape stays the LIST face (已加载 0 笔 + 加载更多, never an empty claim),
- * and the walk-ended zero-rows shape is [accountFlowEmptyText]'s honest empty copy. Every other
- * previously reachable shape renders exactly as before the fix round; the first-read failure —
- * which used to degrade into the empty copy — gained its own face, and the zero-rows more-page
- * failure with an open cursor moved from the dead copy into the UNAVAILABLE face (FD-1, strictly
- * more honest).
- *
- * [UNAVAILABLE] is the read-failed-with-zero-rows face (its real retry affordance, F-Q2);
- * [EMPTY_ENDED] is the walk-ended zero-rows honest empty copy; [LIST] is the list face (count +
- * rows + footer, also the zero-rows open-walk shape).
+ * P8-06 batch b (taskbook item 4): the body-face decision over the surface's explicit state.
+ * [UNWIRED] is a graph without the account read; [NOT_LOADED] is the not-requested window (never
+ * an empty claim); [LOADING] is a first-page read in flight; [FAILED] is a typed failure with no
+ * success yet; [EMPTY] is an empty SUCCESS; [LIST] is a non-empty success — also the shape where a
+ * loading/failed continuation keeps the previous rows with their old-context label and the
+ * footer's loading/retry affordance.
  */
 internal enum class AccountFlowBodyFace {
-    UNAVAILABLE,
-    EMPTY_ENDED,
+    UNWIRED,
+    NOT_LOADED,
+    LOADING,
+    FAILED,
+    EMPTY,
     LIST,
 }
 
 /** The pure body-face decision the screen branches on (see [AccountFlowBodyFace]). */
 internal fun accountFlowBodyFace(state: P503AppState.AccountFlow): AccountFlowBodyFace =
     when {
-        state.rowsLoadFailed && state.loadedRows.isEmpty() -> AccountFlowBodyFace.UNAVAILABLE
-        state.loadedRows.isEmpty() && !state.hasMoreWholeLedgerPages -> AccountFlowBodyFace.EMPTY_ENDED
+        state.unwired -> AccountFlowBodyFace.UNWIRED
+        state.totalCount == null && state.rowsLoading -> AccountFlowBodyFace.LOADING
+        state.totalCount == null && state.failure != null -> AccountFlowBodyFace.FAILED
+        state.totalCount == null -> AccountFlowBodyFace.NOT_LOADED
+        state.totalCount == 0 && state.failure == null -> AccountFlowBodyFace.EMPTY
         else -> AccountFlowBodyFace.LIST
     }
 
+/** The explicit not-loaded copy: the surface has issued no successful read yet. */
+internal const val ACCOUNT_FLOW_NOT_LOADED_TEXT: String = "尚未加载账户流水。"
+
+/** The first-page read in flight with no previous success. */
+internal const val ACCOUNT_FLOW_LOADING_TEXT: String = "正在加载账户流水…"
+
+/** The graph wires no account-postings read: its own state, never an empty account. */
+internal const val ACCOUNT_FLOW_UNWIRED_TEXT: String = "账户流水不可用（本版本未接线）。"
+
+/** The empty SUCCESS copy: only an empty success may render it. */
+internal const val ACCOUNT_FLOW_EMPTY_TEXT: String = "该账户暂无流水。"
+
+/** The success count in the business wording (D-343 section 3.4: 「N 条账户变动」). */
+internal fun accountFlowCountText(totalCount: Int): String = "$totalCount 条账户变动"
+
 /**
- * P8-00 b3 fix round (F-Q2): the failure face with a REAL retry affordance (an OutlinedButton,
- * the footer's RETRY shape) — the failure copy is never a clickable-looking dead text. While the
- * retry read is in flight the face says so instead of offering an inert button (一次一页 absorbs
- * a duplicate click; the honest loading copy, the footer's LOADING precedent).
+ * P8-06 batch b (taskbook item 4): the old-context label of a previous success kept beside a
+ * loading or failed request (`null` = no previous success, or the request is settled). The label
+ * never turns a failed/loading request into a zero or a fresh payload.
+ */
+internal fun accountFlowOldContextText(state: P503AppState.AccountFlow): String? =
+    if (state.totalCount != null && (state.rowsLoading || state.failure != null)) {
+        "以下为上次成功读取的内容，可能已过期。"
+    } else {
+        null
+    }
+
+/** The typed failure copy — one reason per line, never a zero and never an empty account. */
+internal fun accountFlowFailureText(failure: P806SnapshotFailure): String =
+    when (failure) {
+        P806SnapshotFailure.Unavailable -> "账户流水读取失败，可点击重试。"
+        P806SnapshotFailure.CatalogVersionMismatch -> "账目目录已更新，请从第一页重试。"
+        is P806SnapshotFailure.CatalogReference -> "账户目录引用不一致（缺账户 / 跨账本 / 币种不符），不可用。"
+        P806SnapshotFailure.MissingProjection -> "账目缺少统计时间投影，账户流水不可用。"
+        P806SnapshotFailure.OccurredAtUnparseable -> "存在无法解析的资金发生时间，账户流水不可用。"
+        P806SnapshotFailure.InvalidState -> "账户流水数据不一致，不可用。"
+        P806SnapshotFailure.InvalidWindow -> "账户流水时间范围无效，不可用。"
+    }
+
+/**
+ * The typed-failure face with a REAL retry affordance (an OutlinedButton, the footer's RETRY
+ * shape) — the failure copy is never a clickable-looking dead text. While the retry read is in
+ * flight the face says so instead of offering an inert button (一次一页 absorbs a duplicate click).
  */
 @Composable
 private fun AccountFlowRetryFace(
@@ -181,10 +225,10 @@ private fun AccountFlowRetryFace(
     onRetry: () -> Unit,
 ) {
     if (state.rowsLoading) {
-        Text("正在重试…", style = MaterialTheme.typography.bodyMedium)
+        Text(ACCOUNT_FLOW_LOADING_TEXT, style = MaterialTheme.typography.bodyMedium)
     } else {
         Text(
-            "流水读取失败，可点击重试。",
+            accountFlowFailureText(state.failure ?: P806SnapshotFailure.Unavailable),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.error,
         )
@@ -194,17 +238,16 @@ private fun AccountFlowRetryFace(
 }
 
 /**
- * P8-00 b3: one flow row of the account surface (the canvas-06 行 = 日期 + 备注/类目 + 该账户腿
- * 金额). The visible line carries the statistics date, the note (else the effective kind) and the
- * exact amounts of the row's legs that touch the flow account (the reducer only accumulates rows
- * whose postings include the account, so every posting shown is that account's — a transfer shows
- * both its legs here, each exact, never a fabricated net). TalkBack reads the whole row's exact
- * values through [accountFlowRowContentDescription].
+ * One posting row of the account surface (the canvas-06 行 = 资金发生日期 + 备注/类目 + 该账户腿
+ * 金额). The visible line carries 「资金发生日期」 and the occurred-at Shanghai local day — the same
+ * axis the page is sorted by (D-343 section 3.2.2) — the note (else the effective kind) and this
+ * account's exact signed leg amount. TalkBack reads the same values through
+ * [accountFlowRowContentDescription].
  */
 @Composable
 private fun P8AccountFlowRow(
-    row: LedgerEntryRow,
-    accountNames: Map<AccountId, String>,
+    row: P806AccountPostingRow,
+    accountName: String,
 ) {
     val palette = LocalP8Palette.current
     Column(
@@ -212,70 +255,55 @@ private fun P8AccountFlowRow(
             Modifier
                 .fillMaxWidth()
                 .padding(vertical = 6.dp)
-                // C04: the row announces its exact values (date, note, every leg with sign and
-                // currency) as one node.
-                .semantics { contentDescription = accountFlowRowContentDescription(row, accountNames) },
+                // C04: the row announces its exact values (the date axis, note, the leg with sign
+                // and currency) as one node.
+                .semantics { contentDescription = accountFlowRowContentDescription(row, accountName) },
     ) {
         Text(
             accountFlowRowHeadlineText(row),
             style = MaterialTheme.typography.bodyMedium,
         )
-        row.postings.forEach { posting ->
-            Text(
-                "${accountNames[posting.accountId] ?: posting.accountId.value} " +
-                    formatMinorUnits(posting.amount.minorUnits, posting.amount.currency.precision) +
-                    " ${posting.amount.currency.code}",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (posting.amount.minorUnits < 0L) palette.expense else palette.onSurface,
-            )
-        }
+        Text(
+            "$accountName " +
+                formatMinorUnits(row.amount.minorUnits, row.amount.currency.precision) +
+                " ${row.amount.currency.code}",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (row.amount.minorUnits < 0L) palette.expense else palette.onSurface,
+        )
     }
 }
 
-/** P8-00 b3: the visible headline of one flow row — statistics date + note (else the kind). */
-internal fun accountFlowRowHeadlineText(row: LedgerEntryRow): String {
-    val date = row.statisticsAt.toString().take(10)
-    return "$date · " + (row.note ?: row.kind.name)
-}
-
-/** P8-00 b3: the honest empty copy (the not-loaded state never reads as empty, the F2 precedent). */
-internal fun accountFlowEmptyText(state: P503AppState.AccountFlow): String =
-    if (state.nextWholeLedgerCursor != null) {
-        "该账户的流水尚未加载完成。"
-    } else {
-        "该账户暂无流水。"
-    }
+/** The visible headline of one posting row: 「资金发生日期」 + the Shanghai local day + the note/kind. */
+internal fun accountFlowRowHeadlineText(row: P806AccountPostingRow): String =
+    "资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + " · " + (row.note ?: row.kind.name)
 
 /**
- * P8-00 b3: the flow row's accessibility label (C04, the [flowRowContentDescription] family,
- * P503LedgerViewPresentation.kt:412 shape — F-Q5 fix round): effective kind, the statistics time,
- * the note and every exact posting amount with the account NAME (a bare id never reaches
- * TalkBack when the name is known), sign and currency code.
+ * The posting row's accessibility label: effective kind, the SAME 「资金发生日期」 + Shanghai local
+ * day as the visible line, the note and the exact signed leg amount with the account name, sign and
+ * currency code (the [flowRowContentDescription] family shape).
  */
 internal fun accountFlowRowContentDescription(
-    row: LedgerEntryRow,
-    accountNames: Map<AccountId, String>,
+    row: P806AccountPostingRow,
+    accountName: String,
 ): String {
-    val head = "${row.kind}，统计时间 ${row.statisticsAt}" + (row.note?.let { "，备注 $it" } ?: "")
-    val legs =
-        row.postings.joinToString("；") { posting ->
-            "${accountNames[posting.accountId] ?: posting.accountId.value} " +
-                formatMinorUnits(posting.amount.minorUnits, posting.amount.currency.precision) +
-                " ${posting.amount.currency.code}"
-        }
-    return if (legs.isEmpty()) head else "$head；$legs"
+    val head = "${row.kind}，资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + (row.note?.let { "，备注 $it" } ?: "")
+    val leg =
+        "$accountName " +
+            formatMinorUnits(row.amount.minorUnits, row.amount.currency.precision) +
+            " ${row.amount.currency.code}"
+    return "$head；$leg"
 }
 
 /**
- * P8-00 b3: the footer decision (the [flowFooterState] family, over the account surface's own
- * fields). While the whole-ledger walk continues the 加载更多 affordance stays; 已到末页 is the
- * honest whole-ledger end (a row could still land in a later page only if the walk is open).
+ * P8-06 batch b: the footer decision (the [flowFooterState] family, over the account surface's own
+ * fields). While the posting walk continues the 加载更多 affordance stays; 已到末页 is the honest
+ * P806 cursor end, never a fabricated total.
  */
 internal fun accountFlowFooterState(state: P503AppState.AccountFlow): FlowFooterState =
     when {
         state.rowsLoading -> FlowFooterState.LOADING
-        state.rowsLoadFailed -> FlowFooterState.RETRY
-        state.hasMoreWholeLedgerPages -> FlowFooterState.FETCH_MORE
+        state.failure != null -> FlowFooterState.RETRY
+        state.hasMorePages -> FlowFooterState.FETCH_MORE
         else -> FlowFooterState.END
     }
 
@@ -292,7 +320,7 @@ private fun AccountFlowFooter(
  * The keyset-page footer shared by every paged list of the P8-00/P8-01a read surfaces (F12b): the
  * account flow and the reconciliation queue render the SAME copy and the same affordances instead
  * of a second three-line copy. [FlowFooterState] is the frozen vocabulary; 已到末页 is the honest
- * keyset end, never a per-account claim.
+ * keyset end of the surface's own read.
  */
 @Composable
 internal fun P8FlowFooter(
