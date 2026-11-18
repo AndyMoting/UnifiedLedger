@@ -7909,3 +7909,35 @@ seekReturn marker=false steps=8 stationary=true
 **残留风险：** ①`179,995 ms` 的成因仍未定：下一跑 `scale.segment` 的九行（replay 七 + final_reopen 两）会把它切开，若某一段独占大头，则那条段就是下一次决定的对象。②若证明是重试栈，则日志门的 300 s 预算必须按段预算夹紧——它是唯一一个「预算大于所属段上界」的等待。③360 s 只是把抛硬币变成有余量的判断，不解释耗时本身；两条段仍会随时长波动，下一跑若超过 360 s 会以该段自己的上限响亮失败（并带分段日志）。④`final_reopen` 的 168,925 ms 里有 `reopenTail` 的经济 UI 段与一次全量快照，分段日志这次会第一次给出它的拆解。
 
 **关联决定：** D-350（同类的显式上界修复，本条处理的是「默认值」而非「被抬高的字面量」）、D-356（本条的证据来源：段表与 5 ms 余量）、D-353（使这两个段第一次被执行）、D-217 round 21（`stage()` 的 180,000 ms 默认与其后的 reopen 显式上界）、D-212（每次尝试 60 s 的 busy_timeout）、D-211（日志静默门与它的 300 s 预算）、D-209（12 次重试与退避）、D-348（使一次 61k 快照降到 ~14 s，本条据此估出快照地板价）。
+
+## D-358 第二跑通与分段归因收口：180 s 是整表快照不是锁，30 s 装载等待是缓存刷新节拍
+
+**状态：** 已批准（2026-11-18；run `44211522310` @ `0bb51017` 实测；**纯记录条目，不改任何代码、测试或预算**）
+
+**实证（run `44211522310` @ `0bb51017d10fbc21e4d89b1fddc0c0db84334bc6`）：**
+- `host.json`：`status: PASS`、`mode: maximum`、`timed_out: false`、`crash_detected: false`、`logcat_gaps: []`、`elapsed_seconds: 3639.117110882`、`execution_budget_seconds: 19800`、`outer_remaining_seconds_at_start: 20280.48`。
+- `junit.xml`：`tests="6" failures="0" errors="0" skipped="0"`；`prepare` 729.004 s、`chain` 871.649 s、`reopen` 86.026 s、`replay` 146.177 s、`final-reopen` 147.742 s、`traversal` 1582.421 s。段表（`device.json`）：`preparation` 722.4、`coldstart` 27.7、`saf_import` 259.3、`detail_decision` 303.0、`batch_confirmation` 0.062、`group_disposition` 272.2、`detail_monthly_refresh` 5.6、`reopen` 81.6、`same_request_replay` 144.142、`final_reopen` 142.589、`traversal` 1577.343 s。
+- traversal 证据与 run 25 完全相同：`observedCandidates=600`、`traversalRowsCollected=600`、`traversalPages=12`、`traversalPageClicks=11`、`traversalDeepRowPages=1220`、`traversalScope=bounded-contiguous-prefix`、`traversalWindowOrder=candidate-id-prefix`、`traversalScrollFallbacks=0`。
+
+**一、第二跑与「今天的 main」：** 六相位一次全 PASS，这是该线历史上第二次连续全链通过。run 的 SHA `0bb51017` 是当前 main `f736dcb9` 的**祖先**；两者差异 10 个文件（P8-06 的 `P503LedgerFacade`/`P806LedgerReads`/`CatalogConsumerSession`、两份 commonTest/commonMain 测试、`docs/ARCHITECTURE|CURRENT_STATE|ROADMAP` 与一份 spec），**不触碰任何 scale 路径**（`git diff --name-only 0bb51017 origin/main -- android-app/src/androidTest tools/python tests/python tools/ci .github/workflows` 为空）。据此把「证据不覆盖今天 main」这一项**按 scale 路径关闭**，并写明判据是上面这条路径比对，不是整树相等。
+
+**二、走查的可复现性（本条最强的一条）：** 两次跑、不同 runner、相隔一天，三个数完全一致——**788 次扫描**取满 600 行、**135 步**回顶（全部 `moved=true`、`semantic=true` 计数 0、由 `seekReturn marker=true steps=136` 结束）、终止签名 **1971.99 CNY**（末次扫描 `collected=600 … last=1971.99`，`collect seam` 计数 0）。`revealSteps` 本轮为 **14–15**（run 25 全 14），末次扫描的 `stationaryCount` 由 0 变 1，窗口端点 `first=1977.94` / `last=1971.99` 一模一样。装载行两跑各 11 条，`waitedMs` 全部落在 **30,140–30,297 ms**。这不是「运气好地通过」，而是同一状态下的**确定性走查**，也是这条线目前最强的可复现性证据。
+
+**三、180 s 的归因（实测，取代 D-357 的怀疑）：** 分段插桩首次执行，九行读数：
+- `replay.snapshotBefore` **40,797**、`replay.savedQuery` **23**、`replay.openGraph` **104**、`replay.execute` **10**、`replay.closeGraph` **6**、`replay.snapshotAfter` **41,603**、`replay.assertEconomics` **61,534**；合计 **144,077** 对段 **144,142**（段框之外的 65 ms）。
+- `final_reopen.snapshot` **81,467**、`final_reopen.tail` **61,056**；合计 **142,523** 对段 **142,589**（66 ms）。
+⇒ D-357 点名的「`AndroidScaleOracleRetry` 锁等待」被**证伪**：事务执行 10 ms、回执查询 23 ms、建图 104 ms、关图 6 ms，四者合计 143 ms；任何一次 60 s 忙等都会把它们之一顶到秒级。真正构成这两个段的是**整表读**：`replay` = 两次全量快照（40.8 + 41.6 s）＋经济断言块（61.5 s，内含第三次快照与 `assertFixture` 对 150k 关系的读事务）；`final_reopen` = 一次快照（81.5 s）＋经济 UI 与复读尾部（61.1 s）。本轮 `oracle.readPath` 轨迹给出其中**生产读路那一腿**只要 **11.0–11.9 s**（61k 行，三次），所以 ~41 s 的快照主要花在快照自身的其余部分——61k 候选列表与 150k 关系的物化、两份 digest、逐表计数——**既不是 SQL 读路，也不是锁**。
+**D-357 的 360 s 上界仍被证明是对的：** 仅跨跑方差 `replay` 就有 **36.7 s**（182.848 → 146.177），run 25 那台机器上稍慢一天就会撞上旧的 180 s；360 s 现在给的是 2.46×，而不是抛硬币抛赢。
+
+**四、30 s 装载等待：已归因。** 两跑 22 条装载行，**每一条** `waitedMs` 都在 30,140–30,297 ms 且 `grew=true`，分布宽度仅 **157 ms**。机制（领先解释，证据如下）：`awaitPageGrowth` 的判据读 `renderedItemCount()` = `scrollable().collectionInfo?.rowCount`，而 `scrollable()` 只在**找不到**可见滚动容器时才重置缓存，因此这个计数是**缓存值**；能刷新它的唯一周期是 `await` 里的 `scaleCacheResetDue`——`AndroidScaleObserverDiag.CACHE_RESET_INTERVAL_MS = 30000`（miss 路径的 5,000 ms 要走到「找不到容器」才触发，这里不会）。于是计数每个 30 s 刷新点才更新一次，等待就变成固定「等一个节拍」；**分布之窄（157 ms）正是定时器而不是读取时延的签名**——若 30 s 是页面真正落地所需，它不可能在 22 个样本里几乎不动。
+**若修**：在 `awaitPageGrowth` 的判据里做一次强制刷新（限速的 `resetAutomationCache()`，或 `root()` 的绕过缓存重读），一行量级；上限节省 11 × ~30 s = **332.8 s**（本跑 stage 的 21.1%、≈5.5 min），实际节省取决于页面真正落地时延（**未测**）。**现在不做**：该段以 1.52× 余量通过，通过的段不是花掉一次改动的地方；只有当前缀扩大或预算收紧时，它才成为下一个成本目标。
+
+**五、预算读数（事后）：** `replay` 146.177 / 360 = **2.46×**；`final-reopen` 147.742 / 360 = **2.44×**；`traversal` 1582.421 / 2400 = **1.52×**；整轮 3639.117 / 19800 = **5.44×**。run 26 全面快于 run 25（traversal 1654.353→1582.421、prepare 855.702→729.004、chain 987.469→871.649、reopen 108.710→86.026、replay 182.848→146.177、final-reopen 172.633→147.742；整轮 4049.786→3639.117），而两次跑的 scale 路径逐字节相同（D-356 已证 `76862d1b` 的树与 #399 末梢一致，本轮又证 `0bb51017`→`f736dcb9` 不触碰这些路径）⇒ 这是 **runner 方差，不是代码变化**。
+
+**实测 vs 判读：** 段值、junit、host、traversal 证据、788/135/1971.99、22 条装载行的 `waitedMs`、9 条 `scale.segment`、`readPath` 的 11.0–11.9 s、`CACHE_RESET_INTERVAL_MS = 30000` 与 `MISS_RESET_INTERVAL_MS = 5000` 全部**读自工件或代码**；「30 s 是缓存节拍而非落地时延」是**判断**（依据：分布宽度 157 ms、判据读缓存值、该路径上唯一的 30 s 定时器），修法与节省是**推算**；「run 25 那台机器稍慢一天就会撞 180 s」是**外推**，不是观测。
+
+**边界：** 入 = 本条。出 = 不改任何代码/测试/段预算/workflow；不回改 D-356/D-357 的正文（D-357 的怀疑由本条取代，其 360 s 上界与分段插桩保留）。
+
+**残留风险：** ①D-211 的日志静默门预算 **300 s** 仍然大于「一个被正确上界的段」应允许的等待上限；本轮既未触发也未证伪它（`execute`/`openGraph` 都是毫秒级），收口条件同 D-357：**用段的剩余预算夹门**，而不是继续抬段。②30 s 装载等待按第四节记录：修法一行、上限节省 5.5 min、**现在不做**。③`traversalDeepRowPages=1220` 与 600 行有界前缀口径不变；「有界前缀要不要变成整表走查」仍停在 D-349 的裁决处。
+
+**关联决定：** D-348（索引使 61k 快照的生产读路降到 ~12 s，本条据此把「整表物化与 digest」与「SQL 读路」分开）、D-349（有界前缀与 600 行口径）、D-350（段预算的两侧同步）、D-351（候选 id 前缀窗口，连续两轮同一签名）、D-352（load-then-walk 与回顶断言）、D-353（六相位、走查独立成末相位）、D-354（stride 与语义回退）、D-355（有界轮询，135 步全部一次检出）、D-356（第一跑与成本画像，本条是它的对照跑）、D-357（360 s 上界与分段插桩；本条取代其锁等待怀疑）、D-217（走查几何、树滞后与 30 s 缓存刷新节拍）。
