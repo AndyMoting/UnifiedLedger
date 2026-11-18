@@ -151,10 +151,11 @@ internal data class P806AccountFlowHeader(
 
 /**
  * The account-flow header by the SAME projection the asset row already renders
- * ([assetResolvedCurrency], [assetAccountGroups]): the balance row wins, and a never-posted
- * account falls back to its declared catalog currency with a 0 display amount — the zero the asset
- * row itself shows, never a computed balance. `null` only when the account is absent from the
- * manageable catalog projection (there is no asset row, so there is no entry to open).
+ * ([assetResolvedCurrency], [assetAccountGroups]): the balance row wins (the LAST row per account,
+ * exactly like the asset list's `associateBy`), and a never-posted account falls back to its
+ * declared catalog currency with a 0 display amount — the zero the asset row itself shows, never a
+ * computed balance. `null` only when the account is absent from the manageable catalog projection
+ * (there is no asset row, so there is no entry to open).
  */
 internal fun p806AccountFlowHeader(
     accountId: AccountId,
@@ -163,7 +164,9 @@ internal fun p806AccountFlowHeader(
     balances: List<AccountCurrencyBalance>,
 ): P806AccountFlowHeader? {
     val account = accounts.firstOrNull { candidate -> candidate.accountId == accountId } ?: return null
-    val balance = balances.firstOrNull { candidate -> candidate.accountId == accountId }
+    // Last row wins, the asset list's associateBy semantics: an account with several currency rows
+    // must head the flow exactly as its asset row does.
+    val balance = balances.lastOrNull { candidate -> candidate.accountId == accountId }
     val currency = balance?.currency ?: account.currency
     val name = accountNames[accountId] ?: accountId.value
     val balanceLine = listOfNotNull(name, accountKindText(account.kind), currency.code).joinToString(" · ")

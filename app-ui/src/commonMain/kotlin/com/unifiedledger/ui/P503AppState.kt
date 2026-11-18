@@ -512,9 +512,6 @@ sealed interface P503AppState {
          */
         val listScroll: ListScrollPosition? = null,
     ) : P503AppState {
-        /** The rows on screen (the loaded page set, never a ledger-wide total). */
-        val loadedCount: Int get() = loadedRows.size
-
         /** Whether the account postings walk may still continue. */
         val hasMorePages: Boolean get() = nextCursor != null
     }

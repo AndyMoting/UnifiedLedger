@@ -321,6 +321,32 @@ class P806AccountFlowReadTest {
     }
 
     @Test
+    fun theHeaderMatchesTheAssetRowWhenOneAccountHasSeveralBalanceRows() {
+        val usd = CurrencyUnit("USD", 2)
+        val account =
+            ManageableAccountView(
+                accountId = accountId,
+                name = "默认支付账户",
+                kind = AccountKind.ASSET,
+                currency = cny,
+                active = true,
+                balanceMinorUnits = null,
+            )
+        val balances =
+            listOf(
+                AccountCurrencyBalance(accountId = accountId, currency = cny, ledgerSignedMinorUnits = 100L, displayMinorUnits = 100L),
+                AccountCurrencyBalance(accountId = accountId, currency = usd, ledgerSignedMinorUnits = 500L, displayMinorUnits = 500L),
+            )
+        // The asset list resolves the LAST balance row per account (associateBy); the flow header
+        // must head the account exactly as its asset row does.
+        val assetRow = assetAccountGroups(listOf(account), balances.associateBy { balance -> balance.accountId }).assetRows.single()
+        val header = assertNotNull(p806AccountFlowHeader(accountId, emptyMap(), listOf(account), balances))
+        assertEquals(assetRow.currency, header.currency)
+        assertEquals(assetRow.minorUnits, header.displayMinorUnits)
+        assertEquals("asset-payment · 资产 · USD", header.balanceLine)
+    }
+
+    @Test
     fun theLandingDecisionAcceptsTheMatchingCaptureAndRejectsACatalogAdvance() {
         val setup = sessionSetup()
         val read = assertIs<P806AccountPageRead.Landed>(readP806AccountPage(Seam(generation = 3, facade = setup.facade), identity(token = 5)))

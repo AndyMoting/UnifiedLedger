@@ -156,6 +156,15 @@ class P503AccountFlowReducerTest {
             originListScroll = ListScrollPosition(3, 24),
         )
 
+    private fun queueEvent(originScroll: ListScrollPosition? = ListScrollPosition(2, 10)): P503UiEvent.SelectReconciliationQueue =
+        P503UiEvent.SelectReconciliationQueue(
+            accountId = paymentAccountId,
+            accountLine = "默认支付账户 · 资产 · CNY",
+            firstPage = com.unifiedledger.application.P801AccountReconciliationPageResult.Success(com.unifiedledger.application.P801AccountReconciliationQueuePage(emptyList(), null)),
+            summary = com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success(emptyList()),
+            originScroll = originScroll,
+        )
+
     private fun enterAccountFlow(source: P503AppState.OverviewEmpty = overview()): P503AppState.AccountFlow =
         assertIs<P503AppState.AccountFlow>(reducer.reduce(source, openEvent()))
 
@@ -553,19 +562,7 @@ class P503AccountFlowReducerTest {
         // count, drops the loading marker (no permanently-loading footer on return) and issues no
         // read; the request token stays the host's own sequence value.
         val requesting = requestPage(enterAccountFlow())
-        val queue =
-            assertIs<P503AppState.ReconciliationQueue>(
-                reducer.reduce(
-                    requesting,
-                    P503UiEvent.SelectReconciliationQueue(
-                        accountId = paymentAccountId,
-                        accountLine = "默认支付账户 · 资产 · CNY",
-                        firstPage = com.unifiedledger.application.P801AccountReconciliationPageResult.Success(com.unifiedledger.application.P801AccountReconciliationQueuePage(emptyList(), null)),
-                        summary = com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success(emptyList()),
-                        originScroll = ListScrollPosition(2, 10),
-                    ),
-                ),
-            )
+        val queue = assertIs<P503AppState.ReconciliationQueue>(reducer.reduce(requesting, queueEvent()))
         assertEquals(ListScrollPosition(2, 10), queue.returnTo.listScroll)
         assertTrue(!queue.returnTo.rowsLoading)
         assertEquals(1L, queue.returnTo.pageRequestToken)
@@ -584,6 +581,42 @@ class P503AccountFlowReducerTest {
             returned,
             reducer.reduce(returned, landing(landedPage(1, listOf(posting(postingId = "posting-late"))))),
         )
+    }
+
+    @Test
+    fun aFirstReadThatNeverLandedCanBeRequestedAgainByHandAfterAReadOnlyDetour() {
+        // Open → first page requested (token 1) → the user enters the reconciliation queue before
+        // it lands → back. The surface has no success and no failure: it is the explicit
+        // NOT_LOADED state and offers the manual 加载账户流水 action.
+        val requesting = requestPage(enterAccountFlow())
+        assertEquals(AccountFlowBodyFace.LOADING, accountFlowBodyFace(requesting))
+        val queue = assertIs<P503AppState.ReconciliationQueue>(reducer.reduce(requesting, queueEvent()))
+        val returned = assertIs<P503AppState.AccountFlow>(reducer.reduce(queue, P503UiEvent.Back))
+        assertNull(returned.totalCount)
+        assertNull(returned.failure)
+        assertTrue(!returned.rowsLoading)
+        assertEquals(AccountFlowBodyFace.NOT_LOADED, accountFlowBodyFace(returned))
+        assertEquals(ACCOUNT_FLOW_LOAD_ACTION_TEXT, accountFlowLoadActionLabel(AccountFlowBodyFace.NOT_LOADED))
+        // The late first landing (the old token) is discarded after the return.
+        assertSame(
+            returned,
+            reducer.reduce(
+                returned,
+                landing(landedPage(1, listOf(posting(postingId = "posting-late")), nextCursor = null, totalCount = 1)),
+            ),
+        )
+        // The manual action runs the SAME request handler: a NEW token, and its success lands.
+        val manual = requestPage(returned)
+        assertEquals(2L, manual.pageRequestToken)
+        assertTrue(manual.rowsLoading)
+        val landed =
+            land(
+                manual,
+                landing(landedPage(2, listOf(posting(postingId = "posting-first")), nextCursor = null, totalCount = 1)),
+            )
+        assertEquals(listOf("posting-first"), landed.loadedRows.map { it.postingId.value })
+        assertEquals(1, landed.totalCount)
+        assertEquals(AccountFlowBodyFace.LIST, accountFlowBodyFace(landed))
     }
 
     @Test

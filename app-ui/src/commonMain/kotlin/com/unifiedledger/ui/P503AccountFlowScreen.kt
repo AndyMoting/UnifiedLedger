@@ -107,9 +107,20 @@ internal fun P503AccountFlowScreen(
         )
         Spacer(Modifier.height(12.dp))
         val accountName = accountNames[state.accountId] ?: state.accountId.value
-        when (accountFlowBodyFace(state)) {
+        val face = accountFlowBodyFace(state)
+        when (face) {
             AccountFlowBodyFace.UNWIRED -> Text(ACCOUNT_FLOW_UNWIRED_TEXT, style = MaterialTheme.typography.bodyLarge)
-            AccountFlowBodyFace.NOT_LOADED -> Text(ACCOUNT_FLOW_NOT_LOADED_TEXT, style = MaterialTheme.typography.bodyLarge)
+            AccountFlowBodyFace.NOT_LOADED -> {
+                // Explicit first-page action (D-343 section 3.7: 未请求 is its own state). A surface
+                // whose first read never landed — e.g. the user entered the reconciliation queue
+                // before it completed — must be able to ask again by hand; nothing is re-read
+                // automatically and the late result was already discarded.
+                Text(ACCOUNT_FLOW_NOT_LOADED_TEXT, style = MaterialTheme.typography.bodyLarge)
+                accountFlowLoadActionLabel(face)?.let { label ->
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(onClick = onLoadMore) { Text(label) }
+                }
+            }
             AccountFlowBodyFace.LOADING -> Text(ACCOUNT_FLOW_LOADING_TEXT, style = MaterialTheme.typography.bodyLarge)
             AccountFlowBodyFace.FAILED -> AccountFlowRetryFace(state, onRetryLoadMore)
             AccountFlowBodyFace.EMPTY -> Text(ACCOUNT_FLOW_EMPTY_TEXT, style = MaterialTheme.typography.bodyLarge)
@@ -157,10 +168,10 @@ internal fun P503AccountFlowScreen(
 /**
  * P8-06 batch b (D-343 sections 3.7/3.8): the body-face decision over the surface's explicit state.
  * [UNWIRED] is a graph without the account read; [NOT_LOADED] is the not-requested window (never
- * an empty claim); [LOADING] is a first-page read in flight; [FAILED] is a typed failure with no
- * success yet; [EMPTY] is an empty SUCCESS; [LIST] is a non-empty success — also the shape where a
- * loading/failed continuation keeps the previous rows with their old-context label and the
- * footer's loading/retry affordance.
+ * an empty claim; it offers the explicit 加载账户流水 action); [LOADING] is a first-page read in
+ * flight; [FAILED] is a typed failure with no success yet; [EMPTY] is an empty SUCCESS; [LIST] is a
+ * non-empty success — also the shape where a loading/failed continuation keeps the previous rows
+ * with their old-context label and the footer's loading/retry affordance.
  */
 internal enum class AccountFlowBodyFace {
     UNWIRED,
@@ -196,6 +207,18 @@ internal const val ACCOUNT_FLOW_EMPTY_TEXT: String = "该账户暂无流水。"
 
 /** The success count in the business wording (D-343 section 3.4: 「N 条账户变动」). */
 internal fun accountFlowCountText(totalCount: Int): String = "$totalCount 条账户变动"
+
+/** The explicit first-page action label (D-343 section 3.7: 未请求 owns its own load action). */
+internal const val ACCOUNT_FLOW_LOAD_ACTION_TEXT: String = "加载账户流水"
+
+/**
+ * The explicit action a face offers, or `null` when it has none (the `LIST` face pages through its
+ * footer; loading/failed/empty/unwired add nothing here). The [AccountFlowBodyFace.NOT_LOADED]
+ * button calls the SAME request handler as 加载更多 — it never re-reads automatically and the
+ * already-discarded late result is never re-accepted.
+ */
+internal fun accountFlowLoadActionLabel(face: AccountFlowBodyFace): String? =
+    if (face == AccountFlowBodyFace.NOT_LOADED) ACCOUNT_FLOW_LOAD_ACTION_TEXT else null
 
 /**
  * P8-06 batch b (D-343 section 3.7): the old-context label of a previous success kept beside a

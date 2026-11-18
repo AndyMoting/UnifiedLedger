@@ -38,7 +38,6 @@ import kotlin.time.Instant
 class P8B3SecondaryNavPresentationTest {
     private val cny = CurrencyUnit("CNY", 2)
     private val assetId = AccountId("account-asset")
-    private val expenseId = AccountId("account-expense")
     private val occurredAt = Instant.parse("2026-11-06T04:30:00Z")
 
     private fun detail(
@@ -236,6 +235,23 @@ class P8B3SecondaryNavPresentationTest {
         assertEquals("该账户暂无流水。", ACCOUNT_FLOW_EMPTY_TEXT)
         assertEquals("尚未加载账户流水。", ACCOUNT_FLOW_NOT_LOADED_TEXT)
         assertEquals("账户流水不可用（本版本未接线）。", ACCOUNT_FLOW_UNWIRED_TEXT)
+    }
+
+    @Test
+    fun theNotLoadedFaceOffersAnExplicitLoadAction() {
+        // A surface whose first read never landed (no success, no failure) is NOT_LOADED and owns a
+        // real, explicitly labelled action — the screen renders it with the existing request handler,
+        // so nothing is re-read automatically.
+        assertEquals(AccountFlowBodyFace.NOT_LOADED, accountFlowBodyFace(surface()))
+        assertEquals("加载账户流水", accountFlowLoadActionLabel(AccountFlowBodyFace.NOT_LOADED))
+        assertEquals(ACCOUNT_FLOW_LOAD_ACTION_TEXT, accountFlowLoadActionLabel(AccountFlowBodyFace.NOT_LOADED))
+        // Every other face leaves the action to its own affordance (the footer's paging/retry) or
+        // offers nothing here; the empty success does not grow a load button.
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.LOADING))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.FAILED))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.EMPTY))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.LIST))
+        assertNull(accountFlowLoadActionLabel(AccountFlowBodyFace.UNWIRED))
     }
 
     @Test
