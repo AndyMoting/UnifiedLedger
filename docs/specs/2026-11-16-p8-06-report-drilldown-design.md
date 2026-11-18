@@ -1,6 +1,6 @@
 # P8-06 报表与下钻设计（周期、日均、收支日历、分类/账户下钻与详情回程）
 
-状态：approved（2026-11-17，`D-343` 设计批准；**设计已批准；批 a 读面已实现（2026-11-18，PR #400 squash = `d029a30e`），批 b–c、`app-ui` 访问器与设备证据未交付**。后续实施批另立批次，按仓库既有高风险变更路由（独立审查 + 云端 CI）推进；本规格不构成实现、迁移或发布授权）
+状态：approved（2026-11-17，`D-343` 设计批准；**设计已批准；批 a 读面已实现（2026-11-18，PR #400 squash = `d029a30e`），查询版本自证与 facade 只读访问器基础批已落地（2026-11-18，PR #404 squash = `0facb7f`），批 b–c、`app-ui` 实际消费与呈现、typed `returnTo` 与设备证据未交付**。后续实施批另立批次，按仓库既有高风险变更路由（独立审查 + 云端 CI）推进；本规格不构成实现、迁移或发布授权）
 
 **Revision:** v1（2026-11-17 批准）。本版冻结：期间模型与上海半开窗口、普通收支贡献集合与每 surface 一个复合 typed 快照、当地日桶与完整自然日分母、有符号舍入、未来标注口径、目录/轴/`occurred_at` 解析三类前置校验、载荷六态与回程语义、账户资金视图局部显示例外。变更以本文件与 `docs/DECISIONS.md` 的 `D-343` 为准。
 
@@ -365,3 +365,11 @@ p806LatestEffectiveStatisticsAt      -- MAX(statistics_at_epoch_nanos)（MIN 已
 - **读面证据**：dispatch XML 34 suite / 241 tests、0 failure/error/JUnit-skip；`P806ReportSemanticsTest` 12 / `P806SnapshotReadTest` 12 / `P806CoverageTest` 9 方法通过。application 侧由 core 日志证明实际执行（`ledger-application` 94 类 / 826 tests），`P806PortDefaultsAndAxisTest` 类 11，无逐方法 XML。已落证的读面部分断言（非整向量 PASS）：V-1 窗口几何、V-2 贡献集合与页遍历/计数/月卡等式、V-3 自定义部分期、V-4 50k 语句数/首屏/续页、V-5 多分录计数与负号；其余已限定维度 V-8（金额双轴与分录单位）、V-9 贡献集合、V-11 坏例、V-13、V-15 几何、V-16 完整分母、V-17 数值、V-18 计数、V-19 同夹具轴；此外的读面子断言为未升级备注，不构成整向量 PASS。
 - **未交付**：V-6/V-7/V-12/V-14、全部呈现与 typed `returnTo`、完整请求身份、性能与设备基线；普通 Android 绿不替代 P8-06 设备证据。
 - **边界**：本节与状态头只登记实施事实，不改 §4 向量、§5 证据归属、`D-343` 与 approved 机制；文中「尚未实现」类时点表述以本节为准。
+
+## 实施状态登记（基础批，2026-11-18）
+
+- **落地**：PR #404 squash = `0facb7f142ec72d5b7a9c7c8e3022e91cd21cf3d`，landed tree `91d3eb99003b6050cba79adabb835854cc50d2d9` 与被测 head 同树；四门 run `44212263265` success（`Kotlin tests`/`Android compile`/`Python tests`/`Trace scan`），合并树守卫 run `44213256450` 记 zero action（squash evidence complete、landed commit trace scan、zero action）。零 schema/DDL/迁移、零账务写入。
+- **范围**：四个 P806 查询在构造期取得同一目录版本，并在每个 `Success` 分支首句比对 raw snapshot 版本，失配返回既有 `CatalogVersionMismatch`；`report` 的读前几何校验仍在原位置，`Success` 内的窗口解析排在版本自证之后。`CatalogConsumerSession` 的 authority 与四个 query 以单字段 `@Volatile` 发布，`refresh()` 的赋值与构造顺序未改，**不是整组原子刷新**。`P503LedgerFacade` 增加四个 session-only 可空 query getter 与 `currentCatalogVersion`；无 session 即 Unwired，无 clock 时报表/日历为 null、其余两面仍可用。`OwnerTestFixture` 仅加尾部可空默认参数，既有调用点零迁移。
+- **测试**：两新增 JVM 测试类各 3 方法（共 6），由 `Kotlin tests` core 的 `:ledger-application:jvmTest` 与 `:app-ui:jvmTest` 实际执行：`P806QueryCatalogVersionIdentityTest` 3（构造版本绑定、四面 raw 版本失配、回声版本放行、版本校验先于 Success 内的窗口解析（读前几何仍先行）、重入 refresh 后新旧实例版本）、`P806FacadeSessionIdentityTest` 3（getter 与 session 同引用并随 refresh 更新、无 session 时 getter/current 全 null、无 clock 仅报表/日历 null）；core 逐类汇总各 3（无逐方法 XML，按类计数），模块汇总为 `ledger-application` 95 类 / 829 tests、`app-ui` 80 类 / 1258 tests。
+- **未交付**：V-6/V-7 整体、`app-ui` 实际消费与呈现、typed `returnTo`、完整请求身份、设备/视觉/索引/性能基线；四门绿与六个测试不表示 P8-06 整体 PASS。
+- **边界**：本节只登记基础批事实，不改 §4 向量、§5 证据归属、`D-343` 与 approved 机制；上一节批 a 记录保持原语境。
