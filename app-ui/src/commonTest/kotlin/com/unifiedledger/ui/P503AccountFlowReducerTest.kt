@@ -1,5 +1,8 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.P801AccountReconciliationPageResult
+import com.unifiedledger.application.P801AccountReconciliationQueuePage
+import com.unifiedledger.application.P801AccountReconciliationSummaryResult
 import com.unifiedledger.application.P806AccountCursor
 import com.unifiedledger.application.P806AccountPostingRow
 import com.unifiedledger.application.P806AccountPostingsPage
@@ -83,7 +86,10 @@ class P503AccountFlowReducerTest {
             amount = Money.ofMinor(amountMinor, cny),
         )
 
-    private fun cursor(occurredAtEpochNanos: Long = 1_000L, postingId: String = "posting-1"): P806AccountCursor = P806AccountCursor(occurredAtEpochNanos, postingId)
+    private fun cursor(
+        occurredAtEpochNanos: Long = 1_000L,
+        postingId: String = "posting-1",
+    ): P806AccountCursor = P806AccountCursor(occurredAtEpochNanos, postingId)
 
     private fun view(
         rows: List<P806AccountPostingRow>,
@@ -160,8 +166,8 @@ class P503AccountFlowReducerTest {
         P503UiEvent.SelectReconciliationQueue(
             accountId = paymentAccountId,
             accountLine = "默认支付账户 · 资产 · CNY",
-            firstPage = com.unifiedledger.application.P801AccountReconciliationPageResult.Success(com.unifiedledger.application.P801AccountReconciliationQueuePage(emptyList(), null)),
-            summary = com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success(emptyList()),
+            firstPage = P801AccountReconciliationPageResult.Success(P801AccountReconciliationQueuePage(emptyList(), null)),
+            summary = P801AccountReconciliationSummaryResult.Success(emptyList()),
             originScroll = originScroll,
         )
 

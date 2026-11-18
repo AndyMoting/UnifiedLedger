@@ -242,7 +242,8 @@ class P806AccountFlowReadTest {
             )
         assertEquals(6L, landed.capture.request.token)
         assertEquals(cursor, landed.capture.request.cursor)
-        assertEquals(cursor, setup.port.accountRequests.single().cursor)
+        val asked = setup.port.accountRequests.single()
+        assertEquals(cursor, asked.cursor)
     }
 
     @Test
