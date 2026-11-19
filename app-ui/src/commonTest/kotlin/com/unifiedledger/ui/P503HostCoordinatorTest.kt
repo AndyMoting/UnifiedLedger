@@ -710,6 +710,7 @@ class P503HostCoordinatorTest {
                 onReportReRequest = { period -> reRequests += period },
             )
         val ledgerId = LedgerId("ledger-report-region-write")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
@@ -822,12 +823,14 @@ class P503HostCoordinatorTest {
             )
         val coordinator = requireNotNull(host)
         val ledgerId = LedgerId("ledger-report-region-failure")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
                 selectedTab = P503Tab.ANALYSIS,
                 reportRegion = slot,
             )
+
         fun ready(slot: P806ReportRegionState): P503AppState.OverviewEmpty =
             page(
                 slot.copy(
@@ -886,6 +889,7 @@ class P503HostCoordinatorTest {
                 onReportReRequest = { period -> reRequests += period },
             )
         val ledgerId = LedgerId("ledger-report-region-rejected")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
@@ -943,6 +947,7 @@ class P503HostCoordinatorTest {
             )
         val coordinator = requireNotNull(host)
         val ledgerId = LedgerId("ledger-report-region-retry")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
@@ -1043,12 +1048,14 @@ class P503HostCoordinatorTest {
             )
         val coordinator = requireNotNull(host)
         val ledgerId = LedgerId("ledger-report-region-owed")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
                 selectedTab = P503Tab.ANALYSIS,
                 reportRegion = slot,
             )
+
         fun carried(overview: P503AppState.OverviewEmpty): P503AppState.AccountFlow =
             P503AppState.AccountFlow(
                 overview = overview,
@@ -1119,6 +1126,7 @@ class P503HostCoordinatorTest {
             )
         val coordinator = requireNotNull(host)
         val ledgerId = LedgerId("ledger-report-region-merge")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
@@ -1188,6 +1196,7 @@ class P503HostCoordinatorTest {
             )
         val coordinator = requireNotNull(host)
         val ledgerId = LedgerId("ledger-report-region-inflight")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
@@ -1268,12 +1277,14 @@ class P503HostCoordinatorTest {
             )
         val coordinator = requireNotNull(host)
         val ledgerId = LedgerId("ledger-report-region-carried-failure")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
                 selectedTab = P503Tab.ANALYSIS,
                 reportRegion = slot,
             )
+
         fun carried(slot: P806ReportRegionState): P503AppState.AccountFlow =
             P503AppState.AccountFlow(
                 overview = page(slot),
@@ -1429,6 +1440,7 @@ class P503HostCoordinatorTest {
                 onReportReRequest = { period -> reRequests += period },
             )
         val ledgerId = LedgerId("ledger-report-region-switch")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),
@@ -1482,6 +1494,7 @@ class P503HostCoordinatorTest {
                 onReportReRequest = { period -> attempts += period },
             )
         val ledgerId = LedgerId("ledger-report-region-refused")
+
         fun page(slot: P806ReportRegionState?): P503AppState.OverviewEmpty =
             P503AppState.OverviewEmpty(
                 state = LedgerCurrentState(ledgerId, emptyList(), emptyList()),

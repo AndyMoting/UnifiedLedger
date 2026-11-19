@@ -1132,6 +1132,7 @@ class P806ReportReducerTest {
                 runningConfirm = true,
                 token = RestorePreflightToken("tok", 1, "ledger-local-test", ByteArray(32), null),
             )
+
         fun year2019(): P806Period = P806Period(P806PeriodKind.YEAR, year = 2019)
         // (a) A payload-less FAILED slot (the 2019 year read failed): it must not survive the switch.
         val failed = P806ReportRegionState(period = year2019(), kind = P806PeriodKind.YEAR, requestToken = 5L, fenceToken = 5L, failure = P806SnapshotFailure.Unavailable)

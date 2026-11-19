@@ -330,16 +330,19 @@ class P806ReportReadTest {
         val futureMonth = P806Period(P806PeriodKind.MONTH, month = YearMonth(2027, 3))
         for ((period, startDate) in kinds) {
             val landed = assertIs<P806ReportRead.Landed>(readP806Report(seam, identity(token = 5, period = period), clock))
-            assertEquals(period, setup.port.reportRequests.last().period)
+            val lastRequest = setup.port.reportRequests.last()
+            assertEquals(period, lastRequest.period)
             val view = assertIs<P806SnapshotResult.Success<P806ReportView>>(landed.result).snapshot
             assertEquals(startDate, assertNotNull(view.period).startDate)
             // The raw window is the window the request resolves to — the same-snapshot evidence.
             assertEquals(windowFor(period, span()), view.period?.window)
         }
         readP806Report(seam, identity(token = 5, period = pastYear), clock)
-        assertEquals(pastYear, setup.port.reportRequests.last().period)
+        val pastYearRequest = setup.port.reportRequests.last()
+        assertEquals(pastYear, pastYearRequest.period)
         readP806Report(seam, identity(token = 5, period = futureMonth), clock)
-        assertEquals(futureMonth, setup.port.reportRequests.last().period)
+        val futureMonthRequest = setup.port.reportRequests.last()
+        assertEquals(futureMonth, futureMonthRequest.period)
         // ALL takes its window from the ledger span the snapshot returns (first through last
         // effective statistics date, future included), never from a host-side span of our own.
         val futureSpan = span(earliest = "2026-11-01T00:00:00Z", latest = "2027-02-03T02:00:00Z")
