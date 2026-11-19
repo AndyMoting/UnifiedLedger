@@ -145,7 +145,12 @@ internal fun readP806Report(
             if (query == null) {
                 P806ReportRead.Unwired(request, generation)
             } else {
-                val asOf = try { clock.now() } catch (clockFailure: Exception) { null }
+                val asOf =
+                    try {
+                        clock.now()
+                    } catch (clockFailure: Exception) {
+                        null
+                    }
                 val result =
                     if (asOf == null) {
                         P806SnapshotResult.Failed(P806SnapshotFailure.Unavailable)

@@ -1553,7 +1553,10 @@ fun P503App(
     }
 
     /** P8-06 batch b: one edit of the custom drafts — never a read, never a date rewrite. */
-    fun updateReportCustomRange(startText: String, endText: String) {
+    fun updateReportCustomRange(
+        startText: String,
+        endText: String,
+    ) {
         dispatch(P503UiEvent.UpdateReportCustomRange(startText = startText, endText = endText))
     }
 

@@ -13,7 +13,6 @@ import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualIncomeCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
-import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.P806AccountCurrencyTotal
 import com.unifiedledger.application.P806AccountRequest
 import com.unifiedledger.application.P806AccountSnapshot
@@ -34,6 +33,7 @@ import com.unifiedledger.application.P806SnapshotResult
 import com.unifiedledger.application.P806Span
 import com.unifiedledger.application.P806TransactionPage
 import com.unifiedledger.application.P806Window
+import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId

@@ -607,8 +607,7 @@ class P503ReducerImpl(
     private fun withCarriedReportOverview(
         state: P503AppState,
         transform: (P503AppState.OverviewEmpty) -> P503AppState.OverviewEmpty,
-    ): P503AppState? =
-        state.carriedReportCarrier()?.let { carrier -> carrier.rebuild(transform(carrier.overview)) }
+    ): P503AppState? = state.carriedReportCarrier()?.let { carrier -> carrier.rebuild(transform(carrier.overview)) }
 
     /**
      * P8-06 batch b (D-343 section 3.7): the slot the host's open event creates. It imports only the

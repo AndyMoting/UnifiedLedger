@@ -1,7 +1,9 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.LedgerCurrentState
-import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.P408ReconciliationStatus
+import com.unifiedledger.application.P801AccountReconciliationQueueRow
+import com.unifiedledger.application.P801AccountReconciliationStatusTotal
 import com.unifiedledger.application.P806CurrencyView
 import com.unifiedledger.application.P806Period
 import com.unifiedledger.application.P806PeriodKind
@@ -11,9 +13,13 @@ import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.P806SnapshotResult
 import com.unifiedledger.application.P806TransactionPage
 import com.unifiedledger.application.P806Window
+import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
+import com.unifiedledger.domain.PostingId
+import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.domain.TransactionKind
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.YearMonth
 import kotlin.test.Test
@@ -33,8 +39,9 @@ import kotlin.time.Instant
  * unwired overview absorbs every report event), C (the same period only re-reads on the initial
  * load, a real period change, an explicit retry or a determinate write — the write path is held by
  * [P503HostCoordinatorTest]; a read-only detour preserves the period and the payload and starts no
- * read) and the identity half of B (an old token, another period or another ledger never lands, and
- * a late read never clears a newer request's loading).
+ * read, and a landing over the queue detail's nested account-flow overview rebuilds that overview
+ * while the queue page stays its own) and the identity half of B (an old token, another period or
+ * another ledger never lands, and a late read never clears a newer request's loading).
  *
  * Anonymous synthetic amounts only; no Compose runtime, no timing.
  */
@@ -46,15 +53,13 @@ class P806ReportReducerTest {
     private val readInstant = Instant.parse("2026-11-18T02:00:00Z")
     private val reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
 
-    private fun ledger(ledger: LedgerId = ledgerId): LedgerCurrentState =
-        LedgerCurrentState(ledgerId = ledger, transactions = emptyList(), balances = emptyList())
+    private fun ledger(ledger: LedgerId = ledgerId): LedgerCurrentState = LedgerCurrentState(ledgerId = ledger, transactions = emptyList(), balances = emptyList())
 
     private fun overview(
         slot: P806ReportRegionState?,
         tab: P503Tab = P503Tab.ANALYSIS,
         ledger: LedgerId = ledgerId,
-    ): P503AppState.OverviewEmpty =
-        P503AppState.OverviewEmpty(state = ledger(ledger), selectedTab = tab, reportRegion = slot)
+    ): P503AppState.OverviewEmpty = P503AppState.OverviewEmpty(state = ledger(ledger), selectedTab = tab, reportRegion = slot)
 
     private fun view(
         period: P806ResolvedPeriod? = null,
@@ -163,6 +168,31 @@ class P806ReportReducerTest {
                     asOf = readInstant,
                 ),
             result = P806SnapshotResult.Success(view(resolvedMonth())),
+        )
+
+    private fun queueRow(
+        postingId: String = "posting-1",
+        status: P408ReconciliationStatus = P408ReconciliationStatus.PENDING,
+    ): P801AccountReconciliationQueueRow =
+        P801AccountReconciliationQueueRow(
+            postingId = PostingId(postingId),
+            transactionId = TransactionId("tx-1"),
+            occurredAt = readInstant,
+            note = "转账",
+            accountId = expenseAccountId,
+            amountMinor = -10_000L,
+            currency = cny,
+            status = status,
+            hasActiveEvidenceLink = false,
+            transactionKind = TransactionKind.ACCOUNT_TRANSFER,
+        )
+
+    private fun queueTotal(): P801AccountReconciliationStatusTotal =
+        P801AccountReconciliationStatusTotal(
+            currency = cny,
+            status = P408ReconciliationStatus.PENDING,
+            totalMinorUnits = -10_000L,
+            rowCount = 1,
         )
 
     // ---------------------------------------------------------------- A: the initial request and the five kinds
@@ -373,6 +403,85 @@ class P806ReportReducerTest {
         // Back on the overview, nothing is left loading and no extra read is needed.
         val returned = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(landed, P503UiEvent.CloseAccountFlow))
         assertTrue(!assertNotNull(returned.reportRegion).loading)
+    }
+
+    @Test
+    fun aLandingOnTheReconciliationDetailRebuildsTheNestedAccountFlowOverviewAndKeepsTheQueuePage() {
+        // The queue detail's back target is the queue, and the queue's own back target is the account
+        // flow: the overview that owns the report slot sits two carriers deep, so the landing writes
+        // queue.returnTo.overview (the queue itself has no overview field).
+        val started = overview(requestingSlot(token = 5L))
+        val flow =
+            P503AppState.AccountFlow(
+                overview = started,
+                accountId = expenseAccountId,
+                balanceLine = "餐饮 · 支出 · CNY",
+                balanceMinorUnits = 0L,
+                balanceCurrency = cny,
+            )
+        val queue =
+            P503AppState.ReconciliationQueue(
+                returnTo = flow,
+                accountId = expenseAccountId,
+                accountLine = "餐饮 · 支出 · CNY",
+                rows = listOf(queueRow(), queueRow(postingId = "posting-2", status = P408ReconciliationStatus.CHECKED)),
+                nextCursor = null,
+                totals = listOf(queueTotal()),
+                pageRequestToken = 9L,
+                checkedExpanded = true,
+                listScroll = ListScrollPosition(2, 10),
+            )
+        val detail =
+            P503AppState.ReconciliationDetail(
+                returnTo = ReconciliationBackTarget.Queue(queue),
+                anchorPostingId = PostingId("posting-1"),
+                anchorEvidenceId = null,
+                accountId = expenseAccountId,
+                bindTarget = null,
+                bindAccounts = emptyList(),
+                proposals = null,
+                audit = null,
+            )
+        val landed =
+            assertIs<P503AppState.ReconciliationDetail>(
+                reducer.reduce(detail, P503UiEvent.ReportPeriodResult(successRead(token = 5L), currentGeneration = 3, currentCatalogVersion = 7L)),
+            )
+        val landedQueue = assertIs<ReconciliationBackTarget.Queue>(landed.returnTo).state
+        // The queue page the detail will return to comes back whole: rows, totals, the more-page
+        // request token, the checked partition's expanded marker and the sampled scroll position
+        // are all still its own (the token, marker and scroll are non-default, so they bite).
+        assertSame(queue.rows, landedQueue.rows)
+        assertSame(queue.totals, landedQueue.totals)
+        assertEquals(9L, landedQueue.pageRequestToken)
+        assertTrue(landedQueue.checkedExpanded)
+        assertEquals(ListScrollPosition(2, 10), landedQueue.listScroll)
+        assertEquals(1, landedQueue.uncheckedRows.size)
+        assertEquals(1, landedQueue.checkedRows.size)
+        // The nested account flow is the one surface that changed: its overview took the landing, so
+        // detail -> queue -> flow -> overview returns to a READY report instead of a stuck loading.
+        val landedFlow = landedQueue.returnTo
+        assertEquals(expenseAccountId, landedFlow.accountId)
+        val slot = assertNotNull(landedFlow.overview.reportRegion)
+        assertTrue(!slot.loading)
+        assertNotNull(slot.landed)
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(slot))
+        // The host's last-ready memory and coordinator read that SAME landed overview through the
+        // one carrier accessor, so their bookkeeping follows the landing instead of a queue field.
+        assertSame(landedFlow.overview, assertNotNull(landed.carriedReportCarrier()).overview)
+        // Positive control of the return path through the reducer's own Back/Close transitions:
+        // detail -> queue -> flow -> overview hands back the very same instances, landed slot
+        // included, and issues no read.
+        val backQueue = assertIs<P503AppState.ReconciliationQueue>(reducer.reduce(landed, P503UiEvent.Back))
+        assertSame(landedQueue, backQueue)
+        val backFlow = assertIs<P503AppState.AccountFlow>(reducer.reduce(backQueue, P503UiEvent.Back))
+        assertSame(landedFlow, backFlow)
+        val backOverview = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(backFlow, P503UiEvent.CloseAccountFlow))
+        assertSame(landedFlow.overview, backOverview)
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(assertNotNull(backOverview.reportRegion)))
+        // Negative control kept: before the landing the same accessor resolves the carried original,
+        // whose request is still in flight, and the landing never mutates it.
+        assertSame(started, assertNotNull(detail.carriedReportCarrier()).overview)
+        assertTrue(assertNotNull(started.reportRegion).loading)
     }
 
     @Test

@@ -1312,8 +1312,8 @@ internal fun P503AppState.carriedReportCarrier(): ReportCarrier? =
                 }
                 is ReconciliationBackTarget.Queue -> {
                     val carrier = this
-                    ReportCarrier(target.state.overview) { overview ->
-                        carrier.copy(returnTo = ReconciliationBackTarget.Queue(target.state.copy(overview = overview)))
+                    ReportCarrier(target.state.returnTo.overview) { overview ->
+                        carrier.copy(returnTo = ReconciliationBackTarget.Queue(target.state.copy(returnTo = target.state.returnTo.copy(overview = overview))))
                     }
                 }
             }

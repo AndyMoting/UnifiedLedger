@@ -138,8 +138,7 @@ internal fun p806ReportRegionFace(state: P806ReportRegionState): P806ReportRegio
  * last-ready memory, its payload mark and the reducer's re-seed all go through this ONE predicate,
  * so neither a write-stale nor a failed-over payload can be re-seeded as READY.
  */
-internal fun p806ReportSlotIsEligible(slot: P806ReportRegionState): Boolean =
-    slot.landed != null && !slot.writeStale && !slot.loading && slot.failure == null
+internal fun p806ReportSlotIsEligible(slot: P806ReportRegionState): Boolean = slot.landed != null && !slot.writeStale && !slot.loading && slot.failure == null
 
 /** The write-invalidation notice shown over the old payload while the authoritative re-read is owed. */
 internal fun p806ReportWriteStaleNotice(): String = "账目已更新：正在刷新报表，以下为更新前的旧数据。"
@@ -209,7 +208,12 @@ internal fun p806ReportLastSuccessContextText(state: P806ReportRegionState): Str
     val view = state.landed ?: return null
     val periodText = view.period?.let { period -> "${period.startDate} 至 ${period.endDateInclusive}" } ?: "无"
     val kindPrefix = state.landedKind?.let { kind -> "${p806ReportPeriodKindLabel(kind)}：" }.orEmpty()
-    val axis = view.currencies.map { row -> row.currency.code }.distinct().joinToString("、").ifEmpty { "无" }
+    val axis =
+        view.currencies
+            .map { row -> row.currency.code }
+            .distinct()
+            .joinToString("、")
+            .ifEmpty { "无" }
     val asOf = state.landedAsOf?.toString() ?: "不可用"
     return "最近成功（期间 $kindPrefix$periodText；币种轴 $axis；读取时点 $asOf）"
 }
@@ -247,16 +251,13 @@ internal fun p806ReportAmountText(
 ): String = "$label ${p806MinorUnitsText(minorUnits, currency.precision)} ${currency.code}"
 
 /** 净支出（含退款）: the frozen inclusive-of-refunds net expense, sign preserved. */
-internal fun p806ReportNetExpenseText(row: P806CurrencyView): String =
-    p806ReportAmountText("净支出（含退款）", row.netExpenseMinorUnits, row.currency)
+internal fun p806ReportNetExpenseText(row: P806CurrencyView): String = p806ReportAmountText("净支出（含退款）", row.netExpenseMinorUnits, row.currency)
 
 /** 普通收入 of one currency. */
-internal fun p806ReportIncomeText(row: P806CurrencyView): String =
-    p806ReportAmountText("普通收入", row.ordinaryIncomeMinorUnits, row.currency)
+internal fun p806ReportIncomeText(row: P806CurrencyView): String = p806ReportAmountText("普通收入", row.ordinaryIncomeMinorUnits, row.currency)
 
 /** 结余 = 普通收入 − 净支出 (D-343 section 1.2), never an account balance. */
-internal fun p806ReportBalanceText(row: P806CurrencyView): String =
-    p806ReportAmountText("结余", row.balanceMinorUnits, row.currency)
+internal fun p806ReportBalanceText(row: P806CurrencyView): String = p806ReportAmountText("结余", row.balanceMinorUnits, row.currency)
 
 /** 日均支出: the signed daily average, or the explicit 不适用 when the period has no natural day. */
 internal fun p806ReportDailyAverageText(row: P806CurrencyView): String =
@@ -264,8 +265,7 @@ internal fun p806ReportDailyAverageText(row: P806CurrencyView): String =
         ?: "日均支出 不适用"
 
 /** The static denominator statement: the daily average divides by the period's full natural days. */
-internal fun p806ReportDailyAverageDaysText(period: P806ResolvedPeriod?): String? =
-    period?.let { resolved -> "日均按该期间完整自然日数（${resolved.dayCount} 天）计算：进行中的期间不缩短分母。" }
+internal fun p806ReportDailyAverageDaysText(period: P806ResolvedPeriod?): String? = period?.let { resolved -> "日均按该期间完整自然日数（${resolved.dayCount} 天）计算：进行中的期间不缩短分母。" }
 
 /** The future-statistics marker: `null` at N = 0 (absent, never a "0 future" claim). */
 internal fun p806ReportFutureMarkerText(count: Int): String? = if (count <= 0) null else "含 $count 笔未来统计日期的普通收支。"
@@ -294,8 +294,7 @@ internal fun p806ReportCategoryTotalsText(totals: List<P806CategoryCurrencyTotal
     }
 
 /** One category row: its current name plus the exact per-currency values. */
-internal fun p806ReportCategoryRowText(category: P806CategoryView): String =
-    "${category.categoryName}：${p806ReportCategoryTotalsText(category.totals)}"
+internal fun p806ReportCategoryRowText(category: P806CategoryView): String = "${category.categoryName}：${p806ReportCategoryTotalsText(category.totals)}"
 
 /** The accessibility label of one category row: the level, the current name and the exact values. */
 internal fun p806ReportCategoryAccessibilityText(
@@ -304,8 +303,7 @@ internal fun p806ReportCategoryAccessibilityText(
 ): String = "${if (level <= 1) "一级分类" else "二级分类"} ${category.categoryName}，合计 ${p806ReportCategoryTotalsText(category.totals)}"
 
 /** The explicit 无分类 row of one section; `null` when that section has none. */
-internal fun p806ReportUncategorizedRowText(totals: List<P806CategoryCurrencyTotal>): String? =
-    if (totals.isEmpty()) null else "${p806ReportUncategorizedLabel()}：${p806ReportCategoryTotalsText(totals)}"
+internal fun p806ReportUncategorizedRowText(totals: List<P806CategoryCurrencyTotal>): String? = if (totals.isEmpty()) null else "${p806ReportUncategorizedLabel()}：${p806ReportCategoryTotalsText(totals)}"
 
 /**
  * The period anchored on the landed window: after a success the requested kind carries an explicit
@@ -432,7 +430,12 @@ internal fun p806ReportShiftedPeriod(
                 P806Period(P806PeriodKind.WEEK, weekStart = anchor.plus(offset * 7, DateTimeUnit.DAY))
             }
             P806PeriodKind.MONTH -> {
-                val anchor = state.period.takeIf { period -> period.kind == P806PeriodKind.MONTH }?.month?.firstDay ?: current.startDate
+                val anchor =
+                    state.period
+                        .takeIf { period -> period.kind == P806PeriodKind.MONTH }
+                        ?.month
+                        ?.firstDay
+                        ?: current.startDate
                 val shifted = anchor.plus(offset, DateTimeUnit.MONTH)
                 P806Period(P806PeriodKind.MONTH, month = YearMonth(shifted.year, shifted.month))
             }
@@ -608,10 +611,11 @@ internal fun P503ReportRegion(
             P806PeriodKind.WEEK,
             P806PeriodKind.MONTH,
             P806PeriodKind.YEAR,
-            -> Row(modifier = Modifier.fillMaxWidth()) {
-                TextButton(onClick = { onShiftPeriod(-1) }) { Text("上一期间") }
-                TextButton(onClick = { onShiftPeriod(1) }) { Text("下一期间") }
-            }
+            ->
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = { onShiftPeriod(-1) }) { Text("上一期间") }
+                    TextButton(onClick = { onShiftPeriod(1) }) { Text("下一期间") }
+                }
             P806PeriodKind.CUSTOM ->
                 Column(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
