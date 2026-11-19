@@ -228,6 +228,9 @@ class P806ReportReducerTest {
     fun allFiveKindsAreSelectableAndOnlyARealChangeStartsANewRead() {
         // WEEK/MONTH/YEAR/ALL: the request carries the kind and the application resolves the window.
         val kinds = listOf(P806PeriodKind.WEEK, P806PeriodKind.MONTH, P806PeriodKind.YEAR, P806PeriodKind.ALL)
+        // A real landing's slot: the CUSTOM window the fixture payload itself resolved to (11-01..11-30),
+        // so every kind requested below is a real change rather than the slot's own period absorbed.
+        val base = P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 11, 1), customEnd = LocalDate(2026, 11, 30))
         // The fixture slot already holds request token 4, and a token that does not GROW is a stale
         // host call absorbed before the selection is even read: every step below starts above it.
         var token = 4L
@@ -235,7 +238,7 @@ class P806ReportReducerTest {
             token += 1
             val next =
                 assertIs<P503AppState.OverviewEmpty>(
-                    reducer.reduce(overview(loadedSlot()), P503UiEvent.SelectReportPeriod(P806Period(kind), requestToken = token)),
+                    reducer.reduce(overview(loadedSlot(period = base)), P503UiEvent.SelectReportPeriod(P806Period(kind), requestToken = token)),
                 )
             val slot = assertNotNull(next.reportRegion)
             assertEquals(P806Period(kind), slot.period)

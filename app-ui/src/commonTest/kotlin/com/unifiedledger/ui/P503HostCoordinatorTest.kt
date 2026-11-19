@@ -1579,7 +1579,9 @@ class P503HostCoordinatorTest {
      *
      * ABLATION (承重): skip the open step in [openAndStartReportRead] and the cancel case loses the
      * slot (the READY assertion goes RED); launch before the reducer accepts the token and the fresh
-     * page launches twice.
+     * page launches twice; drop the period retention in [P503HostCoordinator.reportLanded] and the
+     * decision falls back to the bare default month while the re-seeded slot holds the anchored one,
+     * so the restore starts a read and the empty-launch assertion goes RED.
      */
     @Test
     fun theProductionOpeningSeamRestoresACompletedSlotAndReadsAFreshPageOnce() {
@@ -1634,6 +1636,11 @@ class P503HostCoordinatorTest {
                 ),
             )
         memory.record(state)
+        // The production landing hop is a PAIR: P503App records the slot and then reports the same
+        // state to the coordinator, which keeps the ANCHORED period as the period to re-request.
+        // Without that overwrite the decision falls back to the bare default month while the
+        // re-seeded slot holds the anchored one, so the reducer accepts a read instead of absorbing it.
+        coordinator.reportLanded(state)
         // 2. The editor round trip returns a slotless overview (the flow states carry no report field).
         state = reducer.reduce(state, P503UiEvent.StartNewExpense)
         state = reducer.reduce(state, P503UiEvent.Back)
