@@ -578,8 +578,7 @@ private fun P806ReportCategorySection(
                     .fillMaxWidth()
                     .clickable(onClickLabel = p806ReportCategoryExpandActionLabel(levelOne.categoryName)) {
                         expandedIds = p806ReportCategoryToggled(expandedIds, levelOne.categoryId)
-                    }
-                    .semantics { contentDescription = p806ReportCategoryAccessibilityText(levelOne, level = 1) },
+                    }.semantics { contentDescription = p806ReportCategoryAccessibilityText(levelOne, level = 1) },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(p806ReportCategoryExpansionMarker(expanded), style = MaterialTheme.typography.bodyMedium)
