@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -7,12 +8,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -27,6 +34,7 @@ import com.unifiedledger.application.P806Periods
 import com.unifiedledger.application.P806ReportView
 import com.unifiedledger.application.P806ResolvedPeriod
 import com.unifiedledger.application.P806SnapshotFailure
+import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -48,7 +56,8 @@ import kotlin.time.Instant
  * so the JVM tests hold them without a Compose runtime.
  *
  * Drilldown entries, the calendar, the typed detail return target and any write action are OUT of
- * this slice by the batch contract, so every category row here is display-only.
+ * this slice by the batch contract, so a category row opens no page: a level-1 row only expands and
+ * collapses its own level-2 children in local UI state (D-343 section 3.9.1).
  */
 
 /**
@@ -306,6 +315,44 @@ internal fun p806ReportCategoryAccessibilityText(
 internal fun p806ReportUncategorizedRowText(totals: List<P806CategoryCurrencyTotal>): String? = if (totals.isEmpty()) null else "${p806ReportUncategorizedLabel()}：${p806ReportCategoryTotalsText(totals)}"
 
 /**
+ * The expansion state a category section STARTS from: nothing expanded, so every level-2 row stays
+ * behind its own level-1 row until the user opens it (D-343 section 3.9.1). A new payload resets the
+ * section to exactly this state.
+ */
+internal fun p806ReportCategoryInitialExpansion(): Set<CategoryId> = emptySet()
+
+/** Whether the level-1 row [categoryId] is expanded; its level-2 children render only while it is. */
+internal fun p806ReportCategoryIsExpanded(
+    expanded: Set<CategoryId>,
+    categoryId: CategoryId,
+): Boolean = categoryId in expanded
+
+/**
+ * The expansion state after tapping the level-1 row [categoryId]: the only mutation of the section's
+ * local UI state. Tapping an expanded row collapses it, and every other row keeps its own state, so
+ * the level-1 rows of one section expand and collapse independently of each other.
+ */
+internal fun p806ReportCategoryToggled(
+    expanded: Set<CategoryId>,
+    categoryId: CategoryId,
+): Set<CategoryId> = if (categoryId in expanded) expanded - categoryId else expanded + categoryId
+
+/** The visible expansion state of one level-1 row: `▾` open, `▸` closed. */
+internal fun p806ReportCategoryExpansionMarker(expanded: Boolean): String = if (expanded) "▾" else "▸"
+
+/** The accessibility click label of one level-1 row: the action plus that row's current name. */
+internal fun p806ReportCategoryExpandActionLabel(categoryName: String): String = "展开或收起$categoryName"
+
+/**
+ * The level-2 rows that render under one level-1 row: all of its children while it is expanded, none
+ * while it is collapsed. The level-1 row itself — total included — stays visible in both states.
+ */
+internal fun p806ReportCategoryVisibleChildren(
+    category: P806CategoryView,
+    expanded: Boolean,
+): List<P806CategoryView> = if (expanded) category.children else emptyList()
+
+/**
  * The period anchored on the landed window: after a success the requested kind carries an explicit
  * anchor (the resolved start date), so the week/month/year cursors step from what was actually read
  * instead of from a second clock read. `ALL` and `CUSTOM` keep their definition.
@@ -504,7 +551,14 @@ private fun P806ReportCurrencyBlock(row: P806CurrencyView) {
     Spacer(Modifier.height(6.dp))
 }
 
-/** One category section: level-1 rows with their level-2 children and the explicit 无分类 row. */
+/**
+ * One category section: level-1 rows that expand and collapse their own level-2 children on tap, plus
+ * the explicit 无分类 row (D-343 section 3.9.1). The level-1 row and its total stay visible in both
+ * states; the children render only while their level-1 row is expanded, so the section never shows a
+ * child's contribution without its parent's. The interaction shape follows the P503 category region
+ * precedent — a clickable row with the "展开或收起<name>" label and a `▾`/`▸` marker — and opens no
+ * detail page (drilldown is a later batch).
+ */
 @Composable
 private fun P806ReportCategorySection(
     title: String,
@@ -515,13 +569,24 @@ private fun P806ReportCategorySection(
     if (categories.isEmpty() && uncategorizedRow == null) return
     Spacer(Modifier.height(4.dp))
     Text(title, style = MaterialTheme.typography.titleSmall)
+    var expandedIds by remember(categories) { mutableStateOf(p806ReportCategoryInitialExpansion()) }
     categories.forEach { levelOne ->
-        Text(
-            p806ReportCategoryRowText(levelOne),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.semantics { contentDescription = p806ReportCategoryAccessibilityText(levelOne, level = 1) },
-        )
-        levelOne.children.forEach { child ->
+        val expanded = p806ReportCategoryIsExpanded(expandedIds, levelOne.categoryId)
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClickLabel = p806ReportCategoryExpandActionLabel(levelOne.categoryName)) {
+                        expandedIds = p806ReportCategoryToggled(expandedIds, levelOne.categoryId)
+                    }
+                    .semantics { contentDescription = p806ReportCategoryAccessibilityText(levelOne, level = 1) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(p806ReportCategoryExpansionMarker(expanded), style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.width(4.dp))
+            Text(p806ReportCategoryRowText(levelOne), style = MaterialTheme.typography.bodyMedium)
+        }
+        p806ReportCategoryVisibleChildren(levelOne, expanded).forEach { child ->
             Text(
                 p806ReportCategoryRowText(child),
                 style = MaterialTheme.typography.bodyMedium,

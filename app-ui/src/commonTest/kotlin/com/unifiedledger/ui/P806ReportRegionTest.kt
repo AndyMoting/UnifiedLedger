@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 /**
@@ -379,6 +380,58 @@ class P806ReportRegionTest {
         )
         // An empty carry renders nothing (no empty row with a fake zero).
         assertNull(p806ReportUncategorizedRowText(emptyList()))
+    }
+
+    /**
+     * D-2: a level-1 row expands and collapses its OWN level-2 children (D-343 section 3.9.1). The
+     * section starts fully collapsed, one tap opens exactly that row (revealing its children), a
+     * second tap closes it again, and two level-1 rows of the same section never affect each other.
+     * The interactive row announces the action with the row's own name; the level-1 total and the
+     * accessibility texts are unchanged by the expansion.
+     */
+    @Test
+    fun aLevelOneRowExpandsAndCollapsesItsOwnChildrenAndNoSiblings() {
+        val foodId = CategoryId("anonymous-expand-parent-one")
+        val transportId = CategoryId("anonymous-expand-parent-two")
+        val breakfast =
+            P806CategoryView(
+                CategoryId("anonymous-expand-child-one"),
+                "早餐",
+                listOf(P806CategoryCurrencyTotal(cny, 800L, 0L)),
+                emptyList(),
+            )
+        val food = P806CategoryView(foodId, "餐饮", listOf(P806CategoryCurrencyTotal(cny, 800L, 0L)), listOf(breakfast))
+        val transport = P806CategoryView(transportId, "交通", listOf(P806CategoryCurrencyTotal(cny, 300L, 0L)), emptyList())
+        // Initial and empty selection: every level-1 row starts collapsed, so no level-2 row renders.
+        val initial = p806ReportCategoryInitialExpansion()
+        assertTrue(initial.isEmpty())
+        assertTrue(!p806ReportCategoryIsExpanded(initial, foodId))
+        assertEquals("▸", p806ReportCategoryExpansionMarker(false))
+        assertTrue(p806ReportCategoryVisibleChildren(food, expanded = false).isEmpty())
+        assertTrue(p806ReportCategoryVisibleChildren(transport, expanded = false).isEmpty())
+        // One tap expands exactly that row: its children render, the row keeps its own total.
+        val opened = p806ReportCategoryToggled(initial, foodId)
+        assertTrue(p806ReportCategoryIsExpanded(opened, foodId))
+        assertTrue(!p806ReportCategoryIsExpanded(opened, transportId))
+        assertEquals("▾", p806ReportCategoryExpansionMarker(true))
+        assertEquals(listOf(breakfast), p806ReportCategoryVisibleChildren(food, expanded = true))
+        assertEquals("餐饮：8.00 CNY", p806ReportCategoryRowText(food))
+        // A second tap collapses it again, back to the initial state.
+        val closed = p806ReportCategoryToggled(opened, foodId)
+        assertTrue(!p806ReportCategoryIsExpanded(closed, foodId))
+        assertTrue(closed.isEmpty())
+        // Two level-1 rows of the same section expand independently in both directions.
+        val both = p806ReportCategoryToggled(opened, transportId)
+        assertTrue(p806ReportCategoryIsExpanded(both, foodId))
+        assertTrue(p806ReportCategoryIsExpanded(both, transportId))
+        val foodOnly = p806ReportCategoryToggled(both, foodId)
+        assertTrue(!p806ReportCategoryIsExpanded(foodOnly, foodId))
+        assertTrue(p806ReportCategoryIsExpanded(foodOnly, transportId))
+        // A level-1 row without children reveals nothing even while expanded: no invented row.
+        assertTrue(p806ReportCategoryVisibleChildren(transport, expanded = true).isEmpty())
+        // The click label carries the action and the row's own current name.
+        assertEquals("展开或收起餐饮", p806ReportCategoryExpandActionLabel("餐饮"))
+        assertEquals("展开或收起交通", p806ReportCategoryExpandActionLabel(transport.categoryName))
     }
 
     // ---------------------------------------------------------------- period navigation (host-side, pure)
