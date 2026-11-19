@@ -300,6 +300,15 @@ data class P806ReportView(
     val futureTransactionCount: Int,
     val detailPage: P806TransactionPage,
     val detailCount: Int,
+    /**
+     * P8-06 batch b (D-343 section 3.1.3): the ledger's effective statistics span, READ IN THE SAME
+     * SNAPSHOT as every value above (the reader takes MIN/MAX in its one read transaction). It is
+     * the ONLY span a surface may use — never a month-card bound, never a second read. `null` only
+     * with [period] `null` (the ledger has no effective period), so a payload that carries a period
+     * always carries its own span. Tail field with a default, so every pre-batch construction keeps
+     * compiling.
+     */
+    val span: P806Span? = null,
 ) {
     /** True when there is no period at all (empty `ALL`): the daily average is not applicable. */
     val dailyAverageNotApplicable: Boolean get() = period == null

@@ -22,6 +22,13 @@ import kotlinx.datetime.toLocalDateTime
  *   all five period kinds (the daily average is then not applicable, not zero);
  * - a period that cannot be represented is `InvalidWindow`, and checked amount overflow is
  *   `InvalidState`.
+ *
+ * P8-06 batch b (D-343 section 3.1.3): the success path also checks the SNAPSHOT's own evidence —
+ * window and span are both present or both absent, a period-less payload is the honest empty shape,
+ * and the raw window equals the window the request resolves to against this call's single `today`.
+ * A half shape, a dishonest empty payload or a divergent window is a typed `InvalidState`; the
+ * version check still runs first and the resolution still answers `InvalidWindow` before the window
+ * comparison.
  */
 class P806ReportQuery(
     private val readPort: LedgerCurrentStateReadPort,
@@ -71,24 +78,44 @@ class P806ReportQuery(
             }
         return when (result) {
             is P806SnapshotResult.Success -> {
-                // Version first (D-343; spec sections 3.5.1/3.8): the success-path InvalidWindow
-                // below may only be judged on a snapshot of this query's generation.
+                // Version first (D-343; spec sections 3.5.1/3.8): the success-path failures below may
+                // only be judged on a snapshot of this query's generation.
                 if (result.snapshot.catalogVersion != catalogVersion) {
                     return P806SnapshotResult.Failed(P806SnapshotFailure.CatalogVersionMismatch)
                 }
                 val snapshot = result.snapshot
-                // 无期间（NoPeriod）: no effective period at all (empty ledger) — every period kind answers
-                // NoPeriod, never a zero-valued period.
-                val resolved =
-                    if (snapshot.window == null) {
-                        null
-                    } else {
-                        when (val resolution = P806Periods.resolve(period, today, snapshot.span)) {
-                            is P806PeriodResolution.Resolved -> resolution.period
-                            P806PeriodResolution.NotApplicable -> null
-                            P806PeriodResolution.InvalidWindow -> return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidWindow)
-                        }
+                // Same-snapshot shape (D-343 section 3.1.3): the window and the span are read in ONE
+                // transaction, so a period payload carries both and a period-less ledger carries
+                // neither. A half shape is bad data — NEVER a period-less ledger (that is the one
+                // mapping this check exists to forbid).
+                if ((snapshot.window == null) != (snapshot.span == null)) {
+                    return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
+                }
+                // 无期间（NoPeriod）: no effective period at all (empty ledger) — every period kind
+                // answers NoPeriod, never a zero-valued period. The payload itself must be honest: a
+                // ledger without a period has nothing to report, so any amount/count/page row here is
+                // an inconsistent snapshot, not an empty period.
+                if (snapshot.window == null) {
+                    if (!p806ReportNoPeriodPayloadIsHonest(snapshot)) {
+                        return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
                     }
+                    return fold { P806Folds.report(snapshot, ledgerId, authority.catalog, null) }
+                }
+                // The resolution reuses the SINGLE `today` this call already read for the request and
+                // the future threshold — the window is never verified against a second clock read.
+                val resolved =
+                    when (val resolution = P806Periods.resolve(period, today, snapshot.span)) {
+                        is P806PeriodResolution.Resolved -> resolution.period
+                        P806PeriodResolution.NotApplicable -> return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
+                        P806PeriodResolution.InvalidWindow -> return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidWindow)
+                    }
+                // Same-snapshot evidence: the raw window must be exactly the window this request
+                // resolves to. A real adapter reads it that way (a divergence guard against a future
+                // reader change); a reader that answers another window is caught here instead of
+                // splitting one payload across two periods.
+                if (snapshot.window != resolved.window) {
+                    return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
+                }
                 fold { P806Folds.report(snapshot, ledgerId, authority.catalog, resolved) }
             }
             is P806SnapshotResult.Failed -> P806SnapshotResult.Failed(result.failure)
@@ -108,6 +135,24 @@ class P806ReportQuery(
             P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
         }
 }
+
+/**
+ * P8-06 batch b (D-343 section 3.1.3): whether a period-less payload is the honest empty shape a
+ * ledger without any effective period produces. Amounts, counts, a page, a detail count or an
+ * activity axis on such a payload describe a period (or a currency population) the snapshot does not
+ * name — an inconsistent snapshot, never an empty period, and never an "infinite range" either. The
+ * production reader's no-period branch answers all of these empty, so the check is a regression
+ * guard, not a behaviour change.
+ */
+private fun p806ReportNoPeriodPayloadIsHonest(snapshot: P806ReportSnapshot): Boolean =
+    snapshot.postingTotals.isEmpty() &&
+        snapshot.transactionCount == 0 &&
+        snapshot.currencyCounts.isEmpty() &&
+        snapshot.currencyAxis.isEmpty() &&
+        snapshot.futureTransactionCount == 0 &&
+        snapshot.firstPage.rows.isEmpty() &&
+        snapshot.firstPage.nextCursor == null &&
+        snapshot.detailCount == 0
 
 class P806CalendarQuery(
     private val readPort: LedgerCurrentStateReadPort,

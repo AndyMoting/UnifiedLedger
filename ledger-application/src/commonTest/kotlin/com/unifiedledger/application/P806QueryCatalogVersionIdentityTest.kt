@@ -1,6 +1,7 @@
 package com.unifiedledger.application
 
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
@@ -170,22 +171,113 @@ class P806QueryCatalogVersionIdentityTest {
         assertNotSame(oldAccount, session.p806AccountPostingsQuery)
     }
 
+    /**
+     * P8-06 batch b (D-343 section 3.1.3): the success path also verifies the snapshot's OWN
+     * evidence. The raw window must be the window this request resolves to against the single
+     * `today` the call already read; a reader that answers another window is a typed `InvalidState`
+     * (a real adapter reads it exactly so — this is the divergence guard), and a half shape
+     * (window without span, or span without window) is bad data, NEVER a period-less ledger.
+     */
+    @Test
+    fun theSameSnapshotWindowAndShapeMustMatchTheRequestAndNeverBecomeAQuietNoPeriod() {
+        val span = P806Span(Instant.parse("2026-03-02T02:00:00Z"), Instant.parse("2026-03-20T02:00:00Z"))
+        val month = P806Period(P806PeriodKind.MONTH, month = YearMonth(2026, 3))
+        val resolvedWindow = resolvedWindow(month, span)
+        val port =
+            P806IdentityPort(
+                report = P806SnapshotResult.Success(reportSnapshot(7L, window = resolvedWindow, span = span)),
+                calendar = P806SnapshotResult.Success(calendarSnapshot(7L)),
+                drilldown = P806SnapshotResult.Success(drilldownSnapshot(7L)),
+                account = P806SnapshotResult.Success(accountSnapshot(7L)),
+            )
+        val query = P806ReportQuery(port, ledgerId, authority(7L), clock)
+        // Positive control: the matching window succeeds and the view carries the same-snapshot span.
+        val view = assertIs<P806SnapshotResult.Success<P806ReportView>>(query.query(month)).snapshot
+        assertEquals(resolvedWindow, assertNotNull(view.period).window)
+        assertEquals(span, view.span)
+        // A divergent window is a typed invalid state, never a success and never a NoPeriod.
+        port.report = P806SnapshotResult.Success(reportSnapshot(7L, window = P806Window(1L, 2L), span = span))
+        assertEquals(P806SnapshotFailure.InvalidState, failureOf(query.query(month)))
+        // A window without a span: half shape -> InvalidState (not NoPeriod).
+        port.report = P806SnapshotResult.Success(reportSnapshot(7L, window = resolvedWindow, span = null))
+        assertEquals(P806SnapshotFailure.InvalidState, failureOf(query.query(month)))
+        // A span without a window: the same half shape, again never a NoPeriod success.
+        port.report = P806SnapshotResult.Success(reportSnapshot(7L, window = null, span = span))
+        assertEquals(P806SnapshotFailure.InvalidState, failureOf(query.query(month)))
+        // The honest no-period payload (both absent, nothing to report) still answers NoPeriod.
+        port.report = P806SnapshotResult.Success(reportSnapshot(7L, window = null, span = null))
+        val empty = assertIs<P806SnapshotResult.Success<P806ReportView>>(query.query(month)).snapshot
+        assertEquals(null, empty.period)
+        assertEquals(null, empty.span)
+        // A no-period payload that still carries amounts is inconsistent, not an empty period.
+        port.report = P806SnapshotResult.Success(reportSnapshot(7L, window = null, span = null, transactionCount = 1))
+        assertEquals(P806SnapshotFailure.InvalidState, failureOf(query.query(month)))
+        // The same holds for a no-period payload that still names an activity axis (N-4): a ledger
+        // without any effective period has no currency population to report either.
+        port.report = P806SnapshotResult.Success(reportSnapshot(7L, window = null, span = null, axis = listOf(CurrencyUnit("CNY", 2))))
+        assertEquals(P806SnapshotFailure.InvalidState, failureOf(query.query(month)))
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.1.3): `ALL` must match the Shanghai span INCLUDING both ends —
+     * a future statistics date extends the window — and the version check still precedes the window
+     * verification (a wrong-version snapshot with a divergent window is the version mismatch).
+     */
+    @Test
+    fun aFutureAllMatchesTheShanghaiInclusiveSpanAndTheVersionCheckStillComesFirst() {
+        val futureSpan =
+            P806Span(
+                earliest = Instant.parse("2026-11-01T02:00:00Z"),
+                latest = Instant.parse("2027-02-03T02:00:00Z"),
+            )
+        val all = P806Period(P806PeriodKind.ALL)
+        val window = resolvedWindow(all, futureSpan)
+        val port =
+            P806IdentityPort(
+                report = P806SnapshotResult.Success(reportSnapshot(7L, window = window, span = futureSpan)),
+                calendar = P806SnapshotResult.Success(calendarSnapshot(7L)),
+                drilldown = P806SnapshotResult.Success(drilldownSnapshot(7L)),
+                account = P806SnapshotResult.Success(accountSnapshot(7L)),
+            )
+        val query = P806ReportQuery(port, ledgerId, authority(7L), clock)
+        val view = assertIs<P806SnapshotResult.Success<P806ReportView>>(query.query(all)).snapshot
+        val period = assertNotNull(view.period)
+        // 2026-11-01 through 2027-02-03 in Shanghai terms, both ends included (the future date too).
+        assertEquals(LocalDate(2026, 11, 1), period.startDate)
+        assertEquals(LocalDate(2027, 2, 3), period.endDateInclusive)
+        assertEquals(futureSpan, view.span)
+        // The version check keeps its precedence over the (here also divergent) window verification.
+        port.report = P806SnapshotResult.Success(reportSnapshot(8L, window = P806Window(1L, 2L), span = futureSpan))
+        assertEquals(P806SnapshotFailure.CatalogVersionMismatch, failureOf(query.query(all)))
+    }
+
     // ---------------------------------------------------------------- fixtures
 
     private fun failureOf(result: P806SnapshotResult<*>): P806SnapshotFailure = assertIs<P806SnapshotResult.Failed>(result).failure
+
+    /**
+     * The window the application resolves for [period] against the fixture clock's own "today"
+     * (2026-11-17 in Shanghai terms) — what a production reader answers with.
+     */
+    private fun resolvedWindow(
+        period: P806Period,
+        span: P806Span?,
+    ): P806Window = assertIs<P806PeriodResolution.Resolved>(P806Periods.resolve(period, LocalDate(2026, 11, 17), span)).period.window
 
     private fun reportSnapshot(
         version: Long,
         window: P806Window? = null,
         span: P806Span? = null,
+        transactionCount: Int = 0,
+        axis: List<CurrencyUnit> = emptyList(),
     ): P806ReportSnapshot =
         P806ReportSnapshot(
             catalogVersion = version,
             window = window,
             span = span,
-            currencyAxis = emptyList(),
+            currencyAxis = axis,
             postingTotals = emptyList(),
-            transactionCount = 0,
+            transactionCount = transactionCount,
             currencyCounts = emptyList(),
             futureTransactionCount = 0,
             firstPage = P806TransactionPage(emptyList(), null),

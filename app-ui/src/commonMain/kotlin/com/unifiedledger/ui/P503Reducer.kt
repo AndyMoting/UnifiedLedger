@@ -97,42 +97,59 @@ class P503ReducerImpl(
         if (annotationHistoryEventAbsorbed(state, event)) return state
         if (versionHistoryEventAbsorbed(state, event)) return state
         if (accountFlowEventAbsorbed(state, event)) return state
-        if (reconciliationEventAbsorbed(state, event)) return state
-        if (refundEntryEventAbsorbed(state, event)) return state
-        if (listScrollRestoredEventAbsorbed(state, event)) return state
-        externalNavigationTransition(state, event)?.let { return it }
-        return when (state) {
-            is P503AppState.Ready -> reduceReady(state, event)
-            is P503AppState.OverviewEmpty -> reduceOverviewEmpty(state, event)
-            is P503AppState.TransactionDetail -> reduceTransactionDetail(state, event)
-            is P503AppState.AccountFlow -> reduceAccountFlow(state, event)
-            is P503AppState.ReconciliationQueue -> reduceReconciliationQueue(state, event)
-            is P503AppState.ReconciliationDetail -> reduceReconciliationDetail(state, event)
-            is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(state, event)
-            is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(state, event)
-            is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(state, event)
-            is P503AppState.TransactionEdit -> reduceTransactionEdit(state, event)
-            is P503AppState.TransferEdit -> reduceTransferEdit(state, event)
-            is P503AppState.TransactionAnnotationEdit -> reduceTransactionAnnotationEdit(state, event)
-            is P503AppState.VoidConfirm -> reduceVoidConfirm(state, event)
-            is P503AppState.RecycleBin -> reduceRecycleBin(state, event)
-            is P503AppState.BackupExport -> reduceBackupExport(state, event)
-            is P503AppState.BackupRestore -> reduceBackupRestore(state, event)
-            is P503AppState.ReadableExport -> reduceReadableExport(state, event)
-            is P503AppState.BudgetConfig -> reduceBudgetConfig(state, event)
-            is P503AppState.Search -> reduceSearch(state, event)
-            is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(state, event)
-            is P503AppState.Editing -> reduceEditing(state, event)
-            is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(state, event)
-            is P503AppState.Submitting -> reduceSubmitting(state, event)
-            is P503AppState.Created -> reduceTransientResult(event, state)
-            is P503AppState.NoChange -> reduceTransientResult(event, state)
-            is P503AppState.Recovered -> reduceTransientResult(event, state)
-            is P503AppState.RequestIdentityConflict -> reduceRequestIdentityConflict(state, event)
-            is P503AppState.DomainRejected -> reduceDomainRejected(state, event)
-            is P503AppState.InfrastructureFailure -> reduceInfrastructureFailure(state, event)
-            is P503AppState.UnknownCommit -> reduceUnknownCommit(state, event)
-        }
+        // P8-06 batch b (D-343 section 3.7): the report landing is applied BEFORE the guard and
+        // before the state dispatch, because it must reach the live overview AND every surface that
+        // carries a preserved overview — a read whose landing arrives during a read-only detour
+        // must converge the carried slot instead of leaving it loading forever.
+        reportRegionLanding(state, event)?.let { return it }
+        reportRegionInvalidation(state, event)?.let { return it }
+        // P8-06 batch b (D-343 section 3.7): the host's accepted graph switch retires the old graph's
+        // report slot before the preserved/returned overview becomes visible (换库/换代不迁移旧槽、
+        // 旧历史或旧请求身份).
+        val effective = reportRegionGraphRetirement(state, event) ?: state
+        if (reportRegionEventAbsorbed(effective, event)) return effective
+        if (reconciliationEventAbsorbed(effective, event)) return effective
+        if (refundEntryEventAbsorbed(effective, event)) return effective
+        if (listScrollRestoredEventAbsorbed(effective, event)) return effective
+        externalNavigationTransition(effective, event)?.let { return it }
+        val reduced =
+            when (effective) {
+                is P503AppState.Ready -> reduceReady(effective, event)
+                is P503AppState.OverviewEmpty -> reduceOverviewEmpty(effective, event)
+                is P503AppState.TransactionDetail -> reduceTransactionDetail(effective, event)
+                is P503AppState.AccountFlow -> reduceAccountFlow(effective, event)
+                is P503AppState.ReconciliationQueue -> reduceReconciliationQueue(effective, event)
+                is P503AppState.ReconciliationDetail -> reduceReconciliationDetail(effective, event)
+                is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(effective, event)
+                is P503AppState.ImportBatchConfirm -> reduceImportBatchConfirm(effective, event)
+                is P503AppState.ImportBatchSubmitting -> reduceImportBatchSubmitting(effective, event)
+                is P503AppState.TransactionEdit -> reduceTransactionEdit(effective, event)
+                is P503AppState.TransferEdit -> reduceTransferEdit(effective, event)
+                is P503AppState.TransactionAnnotationEdit -> reduceTransactionAnnotationEdit(effective, event)
+                is P503AppState.VoidConfirm -> reduceVoidConfirm(effective, event)
+                is P503AppState.RecycleBin -> reduceRecycleBin(effective, event)
+                is P503AppState.BackupExport -> reduceBackupExport(effective, event)
+                is P503AppState.BackupRestore -> reduceBackupRestore(effective, event)
+                is P503AppState.ReadableExport -> reduceReadableExport(effective, event)
+                is P503AppState.BudgetConfig -> reduceBudgetConfig(effective, event)
+                is P503AppState.Search -> reduceSearch(effective, event)
+                is P503AppState.RestoreSessionTerminal -> reduceRestoreSessionTerminal(effective, event)
+                is P503AppState.Editing -> reduceEditing(effective, event)
+                is P503AppState.AwaitingConfirmation -> reduceAwaitingConfirmation(effective, event)
+                is P503AppState.Submitting -> reduceSubmitting(effective, event)
+                is P503AppState.Created -> reduceTransientResult(event, effective)
+                is P503AppState.NoChange -> reduceTransientResult(event, effective)
+                is P503AppState.Recovered -> reduceTransientResult(event, effective)
+                is P503AppState.RequestIdentityConflict -> reduceRequestIdentityConflict(effective, event)
+                is P503AppState.DomainRejected -> reduceDomainRejected(effective, event)
+                is P503AppState.InfrastructureFailure -> reduceInfrastructureFailure(effective, event)
+                is P503AppState.UnknownCommit -> reduceUnknownCommit(effective, event)
+            }
+        // P8-06 batch b (D-343 section 3.7): a failed authoritative refresh concludes a write-stale
+        // slot even on a surface that absorbs the refresh family, so the region never keeps a pending
+        // face with no read and no retry. The overview's own READ-failure page is a non-carrier and
+        // passes through untouched.
+        return if (event is P503UiEvent.RefreshFailed) reduced.concludeReportWriteStale() else reduced
     }
 
     /**
@@ -396,6 +413,321 @@ class P503ReducerImpl(
             -> state !is P503AppState.AccountFlow
             else -> false
         }
+
+    /**
+     * P8-06 batch b (D-343 sections 3.1.3/3.7): the analysis report region's event family is
+     * state-preserving outside the overview that owns the slot (the account-flow family's
+     * central-guard shape). The three INTENT events have their one effect on
+     * [P503AppState.OverviewEmpty] with a slot — no slot means no report capability, so an unwired
+     * page absorbs them all. The landing ([P503UiEvent.ReportPeriodResult]) is consumed earlier by
+     * [reportRegionLanding]; reaching this guard with one means no surface carries an overview, so
+     * it is absorbed with zero change. Every pre-existing event stays unlisted.
+     */
+    private fun reportRegionEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.OpenReportRegion -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.SelectReportPeriod,
+            is P503UiEvent.RetryReportPeriod,
+            is P503UiEvent.UpdateReportCustomRange,
+            P503UiEvent.OpenReportCustomInputs,
+            -> state !is P503AppState.OverviewEmpty || state.reportRegion == null
+            is P503UiEvent.ReportPeriodResult -> true
+            // The invalidation is applied centrally BEFORE this guard (the carrier write); reaching
+            // it here means no surface carries a report slot, so nothing can be fenced.
+            is P503UiEvent.InvalidateReportRegion -> true
+            // The graph-switch retirement is applied centrally BEFORE this guard too; reaching it
+            // here means the page carries no report slot, so there is nothing to retire.
+            P503UiEvent.RetireReportRegionForGraphSwitch -> true
+            else -> false
+        }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): applies one landing to the live overview (and to the
+     * preserved overview of every carrier) and returns the rebuilt state, or `null` when this state
+     * carries no overview at all.
+     */
+    private fun reportRegionLanding(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): P503AppState? {
+        if (event !is P503UiEvent.ReportPeriodResult) return null
+        return withCarriedReportOverview(state) { overview -> applyReportPeriodResult(overview, event) }
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the ONE place a report landing changes an overview. Only
+     * the slot's ACTIVE request can land (a superseded token, another period or another ledger is a
+     * no-op); a matching request whose generation/catalog advanced ends only its loading and keeps
+     * the last success labelled as old context; a rejected payload or a typed read failure is
+     * carried as the failure after ending that request. A success replaces the payload WHOLE and
+     * anchors the requested period on the resolved window, so the week/month/year cursors step from
+     * what was actually read.
+     */
+    private fun applyReportPeriodResult(
+        overview: P503AppState.OverviewEmpty,
+        event: P503UiEvent.ReportPeriodResult,
+    ): P503AppState.OverviewEmpty {
+        val slot = overview.reportRegion ?: return overview
+        val read = event.read
+        return when (p806ReportLandingDecision(overview, read, event.currentGeneration, event.currentCatalogVersion)) {
+            P806ReportLandingDecision.STALE_REQUEST -> overview
+            // Every branch below CONCLUDES the fenced request, so the payload stops being write-stale
+            // (the failure or the success now explains it); a stale request that matches nothing
+            // keeps the stale mark, so old data can never read as current meanwhile.
+            P806ReportLandingDecision.STALE_GENERATION ->
+                overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable, writeStale = false))
+            P806ReportLandingDecision.CATALOG_ADVANCED ->
+                overview.copy(
+                    reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch, writeStale = false),
+                )
+            P806ReportLandingDecision.PAYLOAD_REJECTED ->
+                overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.InvalidState, writeStale = false))
+            P806ReportLandingDecision.ACCEPTED ->
+                when (read) {
+                    is P806ReportRead.Refused ->
+                        overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable, writeStale = false))
+                    is P806ReportRead.Unwired ->
+                        overview.copy(reportRegion = slot.copy(loading = false, unwired = true, writeStale = false))
+                    is P806ReportRead.Landed ->
+                        when (val result = read.result) {
+                            is com.unifiedledger.application.P806SnapshotResult.Success ->
+                                overview.copy(
+                                    reportRegion =
+                                        slot.copy(
+                                            loading = false,
+                                            failure = null,
+                                            period = p806ReportAnchoredPeriod(slot.period, result.snapshot),
+                                            landed = result.snapshot,
+                                            landedKind = read.request.period.kind,
+                                            landedAsOf = read.capture.asOf,
+                                            landedGeneration = read.capture.generation,
+                                            landedCatalogVersion = read.capture.catalogVersion,
+                                            writeStale = false,
+                                        ),
+                                )
+                            is com.unifiedledger.application.P806SnapshotResult.Failed ->
+                                overview.copy(reportRegion = slot.copy(loading = false, failure = result.failure, writeStale = false))
+                        }
+                }
+        }
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): applies the determinate-write invalidation to the live
+     * overview (and to the preserved overview of every carrier) — the write may start on a carrier
+     * surface whose carried slot holds the in-flight request. Returns `null` when this state carries
+     * no overview.
+     */
+    private fun reportRegionInvalidation(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): P503AppState? {
+        if (event !is P503UiEvent.InvalidateReportRegion) return null
+        return withCarriedReportOverview(state) { overview -> applyReportInvalidation(overview) }
+    }
+
+    /**
+     * P8-06 batch b: the ONE place a determinate write fences the slot. The request in flight is
+     * fenced at its own token and ENDED, the last success becomes write-stale old data, and a request
+     * with a HIGHER token — the one the post-write re-request will mint — is unaffected because the
+     * fence is the max, not a reset.
+     *
+     * A slot with a payload keeps a REAL pending marker (`loading`) because its owed authoritative
+     * re-read is still to come: the region shows the write-stale notice, never a READY. A slot with
+     * no payload has nothing to protect and nothing pending, so it ends as the ordinary not-loaded
+     * surface instead of a fabricated read.
+     */
+    private fun applyReportInvalidation(overview: P503AppState.OverviewEmpty): P503AppState.OverviewEmpty {
+        val slot = overview.reportRegion ?: return overview
+        val protectsPayload = slot.landed != null
+        return overview.copy(
+            reportRegion =
+                slot.copy(
+                    fenceToken = maxOf(slot.fenceToken, slot.requestToken),
+                    loading = protectsPayload,
+                    failure = null,
+                    writeStale = protectsPayload,
+                ),
+        )
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the authoritative refresh FAILED, so a slot that is still
+     * WAITING FOR THAT REFRESH must stop: the failure is the region's now-concluded outcome (named
+     * failure + the labelled old payload + a retry entry), never a stuck pending face with no read
+     * and no retry. Only the outer wait is concluded — the marker the invalidation left at the fence
+     * (`requestToken <= fenceToken`); a report read ACCEPTED after the fence (`requestToken >
+     * fenceToken`) is the region's own request and an unrelated refresh failure must not end it.
+     * Performed after the state's own transition, so a surface that absorbs the refresh failure still
+     * converges its carried slot, while the overview's own READ-failure page is untouched.
+     */
+    private fun P503AppState.concludeReportWriteStale(): P503AppState =
+        withCarriedReportOverview(this) { overview ->
+            val slot = overview.reportRegion ?: return@withCarriedReportOverview overview
+            if (!slot.writeStale || !slot.loading || slot.requestToken > slot.fenceToken) return@withCarriedReportOverview overview
+            overview.copy(
+                reportRegion =
+                    slot.copy(
+                        loading = false,
+                        writeStale = false,
+                        failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable,
+                    ),
+            )
+        } ?: this
+
+    /**
+     * P8-06 batch b (D-343 sections 3.1.3/3.7): the report-slice retirement of an old graph's slot.
+     * The host sends [P503UiEvent.RetireReportRegionForGraphSwitch] only when its ONE authoritative
+     * predicate ([restoreSwitchChangedGraph], comparing the result's landingGeneration with the
+     * captured pre-switch generation) says the graph really changed, and on the same main hop as the
+     * switch result — so the preserved/returned overview is clean before it becomes visible. The whole
+     * slot is dropped: a payload-less failed or in-flight slot would otherwise keep a stale failure
+     * (blocking the new graph's default first read) or a pending marker an old token could never
+     * conclude. A page without a slot or without a carrier is a no-op.
+     */
+    private fun reportRegionGraphRetirement(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): P503AppState? {
+        if (event !is P503UiEvent.RetireReportRegionForGraphSwitch) return null
+        return withCarriedReportOverview(state) { overview ->
+            if (overview.reportRegion == null) overview else overview.copy(reportRegion = null)
+        }
+    }
+
+    /**
+     * P8-06 batch b: rebuilds [state] with [transform] applied to its preserved overview, or `null`
+     * when this state carries none. The carrier table itself lives on
+     * [P503AppState.carriedReportCarrier] — ONE mapping serving both this write-back and the host's
+     * memory/coordinator reads, so the two can never drift apart.
+     *
+     * A transform that returns its input UNCHANGED keeps the state instance too: the report slice
+     * ends on the absorb paths (an unrelated refresh failure, a superseded landing, a page with no
+     * slot), and those paths promise the state "returned unchanged", not a structurally equal copy
+     * of it.
+     */
+    private fun withCarriedReportOverview(
+        state: P503AppState,
+        transform: (P503AppState.OverviewEmpty) -> P503AppState.OverviewEmpty,
+    ): P503AppState? {
+        val carrier = state.carriedReportCarrier() ?: return null
+        val transformed = transform(carrier.overview)
+        return if (transformed === carrier.overview) state else carrier.rebuild(transformed)
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the slot the host's open event creates. It imports only the
+     * DISPLAY fields of the host's one remembered slot (see [reduceOpenReportRegion]'s caller); the
+     * shape depends on what that memory is:
+     * - an ELIGIBLE payload is the current result and is imported as such (a read-only return or a
+     *   plain page rebuild restores the success without a new read);
+     * - a write-stale payload is HISTORY: it comes across as labelled old data (`writeStale`), with
+     *   no request token, no loading marker and no READY — the same graph's last success stays
+     *   visible beside the owed re-read and its failure, never re-seeded as current;
+     * - anything else (a failed-over or superseded slot) starts NOT_LOADED.
+     * A payload from another ledger is dropped whole, so a page rebuild can never mix two graphs;
+     * the host additionally retires the memory on a graph switch or a generation/catalog advance.
+     */
+    private fun reduceOpenReportRegion(
+        previous: P806ReportRegionState?,
+        state: P503AppState.OverviewEmpty,
+    ): P806ReportRegionState {
+        val seeded = previous ?: return P806ReportRegionState()
+        val landedLedger = seeded.landed?.ledgerId
+        if (landedLedger != null && landedLedger != state.state.ledgerId) return P806ReportRegionState()
+        val history = seeded.writeStale && seeded.landed != null
+        if (!history && !p806ReportSlotIsEligible(seeded)) return P806ReportRegionState()
+        return P806ReportRegionState(
+            period = seeded.period,
+            kind = seeded.kind,
+            customStartText = seeded.customStartText,
+            customEndText = seeded.customEndText,
+            landed = seeded.landed,
+            landedKind = seeded.landedKind,
+            landedAsOf = seeded.landedAsOf,
+            landedGeneration = seeded.landedGeneration,
+            landedCatalogVersion = seeded.landedCatalogVersion,
+            writeStale = history,
+        )
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.1): selects the report region's own period and marks exactly
+     * one read in flight. A token that does not grow is a stale host call and is absorbed; the
+     * already-requested period is absorbed too (the same period only re-reads on the initial load, a
+     * real change, an explicit retry or the host's post-write re-request) — but its last success and
+     * its failure stay visible meanwhile, never re-rendered as the current result. The visible
+     * selection follows the requested kind, so a new kind never wears the old kind's dates.
+     */
+    private fun reduceSelectReportPeriod(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.SelectReportPeriod,
+    ): P503AppState {
+        val slot = state.reportRegion ?: return state
+        if (slot.unwired) return state
+        if (event.requestToken <= slot.requestToken) return state
+        val alreadyRequested = event.period == slot.period && (slot.loading || slot.landed != null || slot.failure != null)
+        if (alreadyRequested) return state
+        return state.copy(
+            reportRegion =
+                slot.copy(
+                    period = event.period,
+                    kind = event.period.kind,
+                    requestToken = event.requestToken,
+                    loading = true,
+                    failure = null,
+                ),
+        )
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the EXPLICIT re-read — the failure face's retry and the
+     * host's post-write path. It bypasses the same-period dedup on purpose (a refreshed page keeps
+     * the last READY period, and re-reading it must not be mistaken for a duplicate selection), sets
+     * [P503UiEvent.RetryReportPeriod.period] when the caller names one, and keeps the last success
+     * beside the new read so it stays visible, labelled as old.
+     *
+     * A duplicate retry of the period already in flight coalesces into that request (同期间重复重试
+     * 单飞): a real period change preempts it, and the post-write re-read is accepted because the
+     * invalidation's pending marker is not a live request (its token still sits at the fence).
+     */
+    private fun reduceRetryReportPeriod(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.RetryReportPeriod,
+    ): P503AppState {
+        val slot = state.reportRegion ?: return state
+        if (slot.unwired) return state
+        if (event.requestToken <= slot.requestToken) return state
+        val period = event.period
+        val inFlight = slot.loading && slot.requestToken > slot.fenceToken
+        if (inFlight && (period == null || period == slot.period)) return state
+        return state.copy(
+            reportRegion =
+                slot.copy(
+                    period = period ?: slot.period,
+                    kind = period?.kind ?: slot.kind,
+                    requestToken = event.requestToken,
+                    loading = true,
+                    failure = null,
+                ),
+        )
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.1.5): the custom range's two drafts. Editing them is never a
+     * read and never rewrites the committed dates; only the explicit commit requests a period.
+     */
+    private fun reduceUpdateReportCustomRange(
+        state: P503AppState.OverviewEmpty,
+        event: P503UiEvent.UpdateReportCustomRange,
+    ): P503AppState {
+        val slot = state.reportRegion ?: return state
+        if (slot.customStartText == event.startText && slot.customEndText == event.endText) return state
+        return state.copy(reportRegion = slot.copy(customStartText = event.startText, customEndText = event.endText))
+    }
 
     /**
      * P8-01a i3a (D-308; spec sections 2.2/2.3/2.4/2.5/2.6): the reconciliation event family is
@@ -1489,6 +1821,24 @@ class P503ReducerImpl(
             // as-is — the region renders the explicit failure copy, never a zero); the month
             // cursor and every other field are preserved by the copy.
             is P503UiEvent.BudgetMonthLanded -> state.copy(budgetView = event.result)
+            // ---- P8-06 batch b report region transitions (D-343 sections 3.1/3.7) ----
+            // The independent report period and its single in-flight read; the custom drafts; the
+            // explicit retry. The landing is consumed centrally in [reduce] (it also reaches the
+            // surfaces that carry a preserved overview), so it never arrives here.
+            is P503UiEvent.SelectReportPeriod -> reduceSelectReportPeriod(state, event)
+            is P503UiEvent.RetryReportPeriod -> reduceRetryReportPeriod(state, event)
+            is P503UiEvent.UpdateReportCustomRange -> reduceUpdateReportCustomRange(state, event)
+            // The custom chip only reveals the inputs: no read until the explicit commit.
+            P503UiEvent.OpenReportCustomInputs ->
+                if (state.reportRegion == null || state.reportRegion.kind == com.unifiedledger.application.P806PeriodKind.CUSTOM) {
+                    state
+                } else {
+                    state.copy(reportRegion = state.reportRegion.copy(kind = com.unifiedledger.application.P806PeriodKind.CUSTOM))
+                }
+            // The host opens the region (only on a graph that wires the report read): the explicit
+            // NOT_LOADED slot appears once, and an existing slot is never reset behind a read.
+            is P503UiEvent.OpenReportRegion ->
+                if (state.reportRegion != null) state else state.copy(reportRegion = reduceOpenReportRegion(event.previous, state))
             // The config dialog opens with the host-resolved authority (revision/closed/limit)
             // and the exact overview as the exit target.
             is P503UiEvent.OpenBudgetConfig ->

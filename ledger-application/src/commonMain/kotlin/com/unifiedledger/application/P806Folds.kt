@@ -71,6 +71,9 @@ object P806Folds {
             futureTransactionCount = snapshot.futureTransactionCount,
             detailPage = snapshot.firstPage,
             detailCount = snapshot.detailCount,
+            // P8-06 batch b (D-343 section 3.1.3): the span travels WITH the payload it was read
+            // beside — the view never invents one and never re-reads it.
+            span = snapshot.span,
         )
     }
 

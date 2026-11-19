@@ -116,6 +116,25 @@ internal fun invalidateWidgetsBestEffort(observer: WidgetInvalidationObserver) {
 }
 
 /**
+ * P8-06 batch b (D-343 sections 3.1.3/3.7): the analysis report region's initial-request decision —
+ * the (a) leg of its own trigger set, kept pure so the JVM coordinator test holds it.
+ *
+ * One request is due when the ANALYSIS page is actually showing (the region renders there and
+ * nowhere else), this graph wires the read, and nothing has been attempted yet: no payload, no
+ * failure and nothing in flight. A tab switch, an unrelated recomposition, a month-card change or a
+ * read-only return therefore never starts a second read of the same period.
+ */
+internal fun p806ReportInitialReadDue(state: P503AppState): Boolean {
+    if (state !is P503AppState.OverviewEmpty) return false
+    if (state.importSurface || state.selectedTab != P503Tab.ANALYSIS) return false
+    // No slot yet: the region is not open. The HOST opens it (and gates on the wiring), so this
+    // decision stays capability-agnostic — but the reducer still absorbs every intent on a slotless
+    // page, so an unwired graph can never start a read either way.
+    val slot = state.reportRegion ?: return true
+    return !slot.unwired && !slot.loading && slot.landed == null && slot.failure == null
+}
+
+/**
  * P5-04.4 S5: pure Kotlin host-behavior coordinator (spec section 7).
  *
  * [P503App] is `@Composable`, so its host wiring (which pass-through callback a given state
@@ -164,6 +183,19 @@ internal class P503HostCoordinator(
     // P7-07 07.D: the budget month request cycle the host runs (one bounded read + one-fold
     // dispatch), triggered by the SAME shape of frozen trigger set as the monthly cycle.
     private val onBudgetMonthRequest: () -> Unit = {},
+    // P8-06 batch b (D-343 sections 3.1.3/3.7): the analysis report region's request callback —
+    // one background P806 report read for the given period definition. The no-op default keeps the
+    // desktop root and every existing JVM construction site compiling unchanged.
+    private val onReportRequest: (com.unifiedledger.application.P806Period) -> Unit = {},
+    // P8-06 batch b (D-343 section 3.7): the EXPLICIT post-write re-read of the analysis report
+    // region — a distinct callback because it must bypass the ordinary same-period dedup (the
+    // refreshed page keeps the last READY period, so a plain selection would be absorbed). The
+    // no-op default keeps every existing construction site compiling unchanged.
+    private val onReportReRequest: (com.unifiedledger.application.P806Period) -> Unit = {},
+    // P8-06 batch b (D-343 section 3.7): the determinate-write invalidation of the host's last-ready
+    // report memory. It fires at the WRITE START (before the authoritative refresh's read is issued)
+    // and unconditionally, so a failed or retried refresh can never re-seed the pre-write payload.
+    private val onReportWriteInvalidation: () -> Unit = {},
     // P7-03.C: 本月 resolved by the host's reporting clock (R-Q06-2); null when the clock is
     // unusable, which still allows the initial request so the typed failure surfaces (R-Q06-4).
     private val currentMonth: () -> kotlinx.datetime.YearMonth? = { null },
@@ -267,6 +299,11 @@ internal class P503HostCoordinator(
                     null
                 } else {
                     refreshAfterResultServed = state
+                    // P8-06 batch b (D-343 section 3.7): the determinate write INVALIDATES the
+                    // report memory and the old in-flight identity BEFORE the refresh is issued, so
+                    // the guard holds from the write start (a failed refresh followed by a manual
+                    // retry can never re-seed the pre-write payload).
+                    beginReportWrite()
                     onRefresh()
                     // Trigger (e): the authoritative refresh of a determinate success re-requests
                     // the monthly payload for the fresh overview (P703SPEC-04). A-02 FIX-MONTH-1
@@ -396,7 +433,13 @@ internal class P503HostCoordinator(
      * resolution arm nothing; the site whose landing leaves the retained summary Unknown-free
      * arms. Never fired by per-item result landings nor by a pause/abandon of the run.
      */
-    internal fun onImportBatchConfirmed() {
+    internal fun onImportBatchConfirmed(reportWrite: Boolean = true) {
+        // P8-06 batch b: the report invalidation runs BEFORE the refresh (write start, not landing).
+        // Its gate is STRICTER than the batch's terminal set ([p806ImportBatchHasDeterminateWrite]):
+        // a run that only rejected/skipped or paused Unknown items wrote nothing, so it fences no
+        // report payload and owes no re-read. The monthly, budget and widget legs below keep their
+        // existing terminal-only rule untouched.
+        if (reportWrite) beginReportWrite()
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
         // P7-07 07.D: the SAME chain arms the budget re-request (only once the budget surface
@@ -422,6 +465,8 @@ internal class P503HostCoordinator(
      * a non-success leaves the surfaces untouched.
      */
     internal fun onP705EffectiveSurfaceChanged() {
+        // P8-06 batch b: the report invalidation runs BEFORE the refresh (write start, not landing).
+        beginReportWrite()
         onRefresh()
         pendingMonthlyReRequestAfterRefresh = true
         // P7-07 07.D: a formal ledger effect moves budget observations too — arm the SAME
@@ -438,6 +483,225 @@ internal class P503HostCoordinator(
     /** Arms the budget re-request only when the budget surface has been loaded this session. */
     private fun armBudgetMonthReRequestIfLoaded() {
         if (budgetEverRequested) pendingBudgetMonthReRequestAfterRefresh = true
+    }
+
+    // ---- P8-06 batch b analysis report region (D-343 sections 3.1.3/3.7) ----
+
+    /**
+     * The period the region last requested (the anchored one after a landing, the accepted
+     * definition before one). It outlives a refreshed overview, so the post-write re-request and a
+     * re-entry after the write flow keep the period the user actually read.
+     */
+    private var reportedLastPeriod: com.unifiedledger.application.P806Period? = null
+
+    /**
+     * Whether the region holds a payload a determinate write must protect (any landed payload of this
+     * graph, READY or labelled old context). It SURVIVES a write: a second write merging into an
+     * unpaid obligation must still owe its own re-read, and a first legal re-read already in flight
+     * must not lose the obligation. It clears on a landing that drops the payload (an unwired read)
+     * and on the 换库 closeout.
+     */
+    private var reportPayloadLanded = false
+
+    /**
+     * Whether a determinate write OWES the region one authoritative re-read (D-343 section 3.7).
+     * [beginReportWrite] arms it from the pre-write payload and MERGES with an unpaid debt instead of
+     * overwriting it (a second write never drops the first write's obligation). It clears only when a
+     * reducer-accepted read is actually enqueued ([reportReadEnqueued]) — a page entry, a coordinator
+     * evaluation or a callback return never counts as "已读" — and on the 换库 closeout.
+     *
+     * MAIN-HOP ONLY, like [reportWriteAwaitingRefresh]: every determinate-write completion callback
+     * (entry, correction, void/restore, annotation return, import batch) now runs on the same main
+     * hop as its result dispatch, so these two fields are never read or written across threads.
+     */
+    private var reportWriteOwed = false
+
+    /**
+     * Whether the authoritative refresh this write started is still awaiting the LAST landing of its
+     * coalesced chain. Set at [beginReportWrite]; cleared by [consumeReportReRequestAfterRefresh] or
+     * [reportRefreshFailed] — both only when the chain is complete — so a first merged landing can
+     * neither release the re-read nor mark its transient page as served.
+     */
+    private var reportWriteAwaitingRefresh = false
+
+    /**
+     * Records what one landing left behind — including a landing applied to a CARRIED overview, so a
+     * read that completes during a read-only detour still keeps the region's period and payload mark.
+     * A landing FENCED by a determinate write changes nothing here (the write's lifecycle owns the
+     * slot and has already invalidated the memory), so a fenced old result can neither clear nor
+     * restore the obligation. The payload mark follows the landed payload, and the retained period
+     * follows only a slot that is the CURRENT result ([p806ReportSlotIsEligible]); a page rebuilt
+     * without a slot keeps both for the owed re-read. The host calls this right after dispatching a
+     * landing, on the main thread, with the landed state.
+     */
+    internal fun reportLanded(state: P503AppState) {
+        val slot = state.carriedReportCarrier()?.overview?.reportRegion ?: return
+        if (slot.writeStale) return
+        reportPayloadLanded = slot.landed != null
+        if (p806ReportSlotIsEligible(slot)) reportedLastPeriod = slot.period
+    }
+
+    /**
+     * The determinate-write entry point of the report region (D-343 section 3.7). It runs on the MAIN
+     * hop BEFORE the authoritative refresh's own read is issued, so the guard holds from the WRITE
+     * START and not from the moment a refreshed overview lands:
+     * - the payload mark decides the one owed post-write re-read, and it MERGES with an unpaid debt:
+     *   a second write never overwrites the first one's obligation, and an obligation whose re-read
+     *   is already in flight is re-armed (that read is fenced by this write's own invalidation);
+     * - the invalidation itself is UNCONDITIONAL — the pre-write payload is no longer a legal
+     *   re-seed source whether or not the region happened to be READY, and the host fences the live
+     *   or carried slot synchronously via [onReportWriteInvalidation] (which also drops its memory).
+     */
+    private fun beginReportWrite() {
+        reportWriteOwed = reportWriteOwed || (reportPayloadLanded && reportedLastPeriod != null)
+        reportWriteAwaitingRefresh = true
+        onReportWriteInvalidation()
+    }
+
+    /**
+     * The overview instance the initial read was already requested for. A refreshed or rebuilt page
+     * is a NEW overview instance, so a re-entry after a write round trip fires once per page, while a
+     * repeated evaluation of the same state (a recomposition, a coalesced LaunchedEffect) never
+     * double-requests. Set ONLY by an accepted read ([reportReadEnqueued]): a refused or not-enqueued
+     * request leaves the page unserved and the debt intact.
+     */
+    private var reportServedOverview: P503AppState.OverviewEmpty? = null
+
+    /**
+     * The page whose report request is being decided right now. The host's request callbacks run
+     * synchronously on the main hop, so an enqueue observed inside [reportReadEnqueued] marks exactly
+     * this page as served — and a refusal marks nothing.
+     */
+    private var reportRequestPage: P503AppState.OverviewEmpty? = null
+
+    /**
+     * The report region's initial-request decision (the (a) leg of the region's own trigger set):
+     * the analysis page is actually showing, this overview has not been served yet (no open slot
+     * yet, or a slot without a payload, a failure or a pending read) and no determinate write owns
+     * the next read. While a write's re-read is owed or its refresh is still in flight an ordinary
+     * page entry starts NOTHING — the write's own re-read is the one read of that round. The period
+     * comes from [reportedLastPeriod] when the page was rebuilt (a write round trip or a refresh),
+     * otherwise from the slot's own definition, and finally from the default 本月 — whose definition
+     * carries no anchor, so the APPLICATION resolves the Shanghai month.
+     */
+    internal fun decideReport(state: P503AppState): Boolean {
+        if (reportWriteOwed || reportWriteAwaitingRefresh) return false
+        if (!p806ReportInitialReadDue(state)) return false
+        val overview = state as P503AppState.OverviewEmpty
+        if (overview === reportServedOverview) return false
+        val period = reportedLastPeriod ?: overview.reportRegion?.period ?: com.unifiedledger.application.P806Period(com.unifiedledger.application.P806PeriodKind.MONTH)
+        return requestReportNow(state, period)
+    }
+
+    /**
+     * Records the period the region actually accepted (a user selection, the retry, the initial
+     * load or the post-write re-request). It outlives the slot, so the next rebuilt page and the
+     * post-write re-request keep the user's period instead of the default one.
+     */
+    internal fun retainReportPeriod(period: com.unifiedledger.application.P806Period) {
+        reportedLastPeriod = period
+    }
+
+    /**
+     * One unconditional report request for [period] (the initial load and the user's period
+     * choices end here). The host's `onReportRequest` opens the region when it is not open yet and
+     * performs the read; the retained period is stamped so a rebuilt overview keeps it. Neither the
+     * debt nor the page's served mark is touched here: only the reducer-accepted read the host
+     * actually enqueues fulfils or serves ([reportReadEnqueued]), so a callback that returns without
+     * a read spends nothing.
+     */
+    internal fun requestReportNow(
+        state: P503AppState,
+        period: com.unifiedledger.application.P806Period,
+    ): Boolean {
+        if (state !is P503AppState.OverviewEmpty) return false
+        retainReportPeriod(period)
+        reportRequestPage = state
+        onReportRequest(period)
+        reportRequestPage = null
+        return true
+    }
+
+    /**
+     * The reducer ACCEPTED and the host ENQUEUED one report read for [period]: that is the one
+     * fulfilment of this round's obligation (D-343 section 3.7) — a page entry, a coordinator
+     * evaluation or a callback return alone never is — and it marks the requesting page as served.
+     * Also keeps the period a rebuilt page re-reads.
+     */
+    internal fun reportReadEnqueued(period: com.unifiedledger.application.P806Period) {
+        reportedLastPeriod = period
+        reportWriteOwed = false
+        reportRequestPage?.let { page -> reportServedOverview = page }
+    }
+
+    /**
+     * The authoritative refresh's landing hop for an owed report re-read (D-343 section 3.7). Only
+     * the LAST landing of the coalesced refresh chain may release it ([chainComplete]): an earlier
+     * merged landing neither launches the re-read nor marks its transient page as served, so the
+     * second write's obligation survives it. A landing that cannot host the read (a carried page)
+     * RETAINS the debt (it launches from [consumeOwedReportReRequest] once an eligible page shows).
+     */
+    internal fun consumeReportReRequestAfterRefresh(
+        landedState: P503AppState,
+        chainComplete: Boolean = true,
+    ) {
+        if (!reportWriteAwaitingRefresh) return
+        if (!chainComplete) return
+        reportWriteAwaitingRefresh = false
+        if (!reportWriteOwed) return
+        launchOwedReportReRequest(landedState)
+    }
+
+    /**
+     * The refresh's FAILED landing at the end of its chain: the refresh is no longer in flight, but
+     * the owed re-read is RETAINED — a failed refresh never clears the write's obligation, so the
+     * explicit RetryRefresh path still completes exactly one read once an eligible page lands. An
+     * earlier merged landing changes nothing.
+     */
+    internal fun reportRefreshFailed(chainComplete: Boolean = true) {
+        if (!chainComplete) return
+        reportWriteAwaitingRefresh = false
+    }
+
+    /**
+     * The owed-re-read fallback, called at every state evaluation: it attempts the owed read once per
+     * evaluation when the debt exists, the authoritative refresh already landed, and an OverviewEmpty
+     * page can host it. Only the accepted read spends the debt and marks the page served
+     * ([reportReadEnqueued]); a refusal leaves both untouched, so a page whose region is not wired (or
+     * whose reducer absorbs the request) never loops by itself — the attempt is repeated only by a
+     * later real evaluation, and the ordinary entry ([decideReport]) cannot duplicate it.
+     */
+    internal fun consumeOwedReportReRequest(state: P503AppState) {
+        if (!reportWriteOwed || reportWriteAwaitingRefresh) return
+        val overview = state as? P503AppState.OverviewEmpty ?: return
+        launchOwedReportReRequest(overview)
+    }
+
+    /**
+     * Launches the owed re-read on an eligible page. Neither the debt nor the page's served mark is
+     * spent by the attempt: a refusal or a read the reducer did not accept leaves the debt owed and
+     * the page unserved ([reportReadEnqueued] is the only consumer). A refusal therefore costs one
+     * attempt per real evaluation and never starts a read or an internal loop of its own.
+     */
+    private fun launchOwedReportReRequest(state: P503AppState) {
+        val overview = state as? P503AppState.OverviewEmpty ?: return
+        val period = reportedLastPeriod ?: return
+        reportRequestPage = overview
+        onReportReRequest(period)
+        reportRequestPage = null
+    }
+
+    /**
+     * The 换库 closeout (a committed backup-restore switch, D-343 section 3.7): the replaced graph's
+     * report period, payload mark and unpaid obligation never migrate into the new ledger — the new
+     * graph starts with no retained report state and reads its own default period.
+     */
+    internal fun dropReportLifecycleForGraphSwitch() {
+        reportedLastPeriod = null
+        reportPayloadLanded = false
+        reportWriteOwed = false
+        reportWriteAwaitingRefresh = false
+        reportServedOverview = null
     }
 
     /**
@@ -1220,6 +1484,113 @@ internal fun retainedP705RequestAfterLanding(
 internal fun shouldArmImportBatchConfirmed(landedState: P503AppState): Boolean {
     val summary = (landedState as? P503AppState.OverviewEmpty)?.importReview?.batchResult ?: return false
     return summary.items.none { it.outcome is ImportBatchItemOutcome.Unknown }
+}
+
+/**
+ * P8-06 batch b (D-343 section 3.7): whether a landed backup-restore switch result moved the page
+ * onto a DIFFERENT graph. The result's [BackupRestoreSwitchResult.landingGeneration] is authoritative:
+ * a different generation means the graph was reopened (Committed, a post-publish RolledBack, a
+ * post-quiesce abort), while an equal one is a pre-quiesce rejection that changed nothing and a null
+ * one has no active generation to compare (the fail-closed recovery). Only a real graph change
+ * retires the report period, payload history and unpaid obligation; a rejection preserves them.
+ */
+internal fun restoreSwitchChangedGraph(
+    result: BackupRestoreSwitchResult,
+    preSwitchGeneration: Generation?,
+): Boolean {
+    val landed = result.landingGeneration ?: return false
+    return landed != preSwitchGeneration
+}
+
+/**
+ * P8-06 batch b (D-343 section 3.7): the ONE order the host lands a backup-restore switch result in.
+ * The result's own transition runs first (it may close the surface to the preserved overview or keep
+ * it with a typed banner); then — only when [restoreSwitchChangedGraph] says the graph really changed
+ * — the report lifecycle is retired: the host's memory/period/debt ([retireHostReportLifecycle]) and
+ * the reducer-carried slot ([P503UiEvent.RetireReportRegionForGraphSwitch]) on the SAME main hop,
+ * before a refresh or any return makes the overview visible. A rejection that never advanced the
+ * graph changes nothing, and the report slice never infers the change from the payload itself.
+ */
+internal fun landRestoreSwitchResult(
+    result: BackupRestoreSwitchResult,
+    preSwitchGeneration: Generation?,
+    dispatch: (P503UiEvent) -> P503AppState,
+    retireHostReportLifecycle: () -> Unit,
+): P503AppState {
+    val landed = dispatch(P503UiEvent.RestoreSwitchResultLanded(result))
+    if (!restoreSwitchChangedGraph(result, preSwitchGeneration)) return landed
+    retireHostReportLifecycle()
+    return dispatch(P503UiEvent.RetireReportRegionForGraphSwitch)
+}
+
+/**
+ * P8-06 batch b (D-343 sections 3.1.3/3.7): the host's ONE report-region opening + request seam.
+ * The composition root runs it for the initial load, the five period choices, the explicit retry and
+ * the owed post-write re-request; the JVM tests run the SAME function against the production
+ * reducer, memory and coordinator with the effects injected, so the tested wiring is the shipped one:
+ * 1. on a wired page whose region is not open yet, dispatch [P503UiEvent.OpenReportRegion] with the
+ *    remembered slot (the current result, or the same graph's labelled history);
+ * 2. mint the next request token and dispatch the ordinary ([P503UiEvent.SelectReportPeriod]) or the
+ *    explicit ([P503UiEvent.RetryReportPeriod]) request for [period] (`null` = the slot's own);
+ * 3. only when the reducer ACCEPTED that new token, report the enqueued read to the coordinator and
+ *    launch the background read — a refusal starts nothing, spends nothing and serves nothing.
+ * Returns whether one read was enqueued.
+ */
+internal fun openAndStartReportRead(
+    current: P503AppState,
+    wired: Boolean,
+    period: com.unifiedledger.application.P806Period?,
+    explicit: Boolean,
+    memory: P806ReportSlotMemory,
+    sequence: P806ReportRequestSequence,
+    coordinator: P503HostCoordinator?,
+    currentGeneration: Generation?,
+    currentCatalogVersion: Long?,
+    dispatch: (P503UiEvent) -> P503AppState,
+    launchRead: (Long) -> Unit,
+): Boolean {
+    var state = current
+    if (wired && state is P503AppState.OverviewEmpty && state.reportRegion == null) {
+        state = dispatch(P503UiEvent.OpenReportRegion(previous = memory.previousFor(currentGeneration, currentCatalogVersion)))
+    }
+    val overview = state as? P503AppState.OverviewEmpty ?: return false
+    val slot = overview.reportRegion ?: return false
+    if (slot.unwired) return false
+    val requested = period ?: slot.period
+    val requestToken = sequence.next()
+    state =
+        dispatch(
+            if (explicit) {
+                P503UiEvent.RetryReportPeriod(requestToken = requestToken, period = requested)
+            } else {
+                P503UiEvent.SelectReportPeriod(period = requested, requestToken = requestToken)
+            },
+        )
+    val accepted = (state as? P503AppState.OverviewEmpty)?.reportRegion ?: return false
+    if (!accepted.loading || accepted.requestToken != requestToken) return false
+    coordinator?.reportReadEnqueued(accepted.period)
+    launchRead(requestToken)
+    return true
+}
+
+/**
+ * P8-06 batch b (D-343 section 3.7): whether a terminal import batch run produced at least ONE
+ * determinate formal write, judged by the EXISTING per-item receipt shape. [shouldArmImportBatchConfirmed]
+ * only knows that no item is still Unknown; the report path additionally requires a confirmed item
+ * whose receipt carries a formal `transactionId` AND belongs to that same batch candidate (the spine
+ * returns the candidate-only receipt when nothing was written, and a cancelled/conflicting claim
+ * carries no transaction). Every other outcome — rejected, check-conflict, skipped, still-unknown —
+ * and an empty batch write nothing, so the report payload is neither fenced nor re-read. The monthly
+ * and budget arms keep the terminal-only gate they already use.
+ */
+internal fun p806ImportBatchHasDeterminateWrite(landedState: P503AppState): Boolean {
+    val summary = (landedState as? P503AppState.OverviewEmpty)?.importReview?.batchResult ?: return false
+    return summary.items.any { item ->
+        val outcome = item.outcome
+        outcome is ImportBatchItemOutcome.Confirmed &&
+            outcome.receipt.transactionId != null &&
+            outcome.receipt.candidateId == item.item.candidateId
+    }
 }
 
 /**
