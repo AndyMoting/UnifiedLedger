@@ -205,6 +205,17 @@ sealed interface P503AppState {
          * (every pre-b3 path, no restore).
          */
         val originListScroll: ListScrollPosition? = null,
+        /**
+         * P8-06 batch b (D-343 sections 3.1.3/3.7): the analysis page's INDEPENDENT report region
+         * slot ([P806ReportRegionState]) — its own period cursor, its own six-state payload and its
+         * own request identity, none of which reuse the monthly payload or the shared
+         * [selectedMonth] cursor. `null` = this graph wires no report capability (未接线不渲染), and
+         * the authoritative refresh seeds a fresh slot only when the composition reports the
+         * capability, so no old request or payload survives it. Additive with a `null` default, so
+         * every pre-batch construction and copy site keeps compiling; the read-only surfaces that
+         * carry this overview preserve the slot untouched (a read-only return starts no read).
+         */
+        val reportRegion: P806ReportRegionState? = null,
     ) : P503AppState
 
     data class Editing(
@@ -1254,6 +1265,110 @@ internal fun P503AppState.carriedBudgetMonthOverview(): P503AppState.OverviewEmp
         // export face, so a concurrent budget landing is APPLIED to it (the P1-2 fix-round
         // discipline: carried-overview surfaces apply, never absorb).
         is P503AppState.ReadableExport -> overview
+        else -> null
+    }
+
+/**
+ * P8-06 batch b (D-343 section 3.7): ONE carrier of the analysis report slot.
+ *
+ * [overview] is the preserved overview this state holds; [rebuild] puts a transformed copy of it
+ * back into THIS exact state (so the reducer's landing can write without a second table). The host
+ * reads the same accessor for its last-ready memory and for the coordinator, so a landing that
+ * arrives on a read-only detour updates them exactly as it updates the payload.
+ */
+internal class ReportCarrier(
+    val overview: P503AppState.OverviewEmpty,
+    val rebuild: (P503AppState.OverviewEmpty) -> P503AppState,
+)
+
+/**
+ * P8-06 batch b: the ONE table that answers "which state carries a report slot, and how is a
+ * transformed copy put back". It is deliberately a single mapping with both halves — the accessor
+ * for the host's memory/coordinator and the rebuild for the reducer's landing — so no second long
+ * state table can drift from it. Every surface holding an [P503AppState.OverviewEmpty] is a carrier:
+ * the report landing is a background read, so wherever the user is when it arrives, the carried slot
+ * must converge instead of keeping a stale in-flight marker.
+ */
+internal fun P503AppState.carriedReportCarrier(): ReportCarrier? =
+    when (this) {
+        is P503AppState.OverviewEmpty -> ReportCarrier(this) { overview -> overview }
+        is P503AppState.TransactionDetail -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.AccountFlow -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.ReconciliationQueue -> {
+            val carrier = this
+            ReportCarrier(carrier.returnTo.overview) { overview -> carrier.copy(returnTo = carrier.returnTo.copy(overview = overview)) }
+        }
+        is P503AppState.ReconciliationDetail ->
+            when (val target = returnTo) {
+                is ReconciliationBackTarget.Overview -> {
+                    val carrier = this
+                    ReportCarrier(target.state) { overview -> carrier.copy(returnTo = ReconciliationBackTarget.Overview(overview)) }
+                }
+                is ReconciliationBackTarget.Queue -> {
+                    val carrier = this
+                    ReportCarrier(target.state.overview) { overview ->
+                        carrier.copy(returnTo = ReconciliationBackTarget.Queue(target.state.copy(overview = overview)))
+                    }
+                }
+            }
+        is P503AppState.ImportCandidateDetail -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.ImportBatchConfirm -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.ImportBatchSubmitting -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.TransactionEdit -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.TransferEdit -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.VoidConfirm -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.RecycleBin -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.TransactionAnnotationEdit -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.BackupExport -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.ReadableExport -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.BackupRestore -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.BudgetConfig -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        is P503AppState.Search -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
         else -> null
     }
 

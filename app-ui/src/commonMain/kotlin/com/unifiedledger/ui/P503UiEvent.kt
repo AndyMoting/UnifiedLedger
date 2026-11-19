@@ -526,6 +526,123 @@ sealed interface P503UiEvent {
         val currentCatalogVersion: Long?,
     ) : P503UiEvent
 
+    // ---- P8-06 batch b analysis-page report region (D-343 sections 3.1/3.7; zero formal effect) ----
+    // Discipline (table 6.2a): every event below is absorbed in every state outside its designed
+    // effect and throws nowhere; the central guard covers the family, so a late/stale dispatch can
+    // never reach `unhandled`. The landing ALSO applies to the surfaces that carry a preserved
+    // overview, so an in-flight read never leaves the carried slot loading forever.
+
+    /**
+     * Opens the analysis page's report region: seeds the explicit NOT_LOADED slot on the overview.
+     * The HOST sends it, and only when the composition wires the P806 report read ([LedgerSurfaces]),
+     * so an unwired graph never gains a slot and the region never renders there (未接线不渲染).
+     *
+     * [previous] is the host's ONE last-ready slot, re-seeded so a page rebuilt by an authoritative
+     * refresh or a write round trip keeps the loaded period and shows its payload explicitly as old
+     * context instead of dropping it silently. The host clears it on a generation change, and the
+     * reducer seeds only the display fields (`period`, `kind`, `landed`, `landedKind`, `landedAsOf`,
+     * `landedGeneration`, `landedCatalogVersion`, the custom drafts) — never a request identity, a
+     * loading marker or a failure, so a re-seeded slot claims no read in flight and the landing
+     * decision still compares it against the CURRENT generation/catalog. `null` seeds the plain
+     * default slot.
+     *
+     * It is the ONE way a slot comes into being; effect only on OverviewEmpty, and an existing slot
+     * is left untouched (never a reset behind an in-flight read). Absorbed everywhere else.
+     */
+    data class OpenReportRegion(
+        val previous: P806ReportRegionState? = null,
+    ) : P503UiEvent
+
+    /**
+     * The determinate-write INVALIDATION of the report region (D-343 section 3.7). The host sends it
+     * on the MAIN thread from the write trigger, BEFORE the authoritative refresh's own read, so the
+     * fence holds from the write start:
+     * - the request in flight is fenced at its token and ENDED (`loading` false) — no payload may land
+     *   at or below that token, and a higher active token is never affected;
+     * - the last success is marked write-stale: old data pending the re-read, never READY and never a
+     *   re-seed source;
+     * - a request already higher than the fence (none exists: the surface is single-flight) would keep
+     *   its own state.
+     *
+     * It applies to the live overview AND to every surface that carries a preserved overview — the
+     * write may start on a carrier (the detail/void/annotation surfaces) whose carried slot is the
+     * one holding the in-flight request. Absorbed where no slot is carried.
+     */
+    data object InvalidateReportRegion : P503UiEvent
+
+    /**
+     * Selects the analysis report region's own period (D-343 section 3.1: the five kinds, the
+     * independent cursor) and asks for one read. Effect only on OverviewEmpty with a report slot.
+     * [requestToken] is the HOST-assigned monotonic identity: a token not newer than the stored one
+     * is absorbed (a stale host call never restarts a read), and re-selecting the period that is
+     * already requested/last-loaded is absorbed too — the same period only re-reads on the initial
+     * load, a real period change, an explicit [RetryReportPeriod] or the host's post-write re-request.
+     * [period] is the requested definition; the Shanghai window and the natural-day denominator stay
+     * in the application layer. Absorbed everywhere else.
+     */
+    data class SelectReportPeriod(
+        val period: com.unifiedledger.application.P806Period,
+        val requestToken: Long,
+    ) : P503UiEvent
+
+    /**
+     * One EXPLICIT read of one period, bypassing the same-period dedup: the failure face's 重试 and
+     * the host's post-write re-request both end here. [period] is set when the caller re-reads a
+     * period other than the slot's own (the post-write path re-reads the last READY period, which is
+     * then exactly the slot's anchored one; `null` keeps the current definition). Effect only on
+     * OverviewEmpty with a report slot; a token that does not grow is absorbed; absorbed everywhere
+     * else.
+     */
+    data class RetryReportPeriod(
+        val requestToken: Long,
+        val period: com.unifiedledger.application.P806Period? = null,
+    ) : P503UiEvent
+
+    /**
+     * Reveals the custom range's two inputs WITHOUT reading anything (D-343 section 3.1.5): tapping
+     * 自定义 only switches the visible selection, so an untouched range never starts a doomed read.
+     * The explicit commit ([SelectReportPeriod] built from the drafts) is the only custom read.
+     * Effect only on OverviewEmpty with a report slot; absorbed everywhere else.
+     */
+    data object OpenReportCustomInputs : P503UiEvent
+
+    /**
+     * One edit of the custom range's two draft texts (D-343 section 3.1.5): it writes the drafts
+     * only — no read, no change to the committed period, and therefore no silently rewritten dates.
+     * The commit is a [SelectReportPeriod] built from these drafts (an unparseable or reversed range
+     * lands as the application's typed `InvalidWindow`). Effect only on OverviewEmpty with a slot.
+     */
+    data class UpdateReportCustomRange(
+        val startText: String,
+        val endText: String,
+    ) : P503UiEvent
+
+    /**
+     * One report read landed (D-343 section 3.7). It applies only when its request identity is still
+     * the slot's ACTIVE request AND its captured generation/catalog version match the values the host
+     * sampled on the main thread at landing time ([currentGeneration], [currentCatalogVersion]).
+     * A superseded landing changes nothing (a newer request keeps its own loading); a matching
+     * request whose graph/catalog advanced ends only its loading and keeps the last success labelled
+     * as old context; a payload that does not belong to one snapshot is dropped whole as a typed
+     * invalid state. Applies to the overview and to every surface carrying a preserved overview.
+     */
+    data class ReportPeriodResult(
+        val read: P806ReportRead,
+        val currentGeneration: Generation?,
+        val currentCatalogVersion: Long?,
+    ) : P503UiEvent
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the report-slice retirement of an OLD graph's slot. The host
+     * sends it on the SAME main hop as an accepted backup-restore switch — the pure
+     * [restoreSwitchChangedGraph] predicate decides, so a rejection that never advanced the graph
+     * sends nothing — and BEFORE the preserved or returned overview becomes visible. It drops the
+     * whole slot (period cursor, payload and provenance, failure, pending marker and request
+     * identity), so the new graph opens its own default period and no token of the old graph can
+     * match a new request. It is a no-op on a page with no slot or no carrier.
+     */
+    data object RetireReportRegionForGraphSwitch : P503UiEvent
+
     // ---- P8-01a i3a reconciliation events (D-308; spec sections 2.2/2.3/2.4/2.5/2.6) ----
     // Discipline (table 6.2a): every event below is absorbed in every state outside its designed
     // effect and throws nowhere; every pre-existing unlisted combination stays ISE (G-B).

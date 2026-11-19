@@ -494,6 +494,11 @@ fun P503AnalysisScreen(
     // loading/failure copy, so a monthly not-loaded state does not mask it. Null keeps every
     // pre-P7-07 call site compiling.
     budgetRegion: (@Composable () -> Unit)? = null,
+    // P8-06 batch b (D-343 sections 3.1.3/3.7): the INDEPENDENT report region slot, rendered below
+    // the whole monthly region with its own period cursor and its own payload — never derived from
+    // [monthlyActivity]. The host passes it only when the graph wires the P806 report read; null
+    // keeps every pre-batch call site compiling and renders no dead region.
+    reportRegion: (@Composable () -> Unit)? = null,
 ) {
     // DEF-B (D-268): the Analysis tab summarizes the exact SQL aggregates carried by [state];
     // the bounded `state.transactions` projection is never summarized as if it were the ledger.
@@ -577,5 +582,8 @@ fun P503AnalysisScreen(
                 selectableMonths = selectableMonths,
             )
         }
+        // P8-06 batch b: the independent report region renders whether or not the monthly region
+        // does (it is not the month card), and only when the composition wired it.
+        reportRegion?.invoke()
     }
 }

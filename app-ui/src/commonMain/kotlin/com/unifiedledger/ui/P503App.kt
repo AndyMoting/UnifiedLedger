@@ -107,6 +107,8 @@ import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.P802_SEARCH_PAGE_SIZE
+import com.unifiedledger.application.P806Period
+import com.unifiedledger.application.P806PeriodKind
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RefundReceiptDraft
@@ -589,6 +591,9 @@ fun P503App(
     // derivations the budget region needs (from the CACHED authoritative snapshot; an unloaded
     // snapshot degrades to the honest stable-id fallback, never an invented name).
     val budgetWired = ledger.surfaces.budget
+    // P8-06 batch b (D-343 sections 3.1/3.7): the report read wiring probe. A pure capability
+    // check, so the analysis page renders the independent report region only when it can be read.
+    val reportWired = ledger.surfaces.p806Report
     val budgetCategoryViews = remember(cachedCatalogSnapshot) { cachedCatalogSnapshot?.categories.orEmpty() }
     val budgetCategoryNames = budgetCategoryViews.associate { it.categoryId to it.name }
     val budgetCategoryParents = budgetCategoryViews.associate { it.categoryId to it.parentId }
@@ -886,6 +891,14 @@ fun P503App(
     var landingHopCoordinator: P503HostCoordinator? = null
 
     /**
+     * P8-06 batch b (D-343 section 3.7): the report region's coordinator slot, for the SAME
+     * declaration-order reason as [landingHopCoordinator] — the report request functions below are
+     * declared before the coordinator is constructed, but every accepted user period must reach the
+     * coordinator's retained period (so the post-write re-request and a rebuilt page keep it).
+     */
+    var reportCoordinator: P503HostCoordinator? = null
+
+    /**
      * Authoritative current-state refresh (the frozen layer-2 refresh chain, spec section 2.3).
      * A-PERF (rework path 1a): the read itself runs OFF the UI thread
      * (`Dispatchers.Default`) behind the single-flight [P503CurrentStateLoadCoordinator], and the
@@ -920,10 +933,18 @@ fun P503App(
                     if (outcome is LeaseOutcome.Completed && !ledger.isCurrentGeneration(outcome.generation)) {
                         // Stale generation: discard the payload entirely (no dispatch, no intent
                         // consumption), release the slot, and let a coalesced re-run proceed.
+                        // P8-06 batch b (D-343 section 3.7): the replaced graph's report period,
+                        // payload and unpaid obligation must not migrate to the current one.
+                        reportCoordinator?.dropReportLifecycleForGraphSwitch()
                         if (currentStateLoadCoordinator.loadCompleted()) refresh()
                         return@launch
                     }
-                    when (val result = (outcome as? LeaseOutcome.Completed)?.value) {
+                    val result = (outcome as? LeaseOutcome.Completed)?.value
+                    // P8-06 batch b (D-343 section 3.7): the EXISTING coalescing signal, read once at
+                    // the real landing order. A merged re-run is still queued, so this landing is not
+                    // the chain's last one — the report arm must not be released by it.
+                    val refreshChainContinues = currentStateLoadCoordinator.loadCompleted()
+                    when (result) {
                         is LedgerCurrentStateResult.Success -> {
                             // P7-02.A E-2: the intent is consumed only by a successful
                             // authoritative refresh; a failed read keeps it so the READ retry can
@@ -957,7 +978,17 @@ fun P503App(
                             landingHopCoordinator?.dropBudgetMonthReRequestAfterFailedRefresh()
                         }
                     }
-                    if (currentStateLoadCoordinator.loadCompleted()) refresh()
+                    // P8-06 batch b (D-343 section 3.7): the report arm is released ONLY by the last
+                    // landing of this refresh chain, for the period the user actually read. An earlier
+                    // merged landing neither releases nor clears it (the second write's obligation
+                    // survives), and a FAILED final landing retains the debt for the RetryRefresh
+                    // path instead of dropping it.
+                    if (result is LedgerCurrentStateResult.Success) {
+                        reportCoordinator?.consumeReportReRequestAfterRefresh(latestState.value, chainComplete = !refreshChainContinues)
+                    } else {
+                        reportCoordinator?.reportRefreshFailed(chainComplete = !refreshChainContinues)
+                    }
+                    if (refreshChainContinues) refresh()
                 }
             }
         }
@@ -1387,6 +1418,150 @@ fun P503App(
         // One background P806 account snapshot for the first page: the request token is assigned
         // here, the read runs off the UI thread and lands through the identity gate.
         requestAccountFlowMorePage()
+    }
+
+    // ------------------------------------------------ P8-06 batch b analysis report region host surface
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the report reads run through the owner's acquire-first
+     * lease order ([LedgerLeaseScope.leasedReportRead]) — the existing generic `leased`/`probe`
+     * callers keep their own order untouched.
+     */
+    val reportReadLease = remember(ledger) { LeaseScopeReportReadSeam(ledger) }
+
+    /**
+     * P8-06 batch b: the monotonic report request-token sequence. It lives with the composition, so
+     * a refreshed overview (which seeds a fresh slot) still hands out tokens newer than any read the
+     * previous slot issued.
+     */
+    val reportRequestSequence = remember(ledger) { P806ReportRequestSequence() }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the host's ONE last-ready report slot. A page rebuilt by an
+     * authoritative refresh or a write round trip starts without a slot; this memory re-seeds the
+     * last landed payload and its anchored period as EXPLICITLY OLD context (never as the current
+     * result), and answers `null` across a generation change. The reducer state stays the one live
+     * source — this is a seeding input only, never a display source.
+     */
+    val reportSlotMemory = remember(ledger) { P806ReportSlotMemory() }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): starts one report read — the initial load, the user's five
+     * period choices, the explicit retry and the post-write re-request all end here. The token is
+     * assigned here and the reducer stores it synchronously; the identity then binds the token, the
+     * ledger and the period definition the reducer accepted. The read runs OFF the UI thread through
+     * the acquire-first lease and lands with the CURRENT generation and catalog version captured on
+     * the main thread, so a superseded read never touches a newer request. The landing hop records
+     * the landed slot for the next rebuild and tells the coordinator what is now READY.
+     */
+    fun launchReportRead(requestToken: Long) {
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val slot = overview.reportRegion ?: return
+        if (!slot.loading || slot.requestToken != requestToken) return
+        val request = P806ReportRequestIdentity(token = requestToken, ledgerId = overview.state.ledgerId, period = slot.period)
+        scope.launch(Dispatchers.Default) {
+            val read = readP806Report(reportReadLease, request, ledger.ledgerClock)
+            scope.launch {
+                dispatch(
+                    P503UiEvent.ReportPeriodResult(
+                        read = read,
+                        currentGeneration = ledger.activeGenerationForLanding(),
+                        currentCatalogVersion = ledger.currentCatalogVersion,
+                    ),
+                )
+                reportSlotMemory.record(latestState.value)
+                reportCoordinator?.reportLanded(latestState.value)
+            }
+        }
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the report region's opening + request seam, bound to this
+     * composition's effects (the dispatch hop and the background read). It is the SAME
+     * [openAndStartReportRead] the JVM tests drive against the production reducer, memory and
+     * coordinator: on a wired page without a slot it opens one with the remembered success (current
+     * result or the same graph's labelled history), then mints the next token and requests the read;
+     * only the reducer-accepted read is reported and launched.
+     */
+    fun requestReport(
+        period: P806Period?,
+        explicit: Boolean,
+    ) {
+        openAndStartReportRead(
+            current = latestState.value,
+            wired = reportWired,
+            period = period,
+            explicit = explicit,
+            memory = reportSlotMemory,
+            sequence = reportRequestSequence,
+            coordinator = reportCoordinator,
+            currentGeneration = ledger.activeGenerationForLanding(),
+            currentCatalogVersion = ledger.currentCatalogVersion,
+            dispatch = { event ->
+                dispatch(event)
+                latestState.value
+            },
+            launchRead = ::launchReportRead,
+        )
+    }
+
+    /** P8-06 batch b: one report request for [period]; the reducer owns the single-flight decision. */
+    fun requestReportPeriod(period: P806Period) {
+        requestReport(period = period, explicit = false)
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the EXPLICIT post-write re-read of the last READY period.
+     * It goes through [P503UiEvent.RetryReportPeriod] with the period named, so the refreshed page's
+     * same-period dedup can never swallow it, and the old payload stays visible, labelled as old.
+     */
+    fun refreshReportPeriodAfterWrite(period: P806Period) {
+        requestReport(period = period, explicit = true)
+    }
+
+    /** P8-06 batch b: the failure face's explicit retry — one read of the CURRENT period. */
+    fun retryReportPeriod() {
+        requestReport(period = null, explicit = true)
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.1): the five-kind selector. A relative kind keeps the period it
+     * already read (re-tapping 月 never jumps back to 本月); switching kinds starts that kind's
+     * relative period and lets the APPLICATION resolve its Shanghai window. 自定义 only REVEALS the
+     * two inputs — its read belongs to the explicit 查询自定义区间 commit.
+     */
+    fun selectReportKind(kind: P806PeriodKind) {
+        if (kind == P806PeriodKind.CUSTOM) {
+            dispatch(P503UiEvent.OpenReportCustomInputs)
+            return
+        }
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val slot = overview.reportRegion ?: return
+        requestReportPeriod(p806ReportKindPeriod(slot, kind))
+    }
+
+    /**
+     * P8-06 batch b (D-343 section 3.1.3): the week/month/year step. The anchor is the landed
+     * window (or an explicit anchor the period already carries), so past AND future statistic
+     * periods stay reachable; 全部/自定义 do not step, and no anchor means no step.
+     */
+    fun shiftReportPeriod(offset: Int) {
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val slot = overview.reportRegion ?: return
+        val period = p806ReportShiftedPeriod(slot, offset) ?: return
+        requestReportPeriod(period)
+    }
+
+    /** P8-06 batch b: one edit of the custom drafts — never a read, never a date rewrite. */
+    fun updateReportCustomRange(startText: String, endText: String) {
+        dispatch(P503UiEvent.UpdateReportCustomRange(startText = startText, endText = endText))
+    }
+
+    /** P8-06 batch b: commits the two custom drafts as the report's period (one read). */
+    fun commitReportCustomRange() {
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val slot = overview.reportRegion ?: return
+        requestReportPeriod(p806CustomPeriod(slot.customStartText, slot.customEndText))
     }
 
     /**
@@ -2317,6 +2492,21 @@ fun P503App(
                 // P7-07 07.D: the budget month request cycle (the budget trigger set; the
                 // monthly trigger semantics are untouched).
                 onBudgetMonthRequest = ::requestBudgetMonthPayload,
+                // P8-06 batch b: the analysis report region's TWO callbacks — the ordinary request
+                // (initial load, the five kind chips, the custom commit) and the EXPLICIT post-write
+                // re-read of the last READY period (which bypasses the same-period dedup).
+                onReportRequest = ::requestReportPeriod,
+                onReportReRequest = ::refreshReportPeriodAfterWrite,
+                // P8-06 batch b (D-343 section 3.7): a determinate write FENCES the report region on
+                // the SAME main hop and BEFORE the refresh's own read: the reducer ends the in-flight
+                // request at its token (a pre-write result can then neither land nor become READY),
+                // and the host demotes its remembered payload to labelled-old history so the same
+                // graph's last success still rides the rebuilt page beside the owed re-read and its
+                // failure — never as READY.
+                onReportWriteInvalidation = {
+                    reportSlotMemory.markWriteStale()
+                    dispatch(P503UiEvent.InvalidateReportRegion)
+                },
                 currentMonth = {
                     try {
                         MonthlyBuckets.currentMonth(ledger.ledgerClock)
@@ -2328,6 +2518,8 @@ fun P503App(
         }
     // A-02 FIX-MONTH-1 (D-152): forward wiring — see [landingHopCoordinator] above refresh().
     landingHopCoordinator = coordinator
+    // P8-06 batch b: the same late wiring for the report region's retained period.
+    reportCoordinator = coordinator
 
     // P7-03.C: month selection dispatches first, then re-requests the monthly payload
     // unconditionally (trigger (b), including the failure-recovery path: re-selecting the same
@@ -2362,6 +2554,14 @@ fun P503App(
         // P7-07 07.D: the budget (a)/(d) trigger runs beside the monthly one; the monthly
         // decision semantics above are unchanged.
         coordinator.decideBudgetMonth(state)
+        // P8-06 batch b (D-343 section 3.7): the report region's own (a) leg — the first entry to
+        // the analysis page with a wired read and nothing attempted yet. Every other evaluation
+        // (a tab switch, a month-card change, a read-only return, a recomposition) is a no-op.
+        coordinator.decideReport(state)
+        // P8-06 batch b (D-343 section 3.7): the owed post-write re-read launches exactly once, and
+        // only after the authoritative refresh has landed on an eligible page (a non-Overview landing
+        // retains the debt instead of losing the contract's refresh).
+        coordinator.consumeOwedReportReRequest(state)
     }
 
     // ---------------------------------------------------------------- P7-04.C import host surface
@@ -4329,12 +4529,17 @@ fun P503App(
                     ?: TransactionAnnotationEditOutcome.Rejected(
                         com.unifiedledger.application.AnnotationFailureCode.ANNOTATION_CONSTRAINT_VIOLATION.code,
                     )
-            scope.launch { dispatch(P503UiEvent.TransactionAnnotationEditResult(outcome)) }
-            // Determinate success: the detail and the month projection re-read the new revision
-            // through the same effective-surface refresh the P7-05 commits use (spec section
-            // 3.2; a rejection/stale/conflict refreshes nothing — the annotation is unchanged).
-            // P7-08 08.D (A07): the refresh-and-arm landing runs through the JVM-assertable seam.
-            refreshAndArmAfterAnnotationEdit(outcome, coordinator)
+            scope.launch {
+                dispatch(P503UiEvent.TransactionAnnotationEditResult(outcome))
+                // Determinate success: the detail and the month projection re-read the new revision
+                // through the same effective-surface refresh the P7-05 commits use (spec section
+                // 3.2; a rejection/stale/conflict refreshes nothing — the annotation is unchanged).
+                // P7-08 08.D (A07): the refresh-and-arm landing runs through the JVM-assertable seam.
+                // P8-06 batch b (N-2): it runs on THIS main hop, right after the result dispatch — the
+                // report invalidation/arm must never race the landing from a Default thread (the
+                // clear/record pair has to be ordered behind the dispatch it belongs to).
+                refreshAndArmAfterAnnotationEdit(outcome, coordinator)
+            }
         }
     }
 
@@ -4722,7 +4927,7 @@ fun P503App(
         // Readiness precondition only: the switch needs a Ready owner (no active generation means
         // there is nothing to switch from). The landing guard no longer uses this capture — every
         // result now carries its own post-operation generation (F-1).
-        ledger.activeGenerationForLanding() ?: return
+        val preSwitchGeneration = ledger.activeGenerationForLanding() ?: return
         if (latestState.value !== current) return
         dispatch(P503UiEvent.ConfirmBackupRestoreSwitch)
         runRestoreConfirm(
@@ -4731,7 +4936,23 @@ fun P503App(
             confirm = confirm::confirm,
             isCurrentGeneration = ledger::isCurrentGeneration,
             land = { result ->
-                dispatch(P503UiEvent.RestoreSwitchResultLanded(result))
+                // P8-06 batch b (D-343 section 3.7): THE landing order — the result's own transition,
+                // then (ONLY when the pure [restoreSwitchChangedGraph] predicate says the graph really
+                // changed) the report lifecycle retirement on the SAME main hop and before the
+                // preserved/returned overview can become visible. A rejection that never advanced the
+                // graph keeps the region, its history and its owed read.
+                landRestoreSwitchResult(
+                    result = result,
+                    preSwitchGeneration = preSwitchGeneration,
+                    dispatch = { event ->
+                        dispatch(event)
+                        latestState.value
+                    },
+                    retireHostReportLifecycle = {
+                        reportSlotMemory.clear()
+                        reportCoordinator?.dropReportLifecycleForGraphSwitch()
+                    },
+                )
                 // Committed closeout (spec section 3.9): the switch is durable and the new graph is
                 // open and read back. The reducer already closed the surface to the preserved
                 // overview; this triggers the authoritative refresh chain so the overview reloads
@@ -5189,6 +5410,28 @@ fun P503App(
                                             } else {
                                                 null
                                             }
+                                        // P8-06 batch b (D-343 sections 3.1.3/3.7): the INDEPENDENT
+                                        // report region slot — non-null exactly when the graph wires
+                                        // the report read and this overview carries the slot (no dead
+                                        // region, and no region on an unwired graph). It owns its own
+                                        // period cursor and payload; nothing comes from the month card.
+                                        val reportSlot = current.reportRegion
+                                        val reportRegionSlot: (@Composable () -> Unit)? =
+                                            if (reportWired && reportSlot != null) {
+                                                {
+                                                    P503ReportRegion(
+                                                        state = reportSlot,
+                                                        onSelectKind = ::selectReportKind,
+                                                        onOpenCustomInputs = { dispatch(P503UiEvent.OpenReportCustomInputs) },
+                                                        onShiftPeriod = ::shiftReportPeriod,
+                                                        onUpdateCustomRange = ::updateReportCustomRange,
+                                                        onCommitCustomRange = ::commitReportCustomRange,
+                                                        onRetry = ::retryReportPeriod,
+                                                    )
+                                                }
+                                            } else {
+                                                null
+                                            }
                                         P503AnalysisScreen(
                                             state = current.state,
                                             summarizeActivity = ledger.summarizeActivity,
@@ -5202,6 +5445,7 @@ fun P503App(
                                             onSelectMonth = ::selectMonth,
                                             onAnalysisMonthShift = ::analysisMonthShift,
                                             budgetRegion = budgetRegionSlot,
+                                            reportRegion = reportRegionSlot,
                                         )
                                     }
                                 }
@@ -6477,13 +6721,15 @@ internal fun refreshAndArmAfterAnnotationEdit(
 /**
  * The completed import batch confirmation's landing: the SAME all-terminal gate
  * ([shouldArmImportBatchConfirmed]) fires the coordinator's batch-confirmed hook exactly once per
- * run; a landing without the all-terminal state does nothing.
+ * run; a landing without the all-terminal state does nothing. P8-06 batch b (D-343 section 3.7): the
+ * report leg of that hook is gated one step further by [p806ImportBatchHasDeterminateWrite], so a
+ * terminal run that only rejected/skipped items fences no report payload and owes no re-read.
  */
 internal fun armAfterImportBatchConfirmation(
     landedState: P503AppState,
     coordinator: P503HostCoordinator,
 ) {
     if (shouldArmImportBatchConfirmed(landedState)) {
-        coordinator.onImportBatchConfirmed()
+        coordinator.onImportBatchConfirmed(reportWrite = p806ImportBatchHasDeterminateWrite(landedState))
     }
 }

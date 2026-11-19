@@ -234,16 +234,27 @@ class P806PortDefaultsAndAxisTest {
             )
     }
 
-    /** A port with a live span and an empty month window (used for the invalid-custom vector). */
+    /**
+     * A port with a live span and the window the REQUEST resolves to — the same shape the production
+     * reader answers (P8-06 batch b: a fixed toy window is no longer a legal snapshot, so this fake
+     * must resolve like the real adapter).
+     */
     private class SpanPort : P806NullLookupPort() {
         override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
 
-        override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> =
-            P806SnapshotResult.Success(
+        override fun readReportSnapshot(request: P806ReportRequest): P806SnapshotResult<P806ReportSnapshot> {
+            val span = P806Span(Instant.parse("2026-01-15T02:00:00Z"), Instant.parse("2026-12-31T16:00:00Z"))
+            val resolved =
+                when (val resolution = P806Periods.resolve(request.period, request.today, span)) {
+                    is P806PeriodResolution.Resolved -> resolution.period
+                    P806PeriodResolution.InvalidWindow -> return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidWindow)
+                    P806PeriodResolution.NotApplicable -> return P806SnapshotResult.Failed(P806SnapshotFailure.InvalidState)
+                }
+            return P806SnapshotResult.Success(
                 P806ReportSnapshot(
                     catalogVersion = request.expectedCatalogVersion,
-                    window = P806Window(1L, 2L),
-                    span = P806Span(Instant.parse("2026-01-15T02:00:00Z"), Instant.parse("2026-12-31T16:00:00Z")),
+                    window = resolved.window,
+                    span = span,
                     currencyAxis = emptyList(),
                     postingTotals = emptyList(),
                     transactionCount = 0,
@@ -253,6 +264,7 @@ class P806PortDefaultsAndAxisTest {
                     detailCount = 0,
                 ),
             )
+        }
     }
 
     private class AxisPort(

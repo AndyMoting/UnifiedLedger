@@ -897,6 +897,10 @@ class LedgerLeaseScope(
                 // surface. A pure null check of the session-only query, never an invocation, so the
                 // asset row renders the account-flow entry only when that capability exists.
                 p806AccountPostings = facade.p806AccountPostingsQuery != null,
+                // P8-06 batch b (D-343 sections 3.1/3.7): the analysis report read surface. A pure
+                // null check of the session-only report query (never an invocation), so the analysis
+                // page renders the independent report region only when the capability exists.
+                p806Report = facade.p806ReportQuery != null,
             )
         }
 
@@ -972,6 +976,32 @@ class LedgerLeaseScope(
      * existing caller keeps the old order — this seam is only for the account-flow reads.
      */
     fun <T> leasedAccountRead(block: (P503LedgerFacade, Generation) -> T): LeaseOutcome<T> =
+        when (val acquired = owner.acquireLease()) {
+            LeaseAcquireResult.RuntimeNotReady -> LeaseOutcome.NotReady
+            is LeaseAcquireResult.Acquired -> {
+                try {
+                    val facade = owner.facade
+                    if (facade == null) {
+                        LeaseOutcome.NotReady
+                    } else {
+                        LeaseOutcome.Completed(acquired.lease.generation, block(facade, acquired.lease.generation))
+                    }
+                } finally {
+                    acquired.lease.close()
+                }
+            }
+        }
+
+    /**
+     * P8-06 batch b (D-343 section 3.7): the acquire-first lease order for the analysis report
+     * reads (the account-read seam's twin).
+     *
+     * [leased]/[withFacade] resolve the facade BEFORE acquiring; a graph swap in that window could
+     * pair the old facade with the new generation. This path acquires first, resolves the facade of
+     * THAT graph, and releases the lease in `finally` in both outcomes. Every existing caller keeps
+     * the old order — this seam is only for the report-region reads.
+     */
+    fun <T> leasedReportRead(block: (P503LedgerFacade, Generation) -> T): LeaseOutcome<T> =
         when (val acquired = owner.acquireLease()) {
             LeaseAcquireResult.RuntimeNotReady -> LeaseOutcome.NotReady
             is LeaseAcquireResult.Acquired -> {
@@ -1087,6 +1117,10 @@ data class LedgerSurfaces(
     // built the account-postings read. A pure field probe, never an invocation, so the asset row
     // renders the account-flow entry only when the surface can actually be read.
     val p806AccountPostings: Boolean = false,
+    // P8-06 batch b (D-343 sections 3.1/3.7): the composition root's catalog session built the
+    // report read. A pure field probe, never an invocation, so the analysis page renders the report
+    // region only when the surface can actually be read.
+    val p806Report: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean
