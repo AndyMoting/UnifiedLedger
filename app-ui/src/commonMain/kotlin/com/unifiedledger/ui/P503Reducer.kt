@@ -603,11 +603,20 @@ class P503ReducerImpl(
      * when this state carries none. The carrier table itself lives on
      * [P503AppState.carriedReportCarrier] — ONE mapping serving both this write-back and the host's
      * memory/coordinator reads, so the two can never drift apart.
+     *
+     * A transform that returns its input UNCHANGED keeps the state instance too: the report slice
+     * ends on the absorb paths (an unrelated refresh failure, a superseded landing, a page with no
+     * slot), and those paths promise the state "returned unchanged", not a structurally equal copy
+     * of it.
      */
     private fun withCarriedReportOverview(
         state: P503AppState,
         transform: (P503AppState.OverviewEmpty) -> P503AppState.OverviewEmpty,
-    ): P503AppState? = state.carriedReportCarrier()?.let { carrier -> carrier.rebuild(transform(carrier.overview)) }
+    ): P503AppState? {
+        val carrier = state.carriedReportCarrier() ?: return null
+        val transformed = transform(carrier.overview)
+        return if (transformed === carrier.overview) state else carrier.rebuild(transformed)
+    }
 
     /**
      * P8-06 batch b (D-343 section 3.7): the slot the host's open event creates. It imports only the

@@ -100,6 +100,15 @@ class P806ReportReducerTest {
             dayCount = 30,
         )
 
+    /** The window a YEAR request for [year] resolves to — what a production reader answers with. */
+    private fun resolvedYear(year: Int): P806ResolvedPeriod =
+        P806ResolvedPeriod(
+            window = P806Window(startEpochNanos = 1_000L, endEpochNanos = 2_000L),
+            startDate = LocalDate(year, 1, 1),
+            endDateInclusive = LocalDate(year, 12, 31),
+            dayCount = 365,
+        )
+
     private fun loadedSlot(
         period: P806Period = P806Period(P806PeriodKind.MONTH),
         token: Long = 4L,
@@ -158,6 +167,7 @@ class P806ReportReducerTest {
         period: P806Period = P806Period(P806PeriodKind.MONTH),
         generation: Generation = 3,
         catalogVersion: Long = 7L,
+        snapshot: P806ResolvedPeriod = resolvedMonth(),
     ): P806ReportRead.Landed =
         P806ReportRead.Landed(
             capture =
@@ -167,7 +177,7 @@ class P806ReportReducerTest {
                     catalogVersion = catalogVersion,
                     asOf = readInstant,
                 ),
-            result = P806SnapshotResult.Success(view(resolvedMonth())),
+            result = P806SnapshotResult.Success(view(snapshot)),
         )
 
     private fun queueRow(
@@ -218,7 +228,9 @@ class P806ReportReducerTest {
     fun allFiveKindsAreSelectableAndOnlyARealChangeStartsANewRead() {
         // WEEK/MONTH/YEAR/ALL: the request carries the kind and the application resolves the window.
         val kinds = listOf(P806PeriodKind.WEEK, P806PeriodKind.MONTH, P806PeriodKind.YEAR, P806PeriodKind.ALL)
-        var token = 0L
+        // The fixture slot already holds request token 4, and a token that does not GROW is a stale
+        // host call absorbed before the selection is even read: every step below starts above it.
+        var token = 4L
         for (kind in kinds) {
             token += 1
             val next =
@@ -394,7 +406,7 @@ class P806ReportReducerTest {
         val detour = assertIs<P503AppState.AccountFlow>(reducer.reduce(started, P503UiEvent.SelectAccountFlow(expenseAccountId, "餐饮 · 支出 · CNY", 0L, cny)))
         val landed =
             assertIs<P503AppState.AccountFlow>(
-                reducer.reduce(detour, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period), currentGeneration = 3, currentCatalogVersion = 7L)),
+                reducer.reduce(detour, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period, snapshot = resolvedYear(2025)), currentGeneration = 3, currentCatalogVersion = 7L)),
             )
         val carried = assertNotNull(landed.overview.reportRegion)
         assertTrue(!carried.loading)
@@ -778,7 +790,10 @@ class P806ReportReducerTest {
         assertEquals(carriedSlot, carriedOldSlot)
         assertTrue(!p806ReportSlotIsEligible(carriedOldSlot))
         memory.record(carriedOld)
-        assertNull(memory.previousFor(3, 7L))
+        // "Records nothing" measured against the memory's OWN prior content: the READY landing
+        // recorded above is still exactly what the host would re-seed, so the fenced carried slot
+        // neither replaced it nor demoted it to history.
+        assertEquals(landedSlot, memory.previousFor(3, 7L))
         val carriedFailed = reducer.reduce(carried, P503UiEvent.RefreshFailed)
         val carriedFailedSlot = assertNotNull(assertIs<P503AppState.AccountFlow>(carriedFailed).overview.reportRegion)
         assertTrue(!carriedFailedSlot.loading)

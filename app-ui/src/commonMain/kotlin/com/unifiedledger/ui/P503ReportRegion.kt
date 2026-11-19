@@ -435,22 +435,45 @@ internal fun p806ReportContainingPeriod(
     }
 
 /**
- * Whether one step lands on a reachable period: inside the domain, or — when the current period sits
+ * Whether one step lands on a reachable period: inside the domain, or — when the CURSOR sits
  * OUTSIDE the domain (a default 本月 beyond the ledger's span) — strictly toward it. A step that
  * leaves the domain outward, or that moves away from it, is refused, so the affordance never offers
- * a request the approved domain excludes.
+ * a request the approved domain excludes. [cursor] is the bounds of the period the cursor is on
+ * (not the last success's window: a step is judged against where the user is, so a stale payload
+ * cannot widen or narrow the range the affordance offers).
  */
 internal fun p806ReportStepReachable(
     domain: P806ReportReachableDomain,
-    current: P806ResolvedPeriod,
+    cursor: Pair<LocalDate, LocalDate>,
     candidate: Pair<LocalDate, LocalDate>,
 ): Boolean {
     val (candidateStart, candidateEnd) = candidate
     if (candidateStart >= domain.firstStart && candidateEnd <= domain.lastEnd) return true
-    if (current.endDateInclusive < domain.firstStart) return candidateStart > current.startDate
-    if (current.startDate > domain.lastEnd) return candidateEnd < current.endDateInclusive
+    val (cursorStart, cursorEnd) = cursor
+    if (cursorEnd < domain.firstStart) return candidateStart > cursorStart
+    if (cursorStart > domain.lastEnd) return candidateEnd < cursorEnd
     return false
 }
+
+/**
+ * The date one stepped period is anchored on: the period's own anchor when the cursor already
+ * carries that kind, otherwise the [fallback] (the last success's start date) — the same rule the
+ * candidate and the cursor bounds both use, so they can never disagree about where a step starts.
+ * `null` for the kinds that never step.
+ */
+private fun p806ReportCursorAnchor(
+    period: P806Period,
+    kind: P806PeriodKind,
+    fallback: LocalDate,
+): LocalDate? =
+    when (kind) {
+        P806PeriodKind.WEEK -> period.takeIf { candidate -> candidate.kind == P806PeriodKind.WEEK }?.weekStart ?: fallback
+        P806PeriodKind.MONTH -> period.takeIf { candidate -> candidate.kind == P806PeriodKind.MONTH }?.month?.firstDay ?: fallback
+        P806PeriodKind.YEAR -> period.takeIf { candidate -> candidate.kind == P806PeriodKind.YEAR }?.year?.let { year -> LocalDate(year, 1, 1) } ?: fallback
+        P806PeriodKind.ALL,
+        P806PeriodKind.CUSTOM,
+        -> null
+    }
 
 /**
  * The next/previous period of the selected kind, or `null` when the kind does not step (`ALL`,
@@ -473,38 +496,27 @@ internal fun p806ReportShiftedPeriod(
     val candidate =
         when (kind) {
             P806PeriodKind.WEEK -> {
-                val anchor = state.period.takeIf { period -> period.kind == P806PeriodKind.WEEK }?.weekStart ?: current.startDate
+                val anchor = p806ReportCursorAnchor(state.period, P806PeriodKind.WEEK, current.startDate) ?: return null
                 P806Period(P806PeriodKind.WEEK, weekStart = anchor.plus(offset * 7, DateTimeUnit.DAY))
             }
             P806PeriodKind.MONTH -> {
-                val anchor =
-                    state.period
-                        .takeIf { period -> period.kind == P806PeriodKind.MONTH }
-                        ?.month
-                        ?.firstDay
-                        ?: current.startDate
+                val anchor = p806ReportCursorAnchor(state.period, P806PeriodKind.MONTH, current.startDate) ?: return null
                 val shifted = anchor.plus(offset, DateTimeUnit.MONTH)
                 P806Period(P806PeriodKind.MONTH, month = YearMonth(shifted.year, shifted.month))
             }
             P806PeriodKind.YEAR -> {
-                val anchor = state.period.takeIf { period -> period.kind == P806PeriodKind.YEAR }?.year ?: current.startDate.year
-                P806Period(P806PeriodKind.YEAR, year = anchor + offset)
+                val anchor = p806ReportCursorAnchor(state.period, P806PeriodKind.YEAR, current.startDate) ?: return null
+                P806Period(P806PeriodKind.YEAR, year = anchor.year + offset)
             }
             P806PeriodKind.ALL,
             P806PeriodKind.CUSTOM,
             -> return null
         }
-    val candidateAnchor =
-        when (kind) {
-            P806PeriodKind.WEEK -> candidate.weekStart
-            P806PeriodKind.MONTH -> candidate.month?.firstDay
-            P806PeriodKind.YEAR -> candidate.year?.let { year -> LocalDate(year, 1, 1) }
-            P806PeriodKind.ALL,
-            P806PeriodKind.CUSTOM,
-            -> null
-        } ?: return null
+    val candidateAnchor = p806ReportCursorAnchor(candidate, kind, current.startDate) ?: return null
     val candidateBounds = p806ReportContainingPeriod(kind, candidateAnchor) ?: return null
-    return if (p806ReportStepReachable(domain, current, candidateBounds)) candidate else null
+    val cursorAnchor = p806ReportCursorAnchor(state.period, kind, current.startDate) ?: return null
+    val cursorBounds = p806ReportContainingPeriod(kind, cursorAnchor) ?: return null
+    return if (p806ReportStepReachable(domain, cursorBounds, candidateBounds)) candidate else null
 }
 
 /**

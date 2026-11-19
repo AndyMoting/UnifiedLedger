@@ -12,8 +12,10 @@ import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.ManualExpenseSubmissionResult
 import com.unifiedledger.application.P806Period
 import com.unifiedledger.application.P806PeriodKind
+import com.unifiedledger.application.P806ResolvedPeriod
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.P806SnapshotResult
+import com.unifiedledger.application.P806Window
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TypedEntryDraft
@@ -809,7 +811,7 @@ class P503HostCoordinatorTest {
         var host: P503HostCoordinator? = null
         host =
             P503HostCoordinator(
-                onRefresh = { error("unused") },
+                onRefresh = {},
                 onSubmit = { _, _ -> },
                 onCheck = { _, _ -> },
                 onReportRequest = { period ->
@@ -1038,7 +1040,7 @@ class P503HostCoordinatorTest {
         var host: P503HostCoordinator? = null
         host =
             P503HostCoordinator(
-                onRefresh = { error("unused") },
+                onRefresh = {},
                 onSubmit = { _, _ -> },
                 onCheck = { _, _ -> },
                 onReportReRequest = { period ->
@@ -1267,7 +1269,7 @@ class P503HostCoordinatorTest {
         var host: P503HostCoordinator? = null
         host =
             P503HostCoordinator(
-                onRefresh = { error("unused") },
+                onRefresh = {},
                 onSubmit = { _, _ -> },
                 onCheck = { _, _ -> },
                 onReportReRequest = { period ->
@@ -1433,7 +1435,7 @@ class P503HostCoordinatorTest {
         val reRequests = mutableListOf<P806Period>()
         val coordinator =
             P503HostCoordinator(
-                onRefresh = { error("unused") },
+                onRefresh = {},
                 onSubmit = { _, _ -> },
                 onCheck = { _, _ -> },
                 onReportRequest = { period -> requested += period },
@@ -1487,7 +1489,7 @@ class P503HostCoordinatorTest {
         val attempts = mutableListOf<P806Period>()
         val coordinator =
             P503HostCoordinator(
-                onRefresh = { error("unused") },
+                onRefresh = {},
                 onSubmit = { _, _ -> },
                 onCheck = { _, _ -> },
                 // A refusing host: the callback is observed but never enqueues a read.
@@ -1626,7 +1628,7 @@ class P503HostCoordinatorTest {
                     reportRegion = P806ReportRegionState(period = P806Period(P806PeriodKind.MONTH), kind = P806PeriodKind.MONTH, requestToken = 1L, loading = true),
                 ),
                 P503UiEvent.ReportPeriodResult(
-                    read = P806ReportRead.Landed(P806ReportReadCapture(P806ReportRequestIdentity(1L, seamLedger, P806Period(P806PeriodKind.MONTH)), 3, 7L, readInstantForRegion()), result = P806SnapshotResult.Success(reportViewForRegion())),
+                    read = P806ReportRead.Landed(P806ReportReadCapture(P806ReportRequestIdentity(1L, seamLedger, P806Period(P806PeriodKind.MONTH)), 3, 7L, readInstantForRegion()), result = P806SnapshotResult.Success(reportViewForRegion(period = seamMonth(), transactionCount = 1))),
                     currentGeneration = 3,
                     currentCatalogVersion = 7L,
                 ),
@@ -1670,6 +1672,9 @@ class P503HostCoordinatorTest {
 
     private fun readInstantForRegion(): Instant = Instant.parse("2026-11-18T02:00:00Z")
 
+    /** The resolved window a completed report payload was read for (the month every seam fixture names). */
+    private fun seamMonth(): P806ResolvedPeriod = P806ResolvedPeriod(window = P806Window(startEpochNanos = 1_000L, endEpochNanos = 2_000L), startDate = LocalDate(2026, 11, 1), endDateInclusive = LocalDate(2026, 11, 30), dayCount = 30)
+
     private fun batchPage(
         outcome: ImportBatchItemOutcome,
         candidateId: ImportCandidateId,
@@ -1694,18 +1699,21 @@ class P503HostCoordinatorTest {
                 ),
         )
 
-    private fun reportViewForRegion(): com.unifiedledger.application.P806ReportView =
+    private fun reportViewForRegion(
+        period: P806ResolvedPeriod? = null,
+        transactionCount: Int = 0,
+    ): com.unifiedledger.application.P806ReportView =
         com.unifiedledger.application.P806ReportView(
             ledgerId = LedgerId("ledger-report-region"),
-            period = null,
+            period = period,
             currencies = emptyList(),
             expenseCategories = emptyList(),
             incomeCategories = emptyList(),
             uncategorizedExpenseTotals = emptyList(),
             uncategorizedIncomeTotals = emptyList(),
-            transactionCount = 0,
+            transactionCount = transactionCount,
             futureTransactionCount = 0,
             detailPage = com.unifiedledger.application.P806TransactionPage(rows = emptyList(), nextCursor = null),
-            detailCount = 0,
+            detailCount = transactionCount,
         )
 }

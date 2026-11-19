@@ -377,13 +377,15 @@ class P806ReportReadTest {
     fun anEmptyLedgerHasNoPeriodButStillReadsTheSnapshot() {
         // No window and no span: the ledger has no effective period at all. The read still runs,
         // and the fold answers the explicit no-period payload (never a zero-valued period, never an
-        // infinite range).
+        // infinite range). The axis is empty like the period: a currency population the snapshot
+        // cannot name is exactly the dishonest no-period shape the honesty guard rejects.
         val setup =
             sessionSetup(
                 answer = {
                     P806SnapshotResult.Success(
                         reportSnapshot(
                             totals = emptyList(),
+                            axis = emptyList(),
                             window = null,
                             span = null,
                             transactionCount = 0,
