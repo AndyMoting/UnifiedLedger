@@ -7941,3 +7941,42 @@ seekReturn marker=false steps=8 stationary=true
 **残留风险：** ①D-211 的日志静默门预算 **300 s** 仍然大于「一个被正确上界的段」应允许的等待上限；本轮既未触发也未证伪它（`execute`/`openGraph` 都是毫秒级），收口条件同 D-357：**用段的剩余预算夹门**，而不是继续抬段。②30 s 装载等待按第四节记录：修法一行、上限节省 5.5 min、**现在不做**。③`traversalDeepRowPages=1220` 与 600 行有界前缀口径不变；「有界前缀要不要变成整表走查」仍停在 D-349 的裁决处。
 
 **关联决定：** D-348（索引使 61k 快照的生产读路降到 ~12 s，本条据此把「整表物化与 digest」与「SQL 读路」分开）、D-349（有界前缀与 600 行口径）、D-350（段预算的两侧同步）、D-351（候选 id 前缀窗口，连续两轮同一签名）、D-352（load-then-walk 与回顶断言）、D-353（六相位、走查独立成末相位）、D-354（stride 与语义回退）、D-355（有界轮询，135 步全部一次检出）、D-356（第一跑与成本画像，本条是它的对照跑）、D-357（360 s 上界与分段插桩；本条取代其锁等待怀疑）、D-217（走查几何、树滞后与 30 s 缓存刷新节拍）。
+
+## D-359 P8-06 类型化回程停批升级为设计门：十二轮零代码说明批次边界错了
+
+**背景：** 承接 `D-343` §3.7.3 冻结的「详情回程扩为类型化返回目标」。该机制自 #409 落地后一直列为未交付。本会话从 `main=750ee83e` 起以 autopilot 派发同一个实现批，连续十二轮全部止于任务书评审、零产品代码、零 PR、零分支、零 worktree。
+
+**结论：** 停止在单批内继续修订任务书，把 typed `returnTo` 升级为独立设计门。批次不产出实现。
+
+**依据（十二轮冷审零误报，每一条均经主会话亲核）：** 冷审在十二轮里抓出的缺陷全部成立，其中四条是主会话自己写下的条款被后续核实推翻：
+
+1. 可达性判断错：曾断言详情态月读「潜伏不可达」，实测 `requestMonthlyNow`（`P503HostCoordinator.kt:379-385`）无 early return，三处 `pendingMonthlyReRequestAfterRefresh = true`（`:315`/`:444`/`:471`）都会在确定写入后触发，`consumeMonthlyReRequestAfterRefresh`（`:398-402`）把任意落地状态原样传入。
+2. worktree 坐标判错：曾定为仓库内 `.agents/worktrees/`，实际引擎硬校验 `^UL-[A-Za-z0-9-]+$` 并建在仓库同级目录；该错误让一整轮在脚本校验处失败。
+3. 关闭目标判错：曾写「`CloseTransactionDetail`/`Back` 继续无条件返回 `state.overview`」，但 `TransactionDetail.overview` 的静态类型是 `OverviewEmpty`，账户面回程因此永远回不到 `AccountFlow`。
+4. 改动范围判错：曾写「只改 2 处 landing」，但 `reportRegionLanding`（`P503Reducer.kt:104`）先于状态派发并提前返回，报表落地走 carrier 表，两处 carrier 分支不同步双写则 §4 断言必红。
+
+第十一轮另暴露四条**任何条款都修不了**的边界问题：
+
+- `SelectTransaction`（`P503UiEvent.kt:405-409`）没有可承载滚动位的字段，账户面滚动位归属未设计。
+- `MonthlyActivityResult` 失败分支把整个状态换成 `InfrastructureFailure(READ, monthlyOverview = state.overview)`（`P503Reducer.kt:1949-1951`），销毁 AccountFlow 实例；而 `isBackEnabled` 对 READ 上下文返回 `false`（`P503App.kt:6234-6235`），用户落在没有返回键的页面，已加载页/计数/滚动位全丢。
+- 任务书要求 tracked 源注释引用 Git 忽略文件的章节号，违反 tracked 文件只载公共事实的边界。
+- 要求 `assertSame` 比较 landing 前后的 `returnTo` 实例，而每次 landing 都用 `copy(overview = …)` 重建，实例必然不同。
+
+**判断：** 这不是执行精度问题。该批同时承担四类变更——状态形状（新增返回目标）、导航（第二条详情入口）、语义（三条 carried-overview 陈旧槽）、交互（子面可达性）。单件实施各有清晰边界，四件叠加后任意两件的交互都产生新约束，而新约束之间又互相排斥。十二轮是这种组合爆炸的直接表现。
+
+**设计门必须回答的六个问题：**
+
+1. 滚动位归属：`SelectTransaction` 新增滚动字段，还是只由 `returnTo` 携带的完整状态实例承载？
+2. 失败态回程：详情态读到 `InfrastructureFailure` 时返回目标如何保留；READ 上下文是否应给返回键？
+3. 实例同一性判据：哪些断言用 `assertSame`（overview），哪些用值相等（flow）？
+4. carried-overview 写回的单一权威：继续用一条不变量，还是显式逐链条款？（本批试过不变量，但其第二句本身写错了。）
+5. 子面可达性：账户面进入的详情是否开放 edit/void/annotation edit？
+6. 五面取值域的交付顺序：首页、账户面未完成，搜索面、报表分类下钻、日历某日尚无状态。
+
+**保留资产：** `local/artifacts/p806-typed-returnTo/batch-contract.local.md`（351 行，§1–§8）记录了十二轮的实测基线数字、三链陈旧槽的确切位置、四处会变假的 KDoc 清单、收窄方案与非交付清单；§9 是本条的技术副本。设计门应以此为基础。
+
+**边界：** 入 = 本条。出 = 不改任何产品代码、测试、schema 或迁移；不改 `D-343` 的已批准机制；不回改此前各条的正文。批次零改动，`main` 保持 `750ee83e`。
+
+**残留风险：** ①typed `returnTo` 仍完全未交付，P8-06 的五面取值域只经本批论证过两面（且未实施）。②第十二条发现的 `InfrastructureFailure` READ 无返回键问题**是既存的**，不经详情入口也可经首页入口触发（首页入口的关闭虽然可用，但失败态本身仍无背退），本条不修复它，只登记。③「十二轮零代码」本身就是流程成本证据：若后续设计门仍以单批实施，应先冻结设计再分批，而不是边实施边发现约束。
+
+**关联决定：** `D-343`（P8-06 设计批准；§3.7.3 类型化返回目标、§3.7.2 事件扩展、§8 批 b 拆分）、`D-348`（schema v38 基线）、`D-301`（V-5 返回保滚动位）、`D-308`（对账队列的类型化 `returnTo` 先例）。
