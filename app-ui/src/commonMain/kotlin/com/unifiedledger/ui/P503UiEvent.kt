@@ -391,8 +391,8 @@ sealed interface P503UiEvent {
     // ---- P7-03.C/D ledger-view read-only events (spec sections 6.1/6.2; zero accounting effect) ----
 
     /**
-     * Opens the read-only transaction detail from a HOME flow row (仅 HOME 行可达). [result] is
-     * the typed payload the host resolved from
+     * Opens the read-only transaction detail from a HOME flow row or an account-flow posting row.
+     * [result] is the typed payload the host resolved from
      * [com.unifiedledger.application.QueryTransactionDetail] before dispatching (Success or the
      * typed NotFound/InvalidState/Unavailable failure — the page renders all four). Absorbed in
      * every state other than OverviewEmpty (table 6.2a).
@@ -401,11 +401,19 @@ sealed interface P503UiEvent {
      * sampled synchronously at click time; the reducer stores it as the overview's
      * [ListScrollPosition] and the close transition returns it with the overview. No async
      * write-back hop exists — the position cannot arrive late or stale.
+     *
+     * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): [returnTo] is the typed return target — `null`
+     * = the HOME entry (close returns the detail's own overview); `AccountsFlow(carriedFlow)` =
+     * the account-flow entry, whose loaded rows, totalCount and sampled scroll travel inside the
+     * carried flow (no separate scroll field). Absorbed nowhere on the account-flow surface: the
+     * account-flow state has its own designed `SelectTransaction` transition (the only entry that
+     * carries a non-null [returnTo]).
      */
     data class SelectTransaction(
         val transactionId: TransactionId,
         val result: com.unifiedledger.application.TransactionDetailResult,
         val homeFlowScroll: ListScrollPosition? = null,
+        val returnTo: TransactionDetailReturnTo? = null,
     ) : P503UiEvent
 
     /**

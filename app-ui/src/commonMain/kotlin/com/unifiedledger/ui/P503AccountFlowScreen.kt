@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,9 +48,12 @@ import com.unifiedledger.ui.theme.LocalP8Palette
  * queue opened is restored on return and consumed once through `ListScrollRestored`.
  *
  * Zero write paths, zero reconciliation writes, zero accounting semantics change: the surface is
- * display-only; the only exits are 返回 (the host's Back dispatch) and the body/footer's
- * load-more/retry (both read-only page reads). No transaction-detail entry exists here (P8-06
- * batch b leaves the typed return target to a later batch).
+ * display-only; the exits are 返回 (the host's Back dispatch) and the body/footer's
+ * load-more/retry (both read-only page reads). P8-06 typed returnTo 批 1 (D-360/D-361) adds the
+ * ONE read-only detail entry: a posting row opens that transaction's detail carrying this whole
+ * surface as the typed return target ([onSelectTransaction]); the detail entered this way renders
+ * none of the correction/void/annotation entries ([detailSubSurfaceEntriesVisible]), and 返回
+ * restores this surface whole (loaded rows, count and scroll position preserved).
  */
 @Composable
 internal fun P503AccountFlowScreen(
@@ -58,6 +62,10 @@ internal fun P503AccountFlowScreen(
     onClose: () -> Unit,
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
+    // P8-06 typed returnTo 批 1 (D-360/D-361): the posting row's read-only detail entry. The host
+    // wires it only when the detail read is wired (the same capability-probe pattern as
+    // onOpenReconciliation), so an unwired graph renders no dead affordance.
+    onSelectTransaction: ((TransactionId) -> Unit)? = null,
     onOpenReconciliation: (() -> Unit)? = null,
     registerListScroll: ((androidx.compose.foundation.ScrollState) -> Unit)? = null,
     restoreScrollTo: ListScrollPosition? = null,
@@ -156,7 +164,7 @@ internal fun P503AccountFlowScreen(
                     }
                 }
                 state.loadedRows.forEach { row ->
-                    P8AccountFlowRow(row, accountName)
+                    P8AccountFlowRow(row, accountName, onSelectTransaction)
                     HorizontalDivider(color = palette.divider)
                 }
                 AccountFlowFooter(state, onLoadMore, onRetryLoadMore)
@@ -272,17 +280,32 @@ private fun AccountFlowRetryFace(
  * axis the page is sorted by (D-343 section 3.2.2) — the note (else the effective kind) and this
  * account's exact signed leg amount. TalkBack reads the same values through
  * [accountFlowRowContentDescription].
+ *
+ * P8-06 typed returnTo 批 1 (D-360/D-361): the row opens the transaction's read-only detail (the
+ * [LedgerEntryFlowRow] click shape, the 「查看交易详情」 label) when the host wired
+ * [P503AccountFlowScreen.onSelectTransaction]; a null callback (an unwired detail read) renders
+ * the row without a dead click affordance (F1). The click announces the affordance through the
+ * click label while the exact values stay in the visible texts and the semantics node.
  */
 @Composable
 private fun P8AccountFlowRow(
     row: P806AccountPostingRow,
     accountName: String,
+    onSelectTransaction: ((TransactionId) -> Unit)?,
 ) {
     val palette = LocalP8Palette.current
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
+                // P8-06 typed returnTo 批 1: the detail entry (照 LedgerEntryFlowRow 的形制). The
+                // row is otherwise unchanged — same padding, same semantics node.
+                .clickable(
+                    enabled = onSelectTransaction != null,
+                    onClickLabel = "查看交易详情",
+                ) {
+                    onSelectTransaction?.invoke(row.transactionId)
+                }
                 .padding(vertical = 6.dp)
                 // C04: the row announces its exact values (the date axis, note, the leg with sign
                 // and currency) as one node.

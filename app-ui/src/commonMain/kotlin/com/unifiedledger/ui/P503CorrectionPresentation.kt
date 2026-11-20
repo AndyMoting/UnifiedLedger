@@ -82,6 +82,41 @@ internal data class DetailCorrectionAffordances(
     val any: Boolean get() = edit || void
 }
 
+// ------------------------------------------------------------------ detail-page sub-surface entry gate (typed returnTo)
+
+/**
+ * P8-06 typed returnTo 批 1 (D-360 Q3/D-361 冻结签名): the detail page's three sub-surface entry
+ * gates — 更正 (edit), 作废 (void), 标注编辑 (annotationEdit) — as ONE frozen triple. The three
+ * fields ride together: a detail entered from the account-flow surface renders none of them
+ * (P8-06 批 1's user-visible deliverable — the account-flow detail is a strictly read-only
+ * detour), a HOME-entered detail renders all three subject to their own separate gates
+ * ([detailCorrectionAffordancesVisible] and the host's resolvability checks, unchanged).
+ *
+ * The triple is a separate type — NOT a field on [DetailCorrectionAffordances] — because that
+ * type is the P7-05 support matrix's own two-field result (edit/void; annotation 骑不上, and its
+ * existing test assertions must stay byte-identical); folding a third boolean into it would
+ * change the matrix's meaning, not add an entry gate.
+ */
+internal data class DetailSubSurfaceEntries(
+    val edit: Boolean,
+    val void: Boolean,
+    val annotationEdit: Boolean,
+)
+
+/**
+ * P8-06 typed returnTo 批 1 (D-361 冻结签名): whether the detail's three sub-surface entries are
+ * offered, resolved from the typed return target alone. `returnTo == null` (the HOME entry) →
+ * all three `true`; `TransactionDetailReturnTo.AccountsFlow` (the account-flow entry) → all
+ * three `false`. The per-entry capability gates (support matrix, wired commands, resolvable
+ * origin/tokens) stay where they were and AND with this predicate at the render site; this
+ * function decides only the entry-vs-account-flow half, so the two concerns cannot drift.
+ */
+internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?): DetailSubSurfaceEntries =
+    when (returnTo) {
+        null -> DetailSubSurfaceEntries(edit = true, void = true, annotationEdit = true)
+        is TransactionDetailReturnTo.AccountsFlow -> DetailSubSurfaceEntries(edit = false, void = false, annotationEdit = false)
+    }
+
 // ------------------------------------------------------------------ difference preview
 
 /** One rendered difference-preview line: the field's label and its old/new display text. */

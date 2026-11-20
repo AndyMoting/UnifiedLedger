@@ -458,6 +458,22 @@ sealed interface P503AppState {
          * display only — zero action entries ride this field (the D-223 precedent).
          */
         val versionHistory: com.unifiedledger.application.TransactionVersionHistoryResult? = null,
+        /**
+         * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): the typed return target of this detail.
+         * `null` = the HOME entry (close returns [overview], today's behavior unchanged);
+         * [TransactionDetailReturnTo.AccountsFlow] = the account-flow entry (close returns the
+         * carried flow whole: loaded rows, totalCount and the sampled scroll preserved). The
+         * frozen domain is TWO values — there is NO `Overview(...)` variant, the HOME target IS
+         * `null` (D-360 Q1). The carried write-back sites share [resolveTransactionDetailReturnTo]
+         * as their overview identity map; close returns the TARGET SURFACE itself
+         * (`when (returnTo)` in the reducer, the ReconciliationBackTarget precedent).
+         *
+         * `originTab` 填法说明（勿读出含义）：账户面进入时 `originTab` 填入口所在 overview 的
+         * `selectedTab`，仅仅因为 `TransactionDetail.originTab` 是必填字段、而该字段在详情路径
+         * 上没有任何消费者（reducer 不读它，详情屏也不接收它）——它是既有构造形的合规填充，
+         * 不是返回目的地，也不携带任何语义；返回目的地由 [returnTo] 独自承载。
+         */
+        val returnTo: TransactionDetailReturnTo? = null,
     ) : P503AppState
 
     /**
@@ -520,6 +536,10 @@ sealed interface P503AppState {
         /**
          * P8-01a i3a (V-10 返回保留滚动位): the account-flow position sampled when the queue was
          * opened, consumed once by `ListScrollRestored` after the screen applied it.
+         * P8-06 typed returnTo 批 1 (D-360 Q1): a SECOND writer — the detail open
+         * (`SelectTransaction` from an account-flow row) samples the same screen and the reducer
+         * lands the position here on the carried flow, so 返回 from the detail restores the same
+         * row. Same one-shot consume, no new scroll field.
          */
         val listScroll: ListScrollPosition? = null,
     ) : P503AppState {
@@ -1101,6 +1121,59 @@ sealed interface P503AppState {
 }
 
 /**
+ * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): the typed return target of a
+ * [P503AppState.TransactionDetail]. The frozen domain is TWO values:
+ * - `null` = the HOME entry — the return target is the detail's own [P503AppState.TransactionDetail.overview]
+ *   (today's behavior, byte-identical);
+ * - [AccountsFlow] = the account-flow entry — the return target is the carried
+ *   [P503AppState.AccountFlow] (its loaded rows, totalCount and sampled [P503AppState.AccountFlow.listScroll]
+ *   travel inside the carried instance; no separate scroll field exists, D-360 Q1).
+ *
+ * There is deliberately NO `Overview(...)` variant: HOME has exactly one encoding, `null`.
+ */
+internal sealed interface TransactionDetailReturnTo {
+    /** Return to this exact account-flow surface, carried whole. */
+    data class AccountsFlow(
+        val carriedFlow: P503AppState.AccountFlow,
+    ) : TransactionDetailReturnTo
+}
+
+/**
+ * P8-06 typed returnTo 批 1 (D-361): the WRITE-BACK sites' overview identity map. It answers one
+ * question only — which `OverviewEmpty` does a carried landing belong to, given a detail: `null`
+ * (HOME entry) → the detail's own overview; [TransactionDetailReturnTo.AccountsFlow] → the carried
+ * flow's overview. Shared by exactly the D-361 write sites (below and the carrier's rebuild), so
+ * no write-back site can drift from the return target. Close/Back do NOT call this — closing
+ * returns the carried target SURFACE whole (the [ReconciliationBackTarget.surface] precedent),
+ * which this overview-level mapping cannot express.
+ */
+internal fun resolveTransactionDetailReturnTo(
+    returnTo: TransactionDetailReturnTo?,
+    detail: P503AppState.TransactionDetail,
+): P503AppState.OverviewEmpty =
+    when (returnTo) {
+        null -> detail.overview
+        is TransactionDetailReturnTo.AccountsFlow -> returnTo.carriedFlow.overview
+    }
+
+/**
+ * P8-06 typed returnTo 批 1 (D-361): THE one paired write-back of a detail's preserved overview.
+ * It puts [overview] into BOTH places the detail carries an overview — the detail's own field
+ * (the HOME return target, and the source the failure branch preserves) AND the carried account
+ * flow's overview (the [TransactionDetailReturnTo.AccountsFlow] return target) — as the SAME
+ * instance, so the close's returned flow never holds a payload another site forgot to write. The
+ * carried flow's own fields (loaded rows, totalCount, listScroll) are untouched by the copy.
+ * Shared by exactly the D-361 write sites: the reducer's BudgetMonthLanded / MonthlyActivityResult
+ * Success transitions and [P503AppState.carriedReportCarrier]'s TransactionDetail rebuild.
+ */
+internal fun P503AppState.TransactionDetail.withResolvedOverview(overview: P503AppState.OverviewEmpty): P503AppState.TransactionDetail =
+    when (val target = returnTo) {
+        is TransactionDetailReturnTo.AccountsFlow ->
+            copy(overview = overview, returnTo = target.copy(carriedFlow = target.carriedFlow.copy(overview = overview)))
+        null -> copy(overview = overview)
+    }
+
+/**
  * P8-01a i3a F13: the two legal back targets of [P503AppState.ReconciliationDetail] — the queue it
  * was opened from (entry A) or the preserved overview (entry B). The previous `P503AppState` field
  * admitted every surface the reducer can be in, which is unreachable by construction; this sealed
@@ -1294,7 +1367,13 @@ internal fun P503AppState.carriedReportCarrier(): ReportCarrier? =
         is P503AppState.OverviewEmpty -> ReportCarrier(this) { overview -> overview }
         is P503AppState.TransactionDetail -> {
             val carrier = this
-            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+            // P8-06 typed returnTo 批 1 (D-361 site 3): the landing writes BOTH carried overviews —
+            // the detail's own (the HOME return target) AND the account-flow carrier's (the
+            // AccountsFlow return target) — through the ONE paired write-back, so the flow the
+            // close returns is never a stale slot. The write-back sites share the resolver; the
+            // close itself returns the carried surface whole (the ReconciliationBackTarget
+            // precedent).
+            ReportCarrier(carrier.overview) { overview -> carrier.withResolvedOverview(overview) }
         }
         is P503AppState.AccountFlow -> {
             val carrier = this

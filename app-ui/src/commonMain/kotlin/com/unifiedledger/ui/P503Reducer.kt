@@ -400,6 +400,10 @@ class P503ReducerImpl(
      * `AccountFlowPageLanded` act only on AccountFlow. Everywhere else (including Ready
      * before the overview exists) every family event is absorbed, so a late/stale dispatch can
      * never reach `unhandled` and turn into an ISE (table 6.2a: 新事件在非设计态全部吸收).
+     * P8-06 typed returnTo 批 1 (D-360/D-361): `SelectTransaction` joins the family's designed
+     * effects on AccountFlow (the posting row opens the carried detail) — it is NOT routed
+     * through this guard; its absorption on the other states stays in each state's own absorb
+     * list, as it was before.
      */
     private fun accountFlowEventAbsorbed(
         state: P503AppState,
@@ -1919,15 +1923,38 @@ class P503ReducerImpl(
      * it, the 返回保滚动位 mechanism), MonthlyActivityResult applies the 详情态同语义 payload
      * update on the stored overview, the other new read-only events are absorbed, and every
      * pre-existing event stays unlisted (ISE, G-B). The page has zero edit entries.
+     *
+     * P8-06 typed returnTo 批 1 (D-360 Q2/D-361): Close/Back return the carried TARGET SURFACE
+     * (`when (returnTo)`: `null` → the detail's own overview; `AccountsFlow(carriedFlow)` → the
+     * carried AccountFlow instance — the ReconciliationBackTarget surface() precedent). The
+     * carried monthly/budget landings below keep overview identity across both carriers through
+     * [resolveTransactionDetailReturnTo]'s paired write-back, so the returned flow never holds a
+     * payload a landing forgot to update.
      */
     private fun reduceTransactionDetail(
         state: P503AppState.TransactionDetail,
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
-            P503UiEvent.CloseTransactionDetail -> state.overview
+            // P8-06 typed returnTo 批 1 (D-360 Q2/D-361): close returns the carried TARGET SURFACE
+            // whole — the ReconciliationBackTarget.surface() precedent (基线 :2327/:2248), not a
+            // projection of it. `null` (HOME entry) returns the detail's own overview: today's
+            // behavior byte-identical (every existing assertSame(source, closed) stays true).
+            // `AccountsFlow(carriedFlow)` returns the carried AccountFlow instance itself — loaded
+            // rows, totalCount and listScroll travel back with it (§五.2). Close/Back do NOT go
+            // through resolveTransactionDetailReturnTo: that function is the write-back sites'
+            // overview identity map; the close's job is the whole surface.
+            P503UiEvent.CloseTransactionDetail ->
+                when (val target = state.returnTo) {
+                    null -> state.overview
+                    is TransactionDetailReturnTo.AccountsFlow -> target.carriedFlow
+                }
             // System back = CloseTransactionDetail semantics (spec section 6.2 back bullet).
-            P503UiEvent.Back -> state.overview
+            P503UiEvent.Back ->
+                when (val target = state.returnTo) {
+                    null -> state.overview
+                    is TransactionDetailReturnTo.AccountsFlow -> target.carriedFlow
+                }
             // P7-08 08.D (spec section 3.5): the read-only history block's payload. The central
             // guard has already matched the transaction id, so this applies whole; the block is
             // display-only and no other field of the detail changes.
@@ -1938,13 +1965,17 @@ class P503ReducerImpl(
             is P503UiEvent.MonthlyActivityResult ->
                 when (val result = event.result) {
                     is com.unifiedledger.application.MonthlyActivityResult.Success ->
-                        state.copy(
-                            overview =
-                                state.overview.copy(
-                                    monthlyActivity = result.activity,
-                                    selectableMonths = event.selectableMonths,
-                                    monthlyReloadRequired = false,
-                                ),
+                        // P8-06 typed returnTo 批 1 (D-361 site 2): the paired write-back — both
+                        // carried overviews get the SAME landed payload instance, so the flow the
+                        // close returns holds the fresh monthly payload on the account-flow path
+                        // too. The failure branch below is untouched (its READ-failure contract
+                        // keeps today's shape).
+                        state.withResolvedOverview(
+                            state.overview.copy(
+                                monthlyActivity = result.activity,
+                                selectableMonths = event.selectableMonths,
+                                monthlyReloadRequired = false,
+                            ),
                         )
                     com.unifiedledger.application.MonthlyActivityResult.InvalidState,
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,
@@ -1953,7 +1984,9 @@ class P503ReducerImpl(
             // P1-2 fix round: a budget read completing behind this carried-overview surface is
             // APPLIED to the preserved overview (never absorbed, never ISE), so returning to
             // the overview shows the fresh payload.
-            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            // P8-06 typed returnTo 批 1 (D-361 site 1): the same paired write-back — both carried
+            // overviews get the landed budget view, so the account-flow return is never stale.
+            is P503UiEvent.BudgetMonthLanded -> state.withResolvedOverview(state.overview.copy(budgetView = event.result))
             // NOTE: the account-flow family (SelectAccountFlow/CloseAccountFlow/
             // RequestAccountFlowMorePage/AccountFlowPageLanded), the version-history landing
             // and ListScrollRestored have no labels here — their central guards absorb them
@@ -2077,6 +2110,10 @@ class P503ReducerImpl(
      * a page only when the production landing decision ([p806AccountLandingDecision]) still accepts
      * its request identity, and MonthlyActivityResult follows the read-only detail's 详情态同语义
      * precedent.
+     * P8-06 typed returnTo 批 1 (D-360/D-361): `SelectTransaction` opens a posting row's read-only
+     * detail carrying this whole surface as the typed [TransactionDetailReturnTo.AccountsFlow]
+     * return target (the queue-entry carried shape; the sampled scroll lands in
+     * [P503AppState.AccountFlow.listScroll], the detail's sub-surface entries render none).
      * Every other new event is absorbed (the central guards already keep the family non-throwing
      * in every other state); every pre-existing event stays unlisted (ISE, G-B). The page has zero
      * write entries.
@@ -2109,6 +2146,29 @@ class P503ReducerImpl(
                     totals = (event.summary as? com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success)?.totals.orEmpty(),
                     rowsLoadFailed = event.firstPage !is com.unifiedledger.application.P801AccountReconciliationPageResult.Success,
                     summaryLoadFailed = event.summary !is com.unifiedledger.application.P801AccountReconciliationSummaryResult.Success,
+                )
+            }
+            // P8-06 typed returnTo 批 1 (D-360 Q1/D-361): the account-flow row's detail entry — the
+            // batch's one user-visible deliverable. The queue-entry carried shape (the
+            // SelectReconciliationQueue branch above): any in-flight page read's marker is dropped,
+            // the sampled scroll rides the carried flow's own restore slot and the WHOLE flow is
+            // carried inside the typed returnTo, so close returns the same surface — loaded rows,
+            // totalCount and scroll position preserved (no read is issued on return). The scroll
+            // rides the event's existing field (no new scroll field, D-360 Q1) and lands in
+            // carried.listScroll, consumed once by ListScrollRestored after the return. A flow with
+            // nothing in flight and no sample is carried by reference (no churn).
+            is P503UiEvent.SelectTransaction -> {
+                val carried = if (state.rowsLoading) state.copy(rowsLoading = false) else state
+                val carriedFlow = if (event.homeFlowScroll == null) carried else carried.copy(listScroll = event.homeFlowScroll)
+                P503AppState.TransactionDetail(
+                    overview = carriedFlow.overview,
+                    // originTab 填法：该字段在详情路径无任何消费者（reducer 不读、详情屏不接收），
+                    // 这里只做既有构造形的合规填充 — 语义为零，返回目的地由 returnTo 独自承载
+                    // (见 P503AppState.TransactionDetail.returnTo 的 KDoc；勿读出含义).
+                    originTab = carriedFlow.overview.selectedTab,
+                    transactionId = event.transactionId,
+                    detail = event.result,
+                    returnTo = TransactionDetailReturnTo.AccountsFlow(carriedFlow),
                 )
             }
             // The flow's own restore slot is consumed exactly once (the queue slot's shape, F6).

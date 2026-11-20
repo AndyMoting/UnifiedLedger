@@ -649,6 +649,151 @@ class P503AccountFlowReducerTest {
         assertEquals(ListScrollPosition(9, 3), closed.originListScroll)
     }
 
+    // ---- P8-06 typed returnTo 批 1: the account-flow row's detail entry and the typed return ----
+
+    @Test
+    fun anAccountFlowRowOpensTheDetailCarryingTheWholeFlowAsTheTypedReturnTarget() {
+        // The batch's user-visible deliverable: a posting row opens the detail WITHOUT the ISE the
+        // unlisted combination used to throw (the J1 baseline), and the WHOLE flow travels inside
+        // the typed returnTo (D-360 Q1 — no separate scroll field, no Overview variant).
+        val loaded = loadedFlow()
+        val entered =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(
+                    loaded,
+                    P503UiEvent.SelectTransaction(
+                        TransactionId("tx-1"),
+                        com.unifiedledger.application.TransactionDetailResult.NotFound,
+                        homeFlowScroll = ListScrollPosition(2, 10),
+                    ),
+                ),
+            )
+        val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo)
+        // The carried flow is the very instance the surface held — rows, count, cursor and
+        // provenance untouched — with the sampled scroll landed in its restore slot.
+        assertSame(loaded, target.carriedFlow)
+        assertEquals(ListScrollPosition(2, 10), target.carriedFlow.listScroll)
+        assertEquals(listOf("posting-1"), target.carriedFlow.loadedRows.map { it.postingId.value })
+        assertEquals(1, target.carriedFlow.totalCount)
+        assertEquals(cursor(), target.carriedFlow.nextCursor)
+        // The carried flow keeps its own overview as the preserved back floor (C03).
+        assertSame(loaded.overview, target.carriedFlow.overview)
+        // The detail's overview IS the carried flow's overview: one instance, never a copy.
+        assertSame(target.carriedFlow.overview, entered.overview)
+        // originTab carries no meaning (no consumer on the detail path); the fill is the entry
+        // overview's selectedTab (see TransactionDetail.returnTo's KDoc).
+        assertEquals(P503Tab.ACCOUNTS, entered.originTab)
+        assertEquals(TransactionId("tx-1"), entered.transactionId)
+        assertTrue(!entered.returnTo!!.carriedFlow.rowsLoading)
+    }
+
+    @Test
+    fun closingTheCarriedDetailReturnsTheSameSurfaceWithRowsCountAndScrollPreserved() {
+        // Exit criterion 2: Close/Back return the carried TARGET SURFACE (the ReconciliationBackTarget
+        // surface() precedent — NOT a projection of it), so 返回 lands on the SAME AccountFlow
+        // instance semantics — loaded rows, totalCount and the sampled scroll — and issues no read
+        // (回程不补读).
+        val loaded = loadedFlow()
+        val entered =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(
+                    loaded,
+                    P503UiEvent.SelectTransaction(
+                        TransactionId("tx-1"),
+                        com.unifiedledger.application.TransactionDetailResult.NotFound,
+                        homeFlowScroll = ListScrollPosition(2, 10),
+                    ),
+                ),
+            )
+        val closedByButton = assertIs<P503AppState.AccountFlow>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail))
+        // The landed state IS the whole carried AccountFlow surface (not a projection of it).
+        assertTrue(closedByButton is P503AppState.AccountFlow)
+        assertSame(entered.returnTo!!.carriedFlow, closedByButton)
+        assertEquals(listOf("posting-1"), closedByButton.loadedRows.map { it.postingId.value })
+        assertEquals(1, closedByButton.totalCount)
+        assertEquals(ListScrollPosition(2, 10), closedByButton.listScroll)
+        assertEquals(0L, closedByButton.pageRequestToken)
+        // System back = CloseTransactionDetail semantics (the read-only-detail precedent).
+        val enteredAgain =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(
+                    loaded,
+                    P503UiEvent.SelectTransaction(
+                        TransactionId("tx-1"),
+                        com.unifiedledger.application.TransactionDetailResult.NotFound,
+                        homeFlowScroll = ListScrollPosition(4, 7),
+                    ),
+                ),
+            )
+        val closedByBack = assertIs<P503AppState.AccountFlow>(reducer.reduce(enteredAgain, P503UiEvent.Back))
+        assertTrue(closedByBack is P503AppState.AccountFlow)
+        assertSame(enteredAgain.returnTo!!.carriedFlow, closedByBack)
+        assertEquals(ListScrollPosition(4, 7), closedByBack.listScroll)
+        // The restore slot is consumed exactly once after the return (the queue slot's shape, F6).
+        val consumed = assertIs<P503AppState.AccountFlow>(reducer.reduce(closedByBack, P503UiEvent.ListScrollRestored))
+        assertNull(consumed.listScroll)
+        assertSame(consumed, reducer.reduce(consumed, P503UiEvent.ListScrollRestored))
+    }
+
+    @Test
+    fun leavingForTheDetailDropsTheInFlightMarkerAndAbsorbsItsLateLanding() {
+        // The queue-entry carried shape: a page read in flight when a row opens is dropped (no
+        // permanently-loading footer on return), the token stays the host's sequence value, and the
+        // late landing can never write the detail or the returned surface.
+        val loaded = loadedFlow()
+        val requesting = requestPage(loaded)
+        val entered =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(
+                    requesting,
+                    P503UiEvent.SelectTransaction(TransactionId("tx-1"), com.unifiedledger.application.TransactionDetailResult.NotFound),
+                ),
+            )
+        val carried = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo).carriedFlow
+        assertTrue(!carried.rowsLoading)
+        assertEquals(1L, carried.pageRequestToken)
+        assertEquals(loaded.loadedRows, carried.loadedRows)
+        // With no sampled scroll the flow is carried by reference (no churn).
+        assertSame(requesting, carried)
+        // The late landing is absorbed on the detail (the central guard) and cannot write.
+        assertSame(entered, reducer.reduce(entered, landing(landedPage(1, listOf(posting(postingId = "posting-late"))))))
+        // And after the return it finds no active request either.
+        val returned = assertIs<P503AppState.AccountFlow>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail))
+        assertSame(returned, reducer.reduce(returned, landing(landedPage(1, listOf(posting(postingId = "posting-late"))))))
+    }
+
+    @Test
+    fun theDetailEnteredFromTheAccountFlowResolvesTheCarriedFlowNotTheOverview() {
+        // The close half of the typed return: the detail's overview field is the carried flow's
+        // overview (one instance), so the account-flow close returns the FLOW and the HOME close
+        // on a null-returnTo detail still returns the overview (the untouched oracle pair).
+        val source = overview()
+        val loaded = loadedFlow()
+        val entered =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(
+                    loaded,
+                    P503UiEvent.SelectTransaction(TransactionId("tx-1"), com.unifiedledger.application.TransactionDetailResult.NotFound),
+                ),
+            )
+        assertSame(loaded.overview, entered.overview)
+        assertEquals(
+            entered.returnTo!!.carriedFlow,
+            assertIs<P503AppState.AccountFlow>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail)),
+        )
+        // Negative control (the HOME path, unchanged): a null returnTo detail closes to the
+        // overview instance itself.
+        val homeEntered =
+            assertIs<P503AppState.TransactionDetail>(
+                reducer.reduce(
+                    source,
+                    P503UiEvent.SelectTransaction(TransactionId("tx-1"), com.unifiedledger.application.TransactionDetailResult.NotFound),
+                ),
+            )
+        assertNull(homeEntered.returnTo)
+        assertSame(source, reducer.reduce(homeEntered, P503UiEvent.CloseTransactionDetail))
+    }
+
     // ---- absorption + locked ISE behavior ----
 
     @Test
