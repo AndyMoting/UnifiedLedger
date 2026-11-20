@@ -685,7 +685,7 @@ class P503AccountFlowReducerTest {
         // overview's selectedTab (see TransactionDetail.returnTo's KDoc).
         assertEquals(P503Tab.ACCOUNTS, entered.originTab)
         assertEquals(TransactionId("tx-1"), entered.transactionId)
-        assertTrue(!entered.returnTo!!.carriedFlow.rowsLoading)
+        assertTrue(!target.carriedFlow.rowsLoading)
     }
 
     @Test
@@ -707,9 +707,10 @@ class P503AccountFlowReducerTest {
                 ),
             )
         val closedByButton = assertIs<P503AppState.AccountFlow>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail))
+        val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo)
         // The landed state IS the whole carried AccountFlow surface (not a projection of it).
         assertTrue(closedByButton is P503AppState.AccountFlow)
-        assertSame(entered.returnTo!!.carriedFlow, closedByButton)
+        assertSame(target.carriedFlow, closedByButton)
         assertEquals(listOf("posting-1"), closedByButton.loadedRows.map { it.postingId.value })
         assertEquals(1, closedByButton.totalCount)
         assertEquals(ListScrollPosition(2, 10), closedByButton.listScroll)
@@ -729,8 +730,9 @@ class P503AccountFlowReducerTest {
                 ),
             )
         val closedByBack = assertIs<P503AppState.AccountFlow>(reducer.reduce(enteredAgain, P503UiEvent.Back))
+        val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(enteredAgain.returnTo)
         assertTrue(closedByBack is P503AppState.AccountFlow)
-        assertSame(enteredAgain.returnTo!!.carriedFlow, closedByBack)
+        assertSame(target.carriedFlow, closedByBack)
         assertEquals(ListScrollPosition(4, 7), closedByBack.listScroll)
         // The restore slot is consumed exactly once after the return (the queue slot's shape, F6).
         val consumed = assertIs<P503AppState.AccountFlow>(reducer.reduce(closedByBack, P503UiEvent.ListScrollRestored))
@@ -785,9 +787,10 @@ class P503AccountFlowReducerTest {
         assertSame(loaded.overview, entered.overview)
         // The true no-churn shape (this test: no in-flight clearing, no sampled scroll): the flow
         // is carried BY REFERENCE — the same instance the surface held.
-        assertSame(loaded, entered.returnTo!!.carriedFlow)
+        val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo)
+        assertSame(loaded, target.carriedFlow)
         assertEquals(
-            entered.returnTo!!.carriedFlow,
+            target.carriedFlow,
             assertIs<P503AppState.AccountFlow>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail)),
         )
         // Negative control (the HOME path, unchanged): a null returnTo detail closes to the
