@@ -4,10 +4,10 @@ import com.unifiedledger.application.BudgetMonthResult
 import com.unifiedledger.application.BudgetMonthViewResult
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.MonthlyActivity
+import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
 import com.unifiedledger.application.MonthlyCategoryTotal
 import com.unifiedledger.application.MonthlyCurrencyActivity
-import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
