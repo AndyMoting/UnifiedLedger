@@ -8020,3 +8020,61 @@ seekReturn marker=false steps=8 stationary=true
 **残留风险：** ①typed `returnTo` 仍完全未交付。②上文登记的 READ 失败丢页损失在本条明确不修。③批 1 的「首页零变」覆盖状态须写准：`BudgetMonthLanded` 已有 oracle（`P503BudgetReducerTest.kt:235-241` 在 `TransactionDetail` 上归约），`MonthlyActivityResult` 成功分支已有 oracle（`P503LedgerViewReducerTest.kt:500-511`），**只有 `carriedReportCarrier` 的 `TransactionDetail` 分支没有任何既有测试**（`P806ReportReducerTest.kt` 无该态用例）；`carriedBudgetMonthOverview` 有存在性覆盖但无成对写回断言。缺失部分由批 1 新增合成状态测试承担。
 
 **关联决定：** `D-359`（停批并升级为本设计门，其第 6 项由本条更正）、`D-343`（P8-06 设计批准；§3.7.3 类型化返回目标）、`D-301`（V-5 返回保滚动位）、`D-308`（对账队列类型化 `returnTo` 先例）。
+
+## D-361 `D-360` 的三处更正：写回名册、批次重划与谓词签名
+
+**背景：** `D-360` 合并（`3c0b866e`）后，对该设计记录做收口复核，发现三处需要更正：一处**把只读访问器误列为写回点**，一处**批次划分把交付物拆到不可验收**，一处**谓词签名未冻结**。本条是这三处的唯一权威，`D-360` 正文不回改。
+
+### 一、写回名册：三处写回 + 一处载体读，不是四处写回
+
+`D-360` 第 4 项把 `carriedBudgetMonthOverview` 的 `TransactionDetail` 分支（`P503AppState.kt:1260`）列为「四处写回点」之一并要求「改为成对双写」。**这一条错误。**
+
+该函数是纯访问器：`internal fun P503AppState.carriedBudgetMonthOverview(): P503AppState.OverviewEmpty?`（`P503AppState.kt:1256-1270`），`TransactionDetail -> overview`，**没有 rebuild 闭包**，结构上无法双写。它唯一的消费者是 `carriesBudgetMonthSurface`（`P503Reducer.kt:258-259`）的中央守卫判定。改成成对写回需要给它加 rebuild 参数，签名会波及 `P503App.kt:1124` 与 `P503Reducer.kt:259`；而 `:1956` 成对双写后它读到的 `state.overview` 已是新值，**双写本身是 no-op**，加参数只有波及面无收益。
+
+**更正后的名册（三处写回 + 一处载体读）：**
+
+| 项 | 位置 | 性质 | 处理 |
+| --- | --- | --- | --- |
+| `BudgetMonthLanded`（详情态） | `P503Reducer.kt:1956` | 写 | 成对双写 |
+| `MonthlyActivityResult` Success（详情态） | `:1940-1948` | 写 | 成对双写 |
+| `MonthlyActivityResult` 失败（详情态） | `:1949-1951` | 写 | **不改**（`D-360` 第 2 项：受既有 oracle 保护） |
+| `carriedReportCarrier` 的 `TransactionDetail` 分支 | `P503AppState.kt:1295-1298` | 写（rebuild 闭包） | 成对双写 |
+| `carriedBudgetMonthOverview` 的 `TransactionDetail` 分支 | `:1260` | **只读** | **不动** |
+
+### 二、批次重划：`D-360` 的批 1 不可验收，与批 2 合并
+
+`D-360` 把实施拆成「批 1 = 骨架 + 写回收敛 + 谓词，出口：首页行为零变」与「批 2 = 账户面入口」。**这个切法是错的，理由不是粒度，是交付物不可见。**
+
+批 1 的出口全部是「什么都没变」：首页 `assertSame` 仍绿、谓词在 `null` 时返回可见、写回在首页路径下是 no-op。**负面断言在没有任何东西会改变时报绿是无信息的**，所以该批唯一能发现缺陷的通道是任务书评审——而那正是 `D-359` 记录的十二轮零代码的形状：一个不可见交付物的批次，每条未冻结的条款只能在评审里被发现，不能在测试里被证伪。它还把入口与它唯一的前置拆开，使前置失去可验收性。
+
+**更正后的拆分：两批，每批都有用户可见交付物。**
+
+| 批 | 承担 | 关键路径 | 出口（用户可见） |
+| --- | --- | --- | --- |
+| 1 | 骨架 + 写回收敛 + 谓词 + 账户面往返（四类） | `P503AppState.kt`（`TransactionDetailReturnTo` 类型、唯一解析函数、`TransactionDetail` 尾部 `returnTo: TransactionDetailReturnTo? = null`、`carriedReportCarrier` 的 `TransactionDetail` 分支）、`P503UiEvent.kt`（`SelectTransaction` 尾部 `returnTo`）、`P503Reducer.kt`（关闭按解析；`:1956` 与 `:1940-1948` 成对双写；`reduceAccountFlow` 新增 `SelectTransaction` 转移）、`P503CorrectionPresentation.kt`（谓词）、`P503App.kt`（接线、采样器、详情渲染按谓词传值）、`P503AccountFlowScreen.kt`（行入口） | 账户流水行可开详情并原路返回，页/计数/滚动位保留；账户面进入的三子面不可点；首页入口行为零变；不落 `else -> unhandled` 的 ISE |
+| 2 | 搜索面往返 | `P503AppState.kt`（`Search` 变体与解析分支）、`P503SearchScreen.kt`、`P503App.kt`、`P503Reducer.kt`（进入时先算 `carried` 清 `pageLoading` 再落 `listScroll`） | 搜索行可开详情并原路返回；`pageLoading` 不再在返回后永久卡死 |
+
+**四类为什么能在同一批内共存**：不是容忍组合爆炸，而是这四类的约束已被 `D-360` 的 Q1–Q5 逐条冻结（滚动位归属、失败态回程、同一性判据、写回权威、子面可达性）。十二轮的失败原因不是类别多，而是类别多**且**约束未冻结。
+
+**报表分类下钻与日历某日不再是 typed `returnTo` 的批 4/5。** 它们是 P8-06 的独立项，各自需要先建二级面状态并另开设计门。把它们排成后续批次，会把两批的交付说成五批，并让尚不存在的状态看起来像已排期工作。typed `returnTo` 的交付物是**两个已有详情入口**。
+
+### 三、谓词签名冻结
+
+`D-360` 第 5 项说谓词落在 `P503CorrectionPresentation.kt` 但未给签名。`DetailCorrectionAffordances`（`P503CorrectionPresentation.kt:78-83`）只有 `edit`/`void` 两个字段，**annotation edit 骑不上去**，因此两种形状的爆炸半径不同。冻结为：
+
+```kotlin
+internal data class DetailSubSurfaceEntries(val edit: Boolean, val void: Boolean, val annotationEdit: Boolean)
+internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?): DetailSubSurfaceEntries
+```
+
+这个形状不改 `detailCorrectionAffordancesVisible` 的签名，`P503CorrectionPresentationTest.kt:60` 的既有断言不受影响。
+
+### 四、一处开放决策的就地裁定
+
+`carriedBudgetMonthOverview` **不纳入 `Search`**。该访问器 KDoc 明确把 `Search` 列入「landing 被 ABSORBED」的八个面（`P503AppState.kt:1244-1255`），理由是预算区域从不在搜索面渲染，吸收是已登记行为而非缺陷；加入 `Search` 分支会让一个不渲染的区域开始收敛，是无收益的行为变更。**但解析函数必须有 `Search` 分支**——报表载体已含 `Search`（`P503AppState.kt:1368-1371`），成对双写需要它。
+
+**边界：** 入 = 本条。出 = 不改任何产品代码、测试、schema 或迁移；不改 `D-360` 已冻结的 Q1–Q5 决议（仅更正上文三处），不回改 `D-343`。`D-360` 第 4 项的「四处写回点」与批次表由本条更正，因此该两处的事实以本条为准。
+
+**残留风险：** ①typed `returnTo` 仍完全未交付。②`D-360` 登记的 READ 失败丢页损失仍明确不修，且**必须在批 1 的验收记录中逐字重申**，不得以「四门绿」替代。③`carriedReportCarrier` 的 `TransactionDetail` 分支仍无既有测试，须由批 1 新增合成状态测试承担。
+
+**关联决定：** `D-360`（本条更正其写回名册、批次表与谓词签名）、`D-359`（停批升级为设计门）、`D-343`（P8-06 设计批准）、`D-301`（V-5 返回保滚动位）、`D-308`（类型化 `returnTo` 先例）。
