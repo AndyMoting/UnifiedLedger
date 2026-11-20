@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.P806AccountPostingRow
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.ui.theme.LocalP8Palette
 
 /**
@@ -306,10 +307,10 @@ private fun P8AccountFlowRow(
                 ) {
                     onSelectTransaction?.invoke(row.transactionId)
                 }
-                .padding(vertical = 6.dp)
                 // C04: the row announces its exact values (the date axis, note, the leg with sign
                 // and currency) as one node.
-                .semantics { contentDescription = accountFlowRowContentDescription(row, accountName) },
+                .semantics { contentDescription = accountFlowRowContentDescription(row, accountName) }
+                .padding(vertical = 6.dp),
     ) {
         Text(
             accountFlowRowHeadlineText(row),
