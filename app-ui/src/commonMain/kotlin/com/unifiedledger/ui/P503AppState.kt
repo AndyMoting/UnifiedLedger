@@ -1131,7 +1131,7 @@ sealed interface P503AppState {
  *
  * There is deliberately NO `Overview(...)` variant: HOME has exactly one encoding, `null`.
  */
-internal sealed interface TransactionDetailReturnTo {
+sealed interface TransactionDetailReturnTo {
     /** Return to this exact account-flow surface, carried whole. */
     data class AccountsFlow(
         val carriedFlow: P503AppState.AccountFlow,
