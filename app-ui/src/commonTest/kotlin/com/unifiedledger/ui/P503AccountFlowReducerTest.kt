@@ -730,9 +730,9 @@ class P503AccountFlowReducerTest {
                 ),
             )
         val closedByBack = assertIs<P503AppState.AccountFlow>(reducer.reduce(enteredAgain, P503UiEvent.Back))
-        val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(enteredAgain.returnTo)
+        val targetAgain = assertIs<TransactionDetailReturnTo.AccountsFlow>(enteredAgain.returnTo)
         assertTrue(closedByBack is P503AppState.AccountFlow)
-        assertSame(target.carriedFlow, closedByBack)
+        assertSame(targetAgain.carriedFlow, closedByBack)
         assertEquals(ListScrollPosition(4, 7), closedByBack.listScroll)
         // The restore slot is consumed exactly once after the return (the queue slot's shape, F6).
         val consumed = assertIs<P503AppState.AccountFlow>(reducer.reduce(closedByBack, P503UiEvent.ListScrollRestored))
