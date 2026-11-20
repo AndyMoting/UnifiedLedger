@@ -14,7 +14,6 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
-import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -22,6 +21,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.datetime.YearMonth
 
 /**
  * P8-06 typed returnTo 批 1 (D-361): the carried-write-back test for the ONE carrier variant that
