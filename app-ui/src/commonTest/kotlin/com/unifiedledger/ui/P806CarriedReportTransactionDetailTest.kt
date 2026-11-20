@@ -176,7 +176,7 @@ class P806CarriedReportTransactionDetailTest {
                             capture =
                                 P806ReportReadCapture(
                                     request =
-                                        com.unifiedledger.application.P806ReportRequestIdentity(
+                                        P806ReportRequestIdentity(
                                             token = 5L,
                                             ledgerId = ledgerId,
                                             period = com.unifiedledger.application.P806Period(com.unifiedledger.application.P806PeriodKind.MONTH),
