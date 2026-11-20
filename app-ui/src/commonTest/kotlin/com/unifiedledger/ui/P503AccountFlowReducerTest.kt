@@ -669,10 +669,14 @@ class P503AccountFlowReducerTest {
                 ),
             )
         val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo)
-        // The carried flow is VALUE-identical to the surface's state — rows, count, cursor and
-        // provenance untouched — with the sampled scroll landed in its restore slot; a sampled
-        // landing necessarily copies (the listScroll write), so equality is the honest assertion.
-        assertEquals(loaded, target.carriedFlow)
+        // What the carry actually promises, field by field: rows/count/cursor/provenance equal,
+        // the overview the same instance; the sampled scroll lands in the restore slot (loaded
+        // itself holds a null slot), so a whole-object equality can never hold.
+        assertEquals(loaded.loadedRows, target.carriedFlow.loadedRows)
+        assertEquals(loaded.totalCount, target.carriedFlow.totalCount)
+        assertEquals(loaded.nextCursor, target.carriedFlow.nextCursor)
+        assertEquals(loaded.loadedGeneration, target.carriedFlow.loadedGeneration)
+        assertEquals(loaded.loadedCatalogVersion, target.carriedFlow.loadedCatalogVersion)
         assertEquals(ListScrollPosition(2, 10), target.carriedFlow.listScroll)
         assertEquals(listOf("posting-1"), target.carriedFlow.loadedRows.map { it.postingId.value })
         assertEquals(1, target.carriedFlow.totalCount)
@@ -756,13 +760,14 @@ class P503AccountFlowReducerTest {
             )
         val carried = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo).carriedFlow
         assertTrue(!carried.rowsLoading)
+        // The in-flight clearing flips ONLY the rowsLoading bit; every payload field survives.
+        assertEquals(requesting.pageRequestToken, carried.pageRequestToken)
+        assertEquals(requesting.loadedRows, carried.loadedRows)
+        assertEquals(requesting.totalCount, carried.totalCount)
+        assertEquals(requesting.nextCursor, carried.nextCursor)
         // Token 2: loadedFlow() consumed 1, this test's own requestPage consumed 2 — the token is
         // the host's sequence value and survives the carried round-trip.
         assertEquals(2L, carried.pageRequestToken)
-        assertEquals(loaded.loadedRows, carried.loadedRows)
-        // The in-flight clearing necessarily copies (rowsLoading true → false), so the carried flow
-        // is a NEW instance that is otherwise value-identical to `requesting`.
-        assertEquals(requesting, carried)
         // The late landing is absorbed on the detail (the central guard) and cannot write.
         assertSame(entered, reducer.reduce(entered, landing(landedPage(1, listOf(posting(postingId = "posting-late"))))))
         // And after the return it finds no active request either.
