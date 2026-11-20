@@ -1288,10 +1288,15 @@ fun P503App(
      * late/stale write-back is impossible by construction. P8-00 b3 (V-6): the SAME lease reads
      * the financial version history (the annotation-history twin; a null read renders no block,
      * never a fabricated chain).
+     * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): [returnTo] is the typed return target — `null`
+     * (the HOME entry, every existing call site) keeps today's behavior byte-identical;
+     * `TransactionDetailReturnTo.AccountsFlow(carriedFlow)` (the account-flow entry) carries the
+     * sampled flow whole, so close returns the same surface with rows/count/scroll preserved.
      */
     fun selectTransaction(
         transactionId: TransactionId,
         homeFlowScroll: ListScrollPosition? = null,
+        returnTo: TransactionDetailReturnTo? = null,
     ) {
         // P7-06 06.1 (spec 4.3(b)): the synchronous detail read runs under an operation lease.
         // P7-08 08.D (spec section 3.5): the SAME lease reads the annotation history (the R-222-8
@@ -1308,7 +1313,7 @@ fun P503App(
                 }
             } ?: return
         val (detail, history, versions) = read
-        dispatch(P503UiEvent.SelectTransaction(transactionId, detail, homeFlowScroll))
+        dispatch(P503UiEvent.SelectTransaction(transactionId, detail, homeFlowScroll, returnTo))
         if (detail is TransactionDetailResult.Success) {
             history?.let { history -> dispatch(P503UiEvent.TransactionAnnotationHistoryLanded(transactionId, history)) }
             versions?.let { versions -> dispatch(P503UiEvent.TransactionVersionHistoryLanded(transactionId, versions)) }
@@ -5457,6 +5462,12 @@ fun P503App(
                     }
                     is P503AppState.TransactionDetail -> {
                         val detail = current.detail
+                        // P8-06 typed returnTo 批 1 (D-360 Q3/D-361): the three sub-surface entries
+                        // exist only on a HOME-entered detail; an account-flow-entered detail is a
+                        // strictly read-only detour and passes `null` for all three callbacks (no
+                        // dead button, F1). The per-entry capability gates below AND with this
+                        // entry-gate — each callback survives only when BOTH halves pass.
+                        val subSurfaceEntries = detailSubSurfaceEntriesVisible(current.returnTo)
                         P503TransactionDetailScreen(
                             detail = detail,
                             // Back = CloseTransactionDetail semantics (tab/month preserved, C03).
@@ -5469,18 +5480,19 @@ fun P503App(
                             // unresolvable amount leg passes `null`, so the page renders no dead button,
                             // the F1 precedent). The void entry needs only the wired use case.
                             onEditTransaction =
-                                if (detail is TransactionDetailResult.Success && correctionOriginResolvable(detail.detail)) {
+                                if (subSurfaceEntries.edit && detail is TransactionDetailResult.Success && correctionOriginResolvable(detail.detail)) {
                                     { target -> openTransactionEdit(target) }
                                 } else {
                                     null
                                 },
-                            onVoidTransaction = if (ledger.surfaces.voidTransaction) ({ target -> openVoidConfirm(target) }) else null,
+                            onVoidTransaction =
+                                if (subSurfaceEntries.void && ledger.surfaces.voidTransaction) ({ target -> openVoidConfirm(target) }) else null,
                             // P7-08 08.B-2 (spec section 4.4): the annotation-edit entry, passed only when
                             // the host can resolve the target's CAS tokens right now (wired command + id
                             // source + read port AND a readable transaction); otherwise `null` renders no
                             // button rather than a form with fabricated tokens.
                             onEditAnnotation =
-                                if (detail is TransactionDetailResult.Success && annotationEditResolvable(detail.detail)) {
+                                if (subSurfaceEntries.annotationEdit && detail is TransactionDetailResult.Success && annotationEditResolvable(detail.detail)) {
                                     { target -> openTransactionAnnotationEdit(target) }
                                 } else {
                                     null
@@ -5498,8 +5510,10 @@ fun P503App(
                         )
                     }
                     // P8-00 b3 (V-5): the read-only account-flow secondary surface (the asset row
-                    // route). Zero write entries; the exits are the 返回 button and the footer's
-                    // read-only page reads.
+                    // route). Zero write entries; the exits are the 返回 button, the footer's
+                    // read-only page reads and — P8-06 typed returnTo 批 1 (D-360/D-361) — the
+                    // posting row's read-only detail entry, wired only when the detail read face is
+                    // probed (an unwired graph renders no dead row click).
                     is P503AppState.AccountFlow ->
                         P503AccountFlowScreen(
                             state = current,
@@ -5507,6 +5521,24 @@ fun P503App(
                             onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
                             onLoadMore = ::requestAccountFlowMorePage,
                             onRetryLoadMore = ::requestAccountFlowMorePage,
+                            // P8-06 typed returnTo 批 1: the detail entry samples THIS surface's
+                            // scroll position synchronously at click time (the V-5 mechanism) and
+                            // dispatches with the whole flow as the typed return target — the close
+                            // returns that carried surface whole (rows/count/scroll preserved, no
+                            // re-read). The click re-reads the latest state (the
+                            // selectReconciliationQueue shape), so a page that landed since the last
+                            // recomposition is still carried whole.
+                            onSelectTransaction =
+                                if (ledger.surfaces.ledgerView) {
+                                    { transactionId ->
+                                        val flow = latestState.value as? P503AppState.AccountFlow
+                                        if (flow != null) {
+                                            selectTransaction(transactionId, accountFlowScrollSampler(), TransactionDetailReturnTo.AccountsFlow(flow))
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
                             // P8-01a i3a (spec section 2.2 entry A): the queue entry, rendered only
                             // when the reconciliation read face and proposal use case are wired.
                             onOpenReconciliation =

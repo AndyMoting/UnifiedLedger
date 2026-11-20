@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CreationEntry
+import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.RecycleBinDependencyLeg
 import com.unifiedledger.application.RecycleBinResult
 import com.unifiedledger.application.RecycleBinRow
@@ -8,6 +9,7 @@ import com.unifiedledger.application.VoidedTransactionRow
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
 import com.unifiedledger.domain.Posting
@@ -130,6 +132,54 @@ class P503CorrectionPresentationTest {
         assertTrue(isP705CreationLineageSupported(CreationEntry.MANUAL_CREATED))
         assertTrue(isP705CreationLineageSupported(CreationEntry.UNMARKED))
         assertFalse(isP705CreationLineageSupported(CreationEntry.IMPORT_CREATED))
+    }
+
+    // ---- P8-06 typed returnTo 批 1: the detail's sub-surface entry gate (D-360 Q3/D-361 冻结签名) ----
+
+    @Test
+    fun theDetailSubSurfaceEntriesShowForTheHomeEntryAndHideForTheAccountFlowEntry() {
+        // `null` returnTo = the HOME entry: all three sub-surface entries ride the detail (subject
+        // to their own per-entry capability gates at the render site, unchanged).
+        assertEquals(
+            DetailSubSurfaceEntries(edit = true, void = true, annotationEdit = true),
+            detailSubSurfaceEntriesVisible(null),
+        )
+        // The account-flow entry is a strictly read-only detour: none of the three entries.
+        val accountFlowEntry =
+            TransactionDetailReturnTo.AccountsFlow(
+                P503AppState.AccountFlow(
+                    overview =
+                        P503AppState.OverviewEmpty(
+                            LedgerCurrentState(LedgerId("ledger-returnto-predicate"), transactions = emptyList(), balances = emptyList()),
+                            selectedTab = P503Tab.ACCOUNTS,
+                        ),
+                    accountId = AccountId("asset-payment-local"),
+                    balanceLine = "零钱 · 资产 · CNY",
+                    balanceMinorUnits = 0L,
+                    balanceCurrency = CurrencyUnit("CNY", 2),
+                ),
+            )
+        assertEquals(
+            DetailSubSurfaceEntries(edit = false, void = false, annotationEdit = false),
+            detailSubSurfaceEntriesVisible(accountFlowEntry),
+        )
+    }
+
+    @Test
+    fun theDetailSubSurfaceEntryGateIsOrthogonalToTheP705SupportMatrix() {
+        // The two gates compose at the render site (entry gate AND capability gate); this test pins
+        // the orthogonality so the triple can never silently collapse into the matrix's two fields
+        // (DetailCorrectionAffordances stays edit/void only — its P503CorrectionPresentationTest
+        // :60 assertion untouched).
+        assertTrue(detailSubSurfaceEntriesVisible(null).edit)
+        assertTrue(
+            detailCorrectionAffordancesVisible(TransactionKind.EXPENSE, CreationEntry.MANUAL_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).edit,
+        )
+        // A HOME-entered import-created expense still offers no edit entry: the capability half
+        // rejects it independently of the entry gate.
+        assertFalse(
+            detailCorrectionAffordancesVisible(TransactionKind.EXPENSE, CreationEntry.IMPORT_CREATED, isEffective = true, hasCorrectionOrigin = true, hasVoidTarget = true).any,
+        )
     }
 
     // ---- difference preview (spec section 4.4) --------------------------------------------
