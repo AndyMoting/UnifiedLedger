@@ -210,11 +210,15 @@ class P806CarriedReportTransactionDetailTest {
         val slot = assertNotNull(assertIs<TransactionDetailReturnTo.AccountsFlow>(landed.returnTo).carriedFlow.overview.reportRegion)
         assertTrue(!slot.loading)
         assertNotNull(slot.landed)
-        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(slot))
+        // The convergence point of THIS test is loading=false and landed!=null on both carriers;
+        // the face itself is EMPTY because the fixture view has period=null/count=0 (the
+        // p806ReportRegionFace established reading, P503ReportRegion.kt:138).
+        assertEquals(P806ReportRegionFace.EMPTY, p806ReportRegionFace(slot))
         // The detail's own overview carries the same landed slot (the HOME return path).
         val ownSlot = assertNotNull(landed.overview.reportRegion)
         assertTrue(!ownSlot.loading)
         assertNotNull(ownSlot.landed)
+        assertEquals(P806ReportRegionFace.EMPTY, p806ReportRegionFace(ownSlot))
     }
 
     // ---------------------------------------------------------------- the monthly write site (D-361 site 2)

@@ -394,8 +394,11 @@ sealed interface P503UiEvent {
      * Opens the read-only transaction detail from a HOME flow row or an account-flow posting row.
      * [result] is the typed payload the host resolved from
      * [com.unifiedledger.application.QueryTransactionDetail] before dispatching (Success or the
-     * typed NotFound/InvalidState/Unavailable failure — the page renders all four). Absorbed in
-     * every state other than OverviewEmpty (table 6.2a).
+     * typed NotFound/InvalidState/Unavailable failure — the page renders all four). Outside the
+     * two designed states the absorption follows each state's own absorb list (table 6.2a);
+     * OverviewEmpty is the HOME entry's designed surface, and — P8-06 typed returnTo 批 1 —
+     * AccountFlow is the account-flow entry's designed surface (its own transition below in the
+     * reducer; the only entry that carries a non-null [returnTo]).
      *
      * P8-00 b3 (V-5 返回保滚动位): [homeFlowScroll] is the HOME list scroll position the screen
      * sampled synchronously at click time; the reducer stores it as the overview's

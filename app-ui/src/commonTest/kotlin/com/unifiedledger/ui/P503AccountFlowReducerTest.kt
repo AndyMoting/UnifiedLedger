@@ -669,9 +669,10 @@ class P503AccountFlowReducerTest {
                 ),
             )
         val target = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo)
-        // The carried flow is the very instance the surface held — rows, count, cursor and
-        // provenance untouched — with the sampled scroll landed in its restore slot.
-        assertSame(loaded, target.carriedFlow)
+        // The carried flow is VALUE-identical to the surface's state — rows, count, cursor and
+        // provenance untouched — with the sampled scroll landed in its restore slot; a sampled
+        // landing necessarily copies (the listScroll write), so equality is the honest assertion.
+        assertEquals(loaded, target.carriedFlow)
         assertEquals(ListScrollPosition(2, 10), target.carriedFlow.listScroll)
         assertEquals(listOf("posting-1"), target.carriedFlow.loadedRows.map { it.postingId.value })
         assertEquals(1, target.carriedFlow.totalCount)
@@ -712,7 +713,9 @@ class P503AccountFlowReducerTest {
         assertEquals(listOf("posting-1"), closedByButton.loadedRows.map { it.postingId.value })
         assertEquals(1, closedByButton.totalCount)
         assertEquals(ListScrollPosition(2, 10), closedByButton.listScroll)
-        assertEquals(0L, closedByButton.pageRequestToken)
+        // The host's monotonic token survives the carried round-trip: loadedFlow() consumed token 1
+        // and applyAccountFlowPage never resets it — the return issues no read and no token churn.
+        assertEquals(1L, closedByButton.pageRequestToken)
         // System back = CloseTransactionDetail semantics (the read-only-detail precedent).
         val enteredAgain =
             assertIs<P503AppState.TransactionDetail>(
@@ -751,10 +754,13 @@ class P503AccountFlowReducerTest {
             )
         val carried = assertIs<TransactionDetailReturnTo.AccountsFlow>(entered.returnTo).carriedFlow
         assertTrue(!carried.rowsLoading)
-        assertEquals(1L, carried.pageRequestToken)
+        // Token 2: loadedFlow() consumed 1, this test's own requestPage consumed 2 — the token is
+        // the host's sequence value and survives the carried round-trip.
+        assertEquals(2L, carried.pageRequestToken)
         assertEquals(loaded.loadedRows, carried.loadedRows)
-        // With no sampled scroll the flow is carried by reference (no churn).
-        assertSame(requesting, carried)
+        // The in-flight clearing necessarily copies (rowsLoading true → false), so the carried flow
+        // is a NEW instance that is otherwise value-identical to `requesting`.
+        assertEquals(requesting, carried)
         // The late landing is absorbed on the detail (the central guard) and cannot write.
         assertSame(entered, reducer.reduce(entered, landing(landedPage(1, listOf(posting(postingId = "posting-late"))))))
         // And after the return it finds no active request either.
@@ -777,6 +783,9 @@ class P503AccountFlowReducerTest {
                 ),
             )
         assertSame(loaded.overview, entered.overview)
+        // The true no-churn shape (this test: no in-flight clearing, no sampled scroll): the flow
+        // is carried BY REFERENCE — the same instance the surface held.
+        assertSame(loaded, entered.returnTo!!.carriedFlow)
         assertEquals(
             entered.returnTo!!.carriedFlow,
             assertIs<P503AppState.AccountFlow>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail)),
