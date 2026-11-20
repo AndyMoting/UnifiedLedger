@@ -7971,7 +7971,7 @@ seekReturn marker=false steps=8 stationary=true
 3. 实例同一性判据：哪些断言用 `assertSame`（overview），哪些用值相等（flow）？
 4. carried-overview 写回的单一权威：继续用一条不变量，还是显式逐链条款？（本批试过不变量，但其第二句本身写错了。）
 5. 子面可达性：账户面进入的详情是否开放 edit/void/annotation edit？
-6. 五面取值域的交付顺序：首页、账户面未完成，搜索面、报表分类下钻、日历某日尚无状态。
+6. 五面取值域的交付顺序：首页、账户面未完成；搜索面**状态已存在**（`P503AppState.Search`）只缺入口，报表分类下钻与日历某日尚无状态。（更正：原文称搜索面亦「尚无状态」，该半句错误，由 `D-360` 第 6 项更正。）
 
 **保留资产：** `local/artifacts/p806-typed-returnTo/batch-contract.local.md`（351 行，§1–§8）记录了十二轮的实测基线数字、三链陈旧槽的确切位置、四处会变假的 KDoc 清单、收窄方案与非交付清单；§9 是本条的技术副本。设计门应以此为基础。
 
@@ -7980,3 +7980,43 @@ seekReturn marker=false steps=8 stationary=true
 **残留风险：** ①typed `returnTo` 仍完全未交付，P8-06 的五面取值域只经本批论证过两面（且未实施）。②第十二条发现的 `InfrastructureFailure` READ 无返回键问题**是既存的**，不经详情入口也可经首页入口触发（首页入口的关闭虽然可用，但失败态本身仍无背退），本条不修复它，只登记。③「十二轮零代码」本身就是流程成本证据：若后续设计门仍以单批实施，应先冻结设计再分批，而不是边实施边发现约束。
 
 **关联决定：** `D-343`（P8-06 设计批准；§3.7.3 类型化返回目标、§3.7.2 事件扩展、§8 批 b 拆分）、`D-348`（schema v38 基线）、`D-301`（V-5 返回保滚动位）、`D-308`（对账队列的类型化 `returnTo` 先例）。
+
+## D-360 typed `returnTo` 设计门决议：六项设计冻结与五批实施拆分
+
+**背景：** `D-359` 把 typed `returnTo` 从实施批升级为设计门，并在其第 6 项提出六个待答问题。本记录给出六项决议、修订后的批次拆分，以及一条**明确决定不修**的用户可见损失。
+
+**六项决议（源码依据见各条）：**
+
+1. **滚动位归属**：不新增滚动字段。`returnTo` 的账户面变体持有点击时的完整 `AccountFlow` 实例（已含 `listScroll`），滚动位由实例承载而非事件字段。依据：`AccountFlow.listScroll` 是该面自己的恢复槽（其 KDoc 明写由 `SelectReconciliationQueue` 转移写入，而非 `overview.originListScroll`），且 `ReconciliationBackTarget` 先例同样持有完整状态实例（`P503AppState.kt:1110-1125`）。「首页」只有一种编码：`null`，在解析函数里回落 `detail.overview`。
+2. **失败态回程**：**不改** `MonthlyActivityResult` 的失败分支。它把详情态整页换成 `InfrastructureFailure(READ, monthlyOverview = state.overview)`（`P503Reducer.kt:1949-1951`），销毁账户流水面实例；但该行为受既有 oracle `monthlyActivityFailureInsideTheDetailPreservesTheStoredOverview`（`P503LedgerViewReducerTest.kt:514-524` 的 `assertIs<InfrastructureFailure>` + `assertSame(source, failed.monthlyOverview)`）保护，且经首页入口**今天就可达**（`requestMonthlyNow` 无 early return，三处确定写入均会置标志），不是第二条入口新引入的。
+3. **实例同一性判据**：`assertSame` 只用于 overview 引用；`AccountFlow` 实例用值相等。理由限定为「真正变换 overview 的 landing」——`withCarriedReportOverview` 对恒等变换会短路返回同一 state（`P503Reducer.kt:612-618`），所以「流实例必然不同」不能当普遍事实。
+4. **写回权威**：一条不变量 + 一处解析函数（`resolve(returnTo, detail)`：`null` → `detail.overview`；`AccountsFlow(carriedFlow)` → `carriedFlow.overview`；**不存在 `Overview(...)` 变体**）+ 四处写回点（`P503Reducer.kt` 的 `BudgetMonthLanded` 与 `MonthlyActivityResult` 成功分支、`carriedReportCarrier` 与 `carriedBudgetMonthOverview` 的 `TransactionDetail` 分支）。其余七处 `BudgetMonthLanded`（`:1145/:1823/:2218/:3904/:3947/:3999/:4038`）与三处 `MonthlyActivityResult`（`:1152/:1585/:2201`）不动。关闭改为按解析函数（先例：`P503Reducer.kt:2327` 的 `returnTo.surface()`）。
+5. **子面可达性**：从账户流水面进入的详情不开放 edit / void / annotation edit 三个子面；首页入口不变。实现只在 `P503App.kt` 的详情渲染调用点按谓词传值或 `null`，`P503LedgerView.kt` 不改。谓词落在 `P503CorrectionPresentation.kt`（与 `detailCorrectionAffordancesVisible` 同处）。
+6. **五面交付顺序**：按「返回目标是否已有可携带状态实例」排序——首页（已有）→ 账户流水面（已有，含 `listScroll` 槽）→ 搜索面（**状态已存在**，`P503AppState.Search`，缺入口）→ 报表分类下钻（无状态）→ 日历某日（无状态）。
+
+**更正 `D-359` 第 6 项的一半：** `D-359` 称「搜索面…尚无状态」，**错误**。`P503AppState.Search` 存在且完备，缺的只是详情入口（`P503SearchScreen.kt` 的行回调传空且不可点）。同一条错误也出现在本任务的本地产物 `batch-contract.local.md` §9.4，一并更正。只有报表分类下钻与日历两面需要先建状态。
+
+**《已知而不修》的用户可见损失（本条为正式登记）：**
+
+从账户流水面进入交易详情后，若用户在该详情页完成一次确定写入（更正 / 作废 / 标注提交），宿主的确定写入链会触发一次月读（`requestMonthlyNow` 无 early return）；该月读若以 `InvalidState`/`Unavailable` 失败，详情态被整页替换为 `InfrastructureFailure(READ)`，账户流水面的已加载分录、计数与滚动位全部丢失，且 `isBackEnabled` 对 READ 上下文返回 `false`（`P503App.kt:6234-6235`），用户没有返回通道。
+
+本设计门决定**不修**它，代价是：第二条入口上线后，这条路径仍会让用户丢页，与首页入口今日的行为一致，而非新造行为。消除它需要「READ 失败页的返回目标」独立设计（返回首页？返回失败前状态？只给重试？），那会改变既有月卡失败页的用户路径。**该残留必须在批 2 的验收记录中逐字重申，不得以「四门绿」替代。**
+
+**批次拆分（每批只承担无法再拆的类别，并逐类写明理由）：**
+
+| 批 | 类别 | 关键路径 | 出口 |
+| --- | --- | --- | --- |
+| 1 | 状态形状 + 语义 + 交互谓词（三类不可拆，见下） | `P503AppState.kt`（类型、解析函数、两处载体分支）、`P503UiEvent.kt`（尾部字段）、`P503Reducer.kt`（关闭按解析；两处写回点成对双写）、`P503CorrectionPresentation.kt`（谓词） | 首页行为零变；四处写回点在账户面路径下不丢载荷（合成状态测试）；谓词在 `returnTo == null` 时行为不变 |
+| 2 | 导航 | `P503App.kt`、`P503AccountFlowScreen.kt`、`P503Reducer.kt`（`reduceAccountFlow` 新增 `SelectTransaction` 转移，含清 `rowsLoading` 与落 `listScroll`） | 账户行可开详情（不落 `else -> unhandled` 的 ISE）；回程保留页/计数/滚动位；三子面不可点 |
+| 3 | 导航 + 状态形状（新增 `returnTo` 的 `Search` 变体） | `P503AppState.kt`（`Search` 变体与解析分支）、`P503SearchScreen.kt`、`P503App.kt`、`P503Reducer.kt`（进入时清 `pageLoading` 并落 `listScroll`） | 搜索行可开详情并原路返回；`pageLoading` 不再永久卡死 |
+| 4–5 | 新建状态 + 导航 | 报表分类下钻、日历某日 | 未开始；需各自设计门 |
+
+批 1 的三类不可拆：解析函数先于所有消费者；写回点必须与类型同批（否则中间批会让首页路径丢载荷）；子面谓词是 `returnTo` 的纯函数，只能在类型之后写、却必须在入口开启之前就位。
+
+**批 2 的必知实现事实：** `SelectTransaction` 今日不在 `reduceAccountFlow` 的 when 内（该区间匹配数为 0），落在 `P503Reducer.kt:2230` 的 `else -> unhandled`——在 `AccountFlow` 态派发它会抛 ISE。只接 UI 不接 reducer 会在第一次点行时崩溃。
+
+**边界：** 入 = 本条。出 = 不改任何产品代码、测试、schema 或迁移；不改 `D-343` 的已批准机制。**`D-359` 第 6 项的搜索面半句已就地更正**（原文保留引述 + 行内注明由本条更正），因此「不回改 D-359 正文」不成立于该一句——本条的更正是该句的唯一权威，其余 `D-359` 正文未动。
+
+**残留风险：** ①typed `returnTo` 仍完全未交付。②上文登记的 READ 失败丢页损失在本条明确不修。③批 1 的「首页零变」覆盖状态须写准：`BudgetMonthLanded` 已有 oracle（`P503BudgetReducerTest.kt:235-241` 在 `TransactionDetail` 上归约），`MonthlyActivityResult` 成功分支已有 oracle（`P503LedgerViewReducerTest.kt:500-511`），**只有 `carriedReportCarrier` 的 `TransactionDetail` 分支没有任何既有测试**（`P806ReportReducerTest.kt` 无该态用例）；`carriedBudgetMonthOverview` 有存在性覆盖但无成对写回断言。缺失部分由批 1 新增合成状态测试承担。
+
+**关联决定：** `D-359`（停批并升级为本设计门，其第 6 项由本条更正）、`D-343`（P8-06 设计批准；§3.7.3 类型化返回目标）、`D-301`（V-5 返回保滚动位）、`D-308`（对账队列类型化 `returnTo` 先例）。
