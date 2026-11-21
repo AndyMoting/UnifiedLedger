@@ -108,6 +108,9 @@ class P503ReducerImpl(
         // 旧历史或旧请求身份).
         val effective = reportRegionGraphRetirement(state, event) ?: state
         if (reportRegionEventAbsorbed(effective, event)) return effective
+        // P8-06 batch 3 (D-362 1/2): the report drilldown family's central guard (the report-region
+        // family's shape).
+        if (reportDrilldownEventAbsorbed(effective, event)) return effective
         if (reconciliationEventAbsorbed(effective, event)) return effective
         if (refundEntryEventAbsorbed(effective, event)) return effective
         if (listScrollRestoredEventAbsorbed(effective, event)) return effective
@@ -118,6 +121,7 @@ class P503ReducerImpl(
                 is P503AppState.OverviewEmpty -> reduceOverviewEmpty(effective, event)
                 is P503AppState.TransactionDetail -> reduceTransactionDetail(effective, event)
                 is P503AppState.AccountFlow -> reduceAccountFlow(effective, event)
+                is P503AppState.ReportDrilldown -> reduceReportDrilldown(effective, event)
                 is P503AppState.ReconciliationQueue -> reduceReconciliationQueue(effective, event)
                 is P503AppState.ReconciliationDetail -> reduceReconciliationDetail(effective, event)
                 is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(effective, event)
@@ -449,6 +453,30 @@ class P503ReducerImpl(
         }
 
     /**
+     * P8-06 batch 3 (D-362 1/2; spec sections 3.7/3.9/3.10.4): the report-drilldown event family is
+     * state-preserving outside its designed states (the report-region family's central-guard shape).
+     * `OpenReportDrilldown` has its one effect on [P503AppState.OverviewEmpty]; `CloseReportDrilldown`,
+     * `RequestReportDrilldownPage` and `ReportDrilldownPageLanded` act only on
+     * [P503AppState.ReportDrilldown]. Everywhere else — including `Ready` before the overview exists
+     * and a read-only detail opened from the drilldown — every family event is absorbed, so a late
+     * or stale dispatch can never reach `unhandled` and turn into an ISE. `SelectTransaction` and
+     * `ListScrollRestored` are NOT routed through this guard: each already has its own designed
+     * transition on the drilldown (and the other states' own absorb lists).
+     */
+    private fun reportDrilldownEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.OpenReportDrilldown -> state !is P503AppState.OverviewEmpty
+            P503UiEvent.CloseReportDrilldown,
+            is P503UiEvent.RequestReportDrilldownPage,
+            is P503UiEvent.ReportDrilldownPageLanded,
+            -> state !is P503AppState.ReportDrilldown
+            else -> false
+        }
+
+    /**
      * P8-06 batch b (D-343 section 3.7): applies one landing to the live overview (and to the
      * preserved overview of every carrier) and returns the rebuilt state, or `null` when this state
      * carries no overview at all.
@@ -772,7 +800,9 @@ class P503ReducerImpl(
      * sampled when its reconciliation queue opened), the reconciliation queue
      * ([P503AppState.ReconciliationQueue.listScroll]) and the P8-02 i2a search surface
      * ([P503AppState.Search.listScroll]; P8-06 typed returnTo 批 2 fills it when a result row
-     * opens the detail, and this consume clears it once after the return) — where its ONE effect
+     * opens the detail, and this consume clears it once after the return) — plus the P8-06 batch 3
+     * report drilldown ([P503AppState.ReportDrilldown.listScroll], the detail round trip's own
+     * restore slot) — where its ONE effect
      * is clearing the slot after the screen applied it (the
      * same event, the same mechanism, one slot per surface). Every other surface is absorbed
      * whole, so the value can never pollute a surface it does not belong to and a late dispatch
@@ -786,7 +816,8 @@ class P503ReducerImpl(
             state !is P503AppState.OverviewEmpty &&
             state !is P503AppState.AccountFlow &&
             state !is P503AppState.ReconciliationQueue &&
-            state !is P503AppState.Search
+            state !is P503AppState.Search &&
+            state !is P503AppState.ReportDrilldown
 
     /**
      * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
@@ -1827,6 +1858,14 @@ class P503ReducerImpl(
                     balanceMinorUnits = event.balanceMinorUnits,
                     balanceCurrency = event.balanceCurrency,
                 )
+            // P8-06 batch 3 (D-362 1; spec sections 3.7/3.9/3.10.4): a report-region entry opens the
+            // full-screen drilldown. The exact overview is preserved as the back target (tab, report
+            // period cursor, report slot and the analysis page's hoisted scroll position), and the
+            // surface opens in its explicit not-loaded state: the host requests the first P806
+            // drilldown page as a background read right after this event, so the reducer still
+            // performs zero IO. The UI affords it only on an eligible region.
+            is P503UiEvent.OpenReportDrilldown ->
+                P503AppState.ReportDrilldown(overview = state, target = event.target)
             // P8-01a i3a (spec section 2.2 entry B): the import candidate row's
             // 「用于核对既有分录」 action opens the SAME candidate surface in evidence-focused mode,
             // carrying this overview as its back target. The evidence may have no projection yet
@@ -1956,12 +1995,14 @@ class P503ReducerImpl(
      * update on the stored overview, the other new read-only events are absorbed, and every
      * pre-existing event stays unlisted (ISE, G-B). The page has zero edit entries.
      *
-     * P8-06 typed returnTo 批 1 (D-360 Q2/D-361) and 批 2: Close/Back return the carried TARGET
-     * SURFACE (`when (returnTo)`: `null` → the detail's own overview; `AccountsFlow(carriedFlow)`
-     * → the carried AccountFlow instance; `Search(carriedSearch)` → the carried Search instance —
-     * the ReconciliationBackTarget surface() precedent). The carried monthly/budget landings below
-     * keep overview identity across every carrier through [resolveTransactionDetailReturnTo]'s
-     * paired write-back, so the returned surface never holds a payload a landing forgot to update.
+     * P8-06 typed returnTo 批 1 (D-360 Q2/D-361), 批 2 and batch 3 (D-362 1): Close/Back return the
+     * carried TARGET SURFACE (`when (returnTo)`: `null` → the detail's own overview;
+     * `AccountsFlow(carriedFlow)` → the carried AccountFlow instance; `Search(carriedSearch)` → the
+     * carried Search instance; `ReportDrilldown(carriedDrilldown)` → the carried ReportDrilldown
+     * instance — the ReconciliationBackTarget surface() precedent). The carried monthly/budget
+     * landings below keep overview identity across every carrier through
+     * [resolveTransactionDetailReturnTo]'s paired write-back, so the returned surface never holds a
+     * payload a landing forgot to update.
      */
     private fun reduceTransactionDetail(
         state: P503AppState.TransactionDetail,
@@ -1981,6 +2022,7 @@ class P503ReducerImpl(
                     null -> state.overview
                     is TransactionDetailReturnTo.AccountsFlow -> target.carriedFlow
                     is TransactionDetailReturnTo.Search -> target.carriedSearch
+                    is TransactionDetailReturnTo.ReportDrilldown -> target.carriedDrilldown
                 }
             // System back = CloseTransactionDetail semantics (spec section 6.2 back bullet).
             P503UiEvent.Back ->
@@ -1988,6 +2030,7 @@ class P503ReducerImpl(
                     null -> state.overview
                     is TransactionDetailReturnTo.AccountsFlow -> target.carriedFlow
                     is TransactionDetailReturnTo.Search -> target.carriedSearch
+                    is TransactionDetailReturnTo.ReportDrilldown -> target.carriedDrilldown
                 }
             // P7-08 08.D (spec section 3.5): the read-only history block's payload. The central
             // guard has already matched the transaction id, so this applies whole; the block is
@@ -2662,6 +2705,185 @@ class P503ReducerImpl(
                 state.copy(rowsLoading = false, unwired = true)
             is P806AccountPageRead.StaleProvenance ->
                 state.copy(rowsLoading = false, failure = read.failure, nextCursor = null)
+        }
+
+    /**
+     * P8-06 batch 3 (D-362 1/2; spec sections 3.7/3.9/3.10.4): the report drilldown. Only its
+     * designed events react: Close/Back return to the exact preserved overview (tab, report period
+     * cursor, slot and the analysis page's scroll position kept; no read is issued), the page
+     * request advances the single-flight marker + the host's newer token (a token not newer is
+     * absorbed with all three request fields unchanged), the landing applies only while the
+     * production landing decision ([p806DrilldownLandingDecision]) still accepts its request
+     * identity, `SelectTransaction` opens a row's read-only detail carrying this whole surface as
+     * the typed [TransactionDetailReturnTo.ReportDrilldown] return target (the sampled scroll rides
+     * [P503AppState.ReportDrilldown.listScroll]), and `ListScrollRestored` consumes that slot once.
+     * A monthly-cycle landing behind this carried-overview surface is APPLIED to it (the read-only
+     * detail precedent). A budget landing is NOT applied here: `budgetEventAbsorbed` centrally
+     * absorbs it for every carried-overview secondary surface whose
+     * `carriedBudgetMonthOverview()` has no case (this state, AccountFlow and Search alike), and the
+     * `BudgetMonthLanded` branch below is the same defensive dead branch the AccountFlow precedent
+     * carries. The refresh family is absorbed. Every other event is absorbed by the central
+     * guards; every pre-existing event stays unlisted (ISE, G-B). The page has zero write entries.
+     */
+    private fun reduceReportDrilldown(
+        state: P503AppState.ReportDrilldown,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.CloseReportDrilldown -> state.overview
+            // System back = CloseReportDrilldown semantics (the CloseTransactionDetail back bullet).
+            P503UiEvent.Back -> state.overview
+            is P503UiEvent.RequestReportDrilldownPage ->
+                // Only a NEWER host token starts a read; an absorbed call leaves token, marker and
+                // failure untouched (单飞 by token — a superseded landing can then never match).
+                if (event.requestToken <= state.pageRequestToken) {
+                    state
+                } else {
+                    state.copy(pageRequestToken = event.requestToken, rowsLoading = true, failure = null)
+                }
+            is P503UiEvent.ReportDrilldownPageLanded ->
+                when (p806DrilldownLandingDecision(state, event.read, event.currentGeneration, event.currentCatalogVersion)) {
+                    // A non-active/superseded/duplicated landing changes nothing.
+                    P806DrilldownLandingDecision.STALE_TOKEN,
+                    P806DrilldownLandingDecision.STALE_TARGET,
+                    P806DrilldownLandingDecision.STALE_CURSOR,
+                    P806DrilldownLandingDecision.STALE_LEDGER,
+                    -> state
+                    // The matching request's graph/catalog advanced: end only its loading, keep the
+                    // old rows labelled as old context and reset the retry to the first page.
+                    P806DrilldownLandingDecision.STALE_GENERATION ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable,
+                            nextCursor = null,
+                        )
+                    P806DrilldownLandingDecision.CATALOG_ADVANCED ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch,
+                            nextCursor = null,
+                        )
+                    // A continuation whose page set belongs to another world: the old cursor was never
+                    // sent to the port. The rows stay; the marker stays so the host re-reads the
+                    // first page with a new token, which replaces the set whole.
+                    P806DrilldownLandingDecision.STALE_PROVENANCE ->
+                        state.copy(rowsLoading = true, nextCursor = null)
+                    // A matching active request answered a malformed payload — another ledger/window,
+                    // or a Success claiming totalCount == 0 while its page carries rows: the payload
+                    // is dropped whole and only this request ends, as a typed invalid state.
+                    P806DrilldownLandingDecision.PAYLOAD_REJECTED ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.InvalidState,
+                        )
+                    P806DrilldownLandingDecision.ACCEPTED -> applyReportDrilldownPage(state, event.read)
+                }
+            // P8-06 batch 3: the drilldown row's read-only detail entry (the account-flow entry's
+            // carried shape). Any in-flight page read's marker is dropped first, the sampled scroll
+            // rides this surface's own restore slot, and the WHOLE surface is carried inside the
+            // typed returnTo — so close returns the same page (rows/count/cursor/scroll preserved)
+            // and issues no read. The sub-surface entries render none (detailSubSurfaceEntriesVisible).
+            is P503UiEvent.SelectTransaction -> {
+                val carried = if (state.rowsLoading) state.copy(rowsLoading = false) else state
+                val carriedDrilldown = if (event.homeFlowScroll == null) carried else carried.copy(listScroll = event.homeFlowScroll)
+                P503AppState.TransactionDetail(
+                    overview = carriedDrilldown.overview,
+                    // originTab 填法：该字段在详情路径无任何消费者（reducer 不读、详情屏不接收）；
+                    // §2.4 只要求按入口所在 overview 的 selectedTab 合规填充 — 语义为零。
+                    originTab = carriedDrilldown.overview.selectedTab,
+                    transactionId = event.transactionId,
+                    detail = event.result,
+                    returnTo = TransactionDetailReturnTo.ReportDrilldown(carriedDrilldown),
+                )
+            }
+            // This surface's own restore slot is consumed exactly once (the account-flow shape).
+            P503UiEvent.ListScrollRestored ->
+                if (state.listScroll == null) state else state.copy(listScroll = null)
+            // 详情态同语义: the monthly cycle landing updates the carried overview in place; a typed
+            // failure leaves into the READ failure with this overview preserved as the
+            // monthlyOverview (the registered READ-loss residual, unchanged and not made reachable by
+            // this batch's entries — the page has no write entry).
+            is P503UiEvent.MonthlyActivityResult ->
+                when (val result = event.result) {
+                    is com.unifiedledger.application.MonthlyActivityResult.Success ->
+                        state.copy(
+                            overview =
+                                state.overview.copy(
+                                    monthlyActivity = result.activity,
+                                    selectableMonths = event.selectableMonths,
+                                    monthlyReloadRequired = false,
+                                ),
+                        )
+                    com.unifiedledger.application.MonthlyActivityResult.InvalidState,
+                    com.unifiedledger.application.MonthlyActivityResult.Unavailable,
+                    -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
+                }
+            // DEFENSIVE DEAD BRANCH (the AccountFlow precedent): `budgetEventAbsorbed` absorbs a
+            // budget landing for this state before dispatch (`carriedBudgetMonthOverview()` has no
+            // ReportDrilldown case), so this branch is unreachable by construction and kept only so
+            // the family stays closed here without changing the absorption table.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            // The refresh family keeps the surface and its preserved overview as it was when the
+            // surface opened (the account-flow absorb precedent; the fresh current state lands when
+            // the user closes back to the overview).
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P8-06 batch 3: applies one ACCEPTED drilldown read. A first page replaces the row set whole; a
+     * continuation appends its rows and replaces the count/cursor with the snapshot's own values. A
+     * success records its provenance (lease generation + query catalog version) and the read instant
+     * that the next continuation must match and the header may label. A typed failure keeps the
+     * rows/count (fail-closed) and the cursor — except a catalog mismatch, which resets the cursor so
+     * the retry reads the first page. A refused lease is the typed Unavailable; an unwired graph is
+     * its own state; a stale-provenance read keeps the rows and clears the cursor while the host
+     * re-reads the first page.
+     */
+    private fun applyReportDrilldownPage(
+        state: P503AppState.ReportDrilldown,
+        read: P806DrilldownPageRead,
+    ): P503AppState.ReportDrilldown =
+        when (read) {
+            is P806DrilldownPageRead.Landed ->
+                when (val result = read.result) {
+                    is com.unifiedledger.application.P806SnapshotResult.Success -> {
+                        val view = result.snapshot
+                        val firstPage = read.request.cursor == null
+                        state.copy(
+                            loadedRows = if (firstPage) view.page.rows else state.loadedRows + view.page.rows,
+                            totalCount = view.totalCount,
+                            nextCursor = view.page.nextCursor,
+                            rowsLoading = false,
+                            failure = null,
+                            unwired = false,
+                            loadedGeneration = read.capture.generation,
+                            loadedCatalogVersion = read.capture.catalogVersion,
+                            landedAsOf = read.capture.asOf,
+                        )
+                    }
+                    is com.unifiedledger.application.P806SnapshotResult.Failed ->
+                        state.copy(
+                            rowsLoading = false,
+                            failure = result.failure,
+                            nextCursor =
+                                if (result.failure == com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch) {
+                                    null
+                                } else {
+                                    state.nextCursor
+                                },
+                        )
+                }
+            is P806DrilldownPageRead.Refused ->
+                state.copy(rowsLoading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable)
+            is P806DrilldownPageRead.Unwired ->
+                state.copy(rowsLoading = false, unwired = true)
+            is P806DrilldownPageRead.StaleProvenance ->
+                state.copy(rowsLoading = true, nextCursor = null)
         }
 
     /**

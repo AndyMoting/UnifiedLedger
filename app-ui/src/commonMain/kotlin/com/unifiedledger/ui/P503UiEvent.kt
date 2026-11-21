@@ -656,6 +656,59 @@ sealed interface P503UiEvent {
      */
     data object RetireReportRegionForGraphSwitch : P503UiEvent
 
+    // ---- P8-06 batch 3 report drilldown (D-362 1/2; spec sections 3.7/3.9/3.10.4; zero formal effect) ----
+    // Discipline (table 6.2a): every event below is absorbed in every state outside its designed
+    // effect and throws nowhere; the central guard covers the family, so a late/stale dispatch can
+    // never reach `unhandled`.
+
+    /**
+     * Opens the full-screen report drilldown for [target] (the report period entry, a level-1
+     * category's 「全部明细」 entry or a level-2 category's own entry). [target] is the typed
+     * condition and carries its own resolved window; the host then requests the first page as a
+     * background read, so opening itself performs no IO and the reducer stays pure. Effect only on
+     * [P503AppState.OverviewEmpty] (the UI affords it only on an eligible report region); absorbed
+     * everywhere else.
+     */
+    data class OpenReportDrilldown(
+        val target: ReportDrilldownTarget,
+    ) : P503UiEvent
+
+    /**
+     * Closes the drilldown back to the exact preserved analysis overview (tab, report period cursor,
+     * report slot and the analysis page's scroll position kept). No read is dispatched: the
+     * read-only return starts no read (D-343 section 3.7.6). Effect only on
+     * [P503AppState.ReportDrilldown]; absorbed everywhere else.
+     */
+    data object CloseReportDrilldown : P503UiEvent
+
+    /**
+     * Requests one drilldown page: the first page on open, the explicit 加载更多 intent and the
+     * retry after a typed failure. [requestToken] is the HOST-assigned monotonic identity: it keeps
+     * increasing across closes and reopens (a per-surface counter would collide with a read still in
+     * flight), and the reducer stores it as the surface's current request identity — a token not
+     * newer than the stored one is absorbed with all three request fields unchanged. Effect on
+     * [P503AppState.ReportDrilldown] is the single-flight marker + the token (不切态 — the host
+     * action owns the read). Absorbed everywhere else.
+     */
+    data class RequestReportDrilldownPage(
+        val requestToken: Long,
+    ) : P503UiEvent
+
+    /**
+     * One drilldown-page read landed (P8-06 batch 3). It applies only when [read]'s request identity
+     * is still the surface's ACTIVE request (same token and same target) AND, for a landed read, its
+     * captured generation and catalog version match the values the host sampled on the main thread
+     * at landing time. A superseded landing changes nothing; a matching continuation whose page-set
+     * provenance no longer matches resets the cursor so the host re-reads the first page (which
+     * replaces the set whole); a refused lease and an unwired graph land their own typed faces.
+     * Absorbed in every state other than [P503AppState.ReportDrilldown].
+     */
+    data class ReportDrilldownPageLanded(
+        val read: P806DrilldownPageRead,
+        val currentGeneration: Generation?,
+        val currentCatalogVersion: Long?,
+    ) : P503UiEvent
+
     // ---- P8-01a i3a reconciliation events (D-308; spec sections 2.2/2.3/2.4/2.5/2.6) ----
     // Discipline (table 6.2a): every event below is absorbed in every state outside its designed
     // effect and throws nowhere; every pre-existing unlisted combination stays ISE (G-B).

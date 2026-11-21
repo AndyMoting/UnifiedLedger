@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
@@ -138,6 +140,7 @@ import com.unifiedledger.application.export.readable.ReadableLedgerExportResult
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CatalogItemKind
+import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
@@ -1534,6 +1537,111 @@ fun P503App(
     /** P8-06 batch b: the failure face's explicit retry — one read of the CURRENT period. */
     fun retryReportPeriod() {
         requestReport(period = null, explicit = true)
+    }
+
+    // ------------------------------------------------ P8-06 batch 3 report drilldown host surface
+
+    /**
+     * P8-06 batch 3 (D-362 1/2; spec section 3.7): the analysis page's scroll state, hoisted so the
+     * full-screen drilldown round trip loses neither the analysis page's position nor (on a READ
+     * failure) the retained page's position. Both [P503AnalysisScreen] call sites receive this ONE
+     * state.
+     */
+    val analysisScrollState = rememberScrollState()
+
+    /** Whether this graph wires the P806 drilldown read (a pure probe, so no dead entry renders). */
+    val drilldownWired = ledger.surfaces.p806Drilldown
+
+    /**
+     * P8-06 batch 3: the drilldown reads run through the owner's acquire-first lease order
+     * ([LedgerLeaseScope.leasedReportRead], the report seam's order).
+     */
+    val drilldownLease = remember(ledger) { LeaseScopeDrilldownSeam(ledger) }
+
+    /**
+     * P8-06 batch 3: the monotonic drilldown request-token sequence. It outlives the surface state,
+     * so a close + reopen hands out tokens newer than any read the previous open still carries.
+     */
+    val drilldownRequestSequence = remember(ledger) { P806DrilldownRequestSequence() }
+
+    /**
+     * P8-06 batch 3: starts one drilldown page read — the first page, 加载更多, the explicit retry
+     * and the host's stale-provenance first-page re-read all end here. The token is assigned here and
+     * the reducer stores it synchronously; the identity then binds the token, the ledger, the typed
+     * target and the cursor (plus the page set's provenance for a continuation). The read runs OFF
+     * the UI thread through the acquire-first lease and lands with the CURRENT generation/catalog
+     * version captured on the main thread.
+     */
+    fun startReportDrilldownRead() {
+        if (latestState.value !is P503AppState.ReportDrilldown) return
+        val requestToken = drilldownRequestSequence.next()
+        dispatch(P503UiEvent.RequestReportDrilldownPage(requestToken))
+        val requesting = latestState.value as? P503AppState.ReportDrilldown ?: return
+        if (!requesting.rowsLoading || requesting.pageRequestToken != requestToken) return
+        val cursor = requesting.nextCursor
+        val request =
+            P806DrilldownRequestIdentity(
+                token = requestToken,
+                ledgerId = requesting.overview.state.ledgerId,
+                target = requesting.target,
+                cursor = cursor,
+                pageSetGeneration = if (cursor == null) null else requesting.loadedGeneration,
+                pageSetCatalogVersion = if (cursor == null) null else requesting.loadedCatalogVersion,
+            )
+        scope.launch(Dispatchers.Default) {
+            val read = drilldownLease.read(request)
+            scope.launch {
+                dispatch(
+                    P503UiEvent.ReportDrilldownPageLanded(
+                        read = read,
+                        currentGeneration = ledger.activeGenerationForLanding(),
+                        currentCatalogVersion = ledger.currentCatalogVersion,
+                    ),
+                )
+                // A continuation whose page-set provenance no longer matched never sent its old
+                // cursor: the reducer kept the rows and left the request in flight with no cursor,
+                // and the host re-reads the FIRST page with a new token (which replaces the set).
+                val after = latestState.value as? P503AppState.ReportDrilldown
+                if (read is P806DrilldownPageRead.StaleProvenance &&
+                    read.request.cursor != null &&
+                    after != null &&
+                    after.rowsLoading &&
+                    after.nextCursor == null &&
+                    after.pageRequestToken == read.request.token
+                ) {
+                    startReportDrilldownRead()
+                }
+            }
+        }
+    }
+
+    /** The user-intent drilldown page request: first page, 加载更多, or the explicit retry. */
+    fun requestReportDrilldownPage() {
+        val current = latestState.value as? P503AppState.ReportDrilldown ?: return
+        // 单飞: a request already in flight is not re-issued from this entry (the footer hides the
+        // affordance). The stale-provenance re-read goes through startReportDrilldownRead directly.
+        if (current.rowsLoading) return
+        // The walk ended and nothing failed: nothing more to request.
+        if (!current.hasMorePages && current.totalCount != null && current.failure == null) return
+        startReportDrilldownRead()
+    }
+
+    /** Opens the period drilldown (「本期全部明细」) for the report region's current window. */
+    fun openPeriodReportDrilldown() {
+        if (!drilldownWired) return
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val target = p806DrilldownPeriodTarget(overview.reportRegion) ?: return
+        dispatch(P503UiEvent.OpenReportDrilldown(target))
+        startReportDrilldownRead()
+    }
+
+    /** Opens one category drilldown (a level-1 「全部明细」 or a level-2 row's own entry). */
+    fun openCategoryReportDrilldown(categoryId: CategoryId, categoryName: String) {
+        if (!drilldownWired) return
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        val target = p806DrilldownCategoryTarget(overview.reportRegion, categoryId, categoryName) ?: return
+        dispatch(P503UiEvent.OpenReportDrilldown(target))
+        startReportDrilldownRead()
     }
 
     /**
@@ -5442,6 +5550,11 @@ fun P503App(
                                                         onUpdateCustomRange = ::updateReportCustomRange,
                                                         onCommitCustomRange = ::commitReportCustomRange,
                                                         onRetry = ::retryReportPeriod,
+                                                        // P8-06 batch 3 (D-362 1): the drilldown entries,
+                                                        // rendered only with a wired read AND an eligible slot.
+                                                        drilldownWired = drilldownWired,
+                                                        onOpenPeriodDrilldown = ::openPeriodReportDrilldown,
+                                                        onOpenCategoryDrilldown = ::openCategoryReportDrilldown,
                                                     )
                                                 }
                                             } else {
@@ -5461,6 +5574,10 @@ fun P503App(
                                             onAnalysisMonthShift = ::analysisMonthShift,
                                             budgetRegion = budgetRegionSlot,
                                             reportRegion = reportRegionSlot,
+                                            // P8-06 batch 3: the same hoisted scroll state the retained
+                                            // READ-failure page uses; opening/closing the full-screen
+                                            // drilldown keeps the analysis position.
+                                            scrollState = analysisScrollState,
                                         )
                                     }
                                 }
@@ -5557,6 +5674,35 @@ fun P503App(
                             // F6/V-10: the same hoisted-scroll mechanism as the queue and the
                             // accounts list, so 返回 from the queue restores this surface's position.
                             registerListScroll = { accountFlowListState = it },
+                            restoreScrollTo = current.listScroll,
+                            onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
+                        )
+                    // P8-06 batch 3 (D-362 1/2; spec sections 3.7/3.9/3.10.4): the read-only report
+                    // drilldown — ONE full-screen page for the period entry, a level-1 「全部明细」
+                    // entry and a level-2 row. Zero write entries: 返回, the page reads and each row's
+                    // read-only transaction detail (which carries this surface whole as the typed
+                    // return target, so close restores the same page and scroll with no re-read).
+                    is P503AppState.ReportDrilldown ->
+                        P503ReportDrilldownScreen(
+                            state = current,
+                            accountNames = current.overview.state.accountNames,
+                            onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            onLoadMore = ::requestReportDrilldownPage,
+                            onRetryLoadMore = ::requestReportDrilldownPage,
+                            onSelectTransaction =
+                                if (ledgerViewWired) {
+                                    { transactionId, sampledScroll ->
+                                        // Re-read the latest state at click time (the account-flow
+                                        // shape), so a page landed since the last recomposition is
+                                        // carried whole.
+                                        val drilldown = latestState.value as? P503AppState.ReportDrilldown
+                                        if (drilldown != null) {
+                                            selectTransaction(transactionId, sampledScroll, TransactionDetailReturnTo.ReportDrilldown(drilldown))
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
                             restoreScrollTo = current.listScroll,
                             onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
                         )
@@ -6201,6 +6347,9 @@ fun P503App(
                                         flowRows = flowRows,
                                         summarizeActivity = ledger.summarizeActivity,
                                         onRetryRefresh = retryRefresh,
+                                        // P8-06 batch 3: the SAME hoisted scroll state as the live
+                                        // analysis page, so the retained page keeps its position.
+                                        scrollState = analysisScrollState,
                                     )
                                 } else {
                                     P503InfrastructureReadScreen(onRetryRefresh = retryRefresh)
@@ -6240,6 +6389,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // P8-00 b3 (V-5): the account-flow surface returns to the preserved overview (the C03
         // semantics; the sampled origin-list position rides the close).
         is P503AppState.AccountFlow -> true
+        // P8-06 batch 3 (D-362 1): the report drilldown closes back to the preserved analysis page
+        // (its report slot and hoisted scroll position kept; a read-only return starts no read).
+        is P503AppState.ReportDrilldown -> true
         // P8-01a i3a (spec section 2.2): the queue returns to the carried account flow, and the
         // candidate/confirm/audit surface returns to its carried queue (or the overview for entry B).
         is P503AppState.ReconciliationQueue -> true
@@ -6604,6 +6756,9 @@ private fun P503RetainedOverviewFailureScreen(
     flowRows: FlowRowsView?,
     summarizeActivity: SummarizeLedgerActivity,
     onRetryRefresh: () -> Unit,
+    // P8-06 batch 3 (D-362 1/2): the analysis position hoisted by [P503App]; the retained page and
+    // the live page share it, so a drilldown round trip never moves the scroll.
+    scrollState: ScrollState,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -6658,6 +6813,7 @@ private fun P503RetainedOverviewFailureScreen(
                     onSelectMonth = {},
                     onAnalysisMonthShift = {},
                     interactionsEnabled = false,
+                    scrollState = scrollState,
                 )
             // The management surface is command-driven and has no transition while the READ
             // failure stands; keep an honest note instead of a dead management form.

@@ -166,6 +166,27 @@ class P503CorrectionPresentationTest {
     }
 
     @Test
+    fun theReportDrilldownEntryAlsoHidesAllThreeSubSurfaces() {
+        // P8-06 batch 3 (2026-11-21 user ruling): a detail entered from the report drilldown is the
+        // same strictly read-only detour — none of edit/void/annotation edit.
+        val drilldownEntry =
+            TransactionDetailReturnTo.ReportDrilldown(
+                P503AppState.ReportDrilldown(
+                    overview =
+                        P503AppState.OverviewEmpty(
+                            LedgerCurrentState(LedgerId("ledger-returnto-drilldown"), transactions = emptyList(), balances = emptyList()),
+                            selectedTab = P503Tab.ANALYSIS,
+                        ),
+                    target = ReportDrilldownTarget.Period(com.unifiedledger.application.P806Window(startEpochNanos = 1L, endEpochNanos = 2L)),
+                ),
+            )
+        assertEquals(
+            DetailSubSurfaceEntries(edit = false, void = false, annotationEdit = false),
+            detailSubSurfaceEntriesVisible(drilldownEntry),
+        )
+    }
+
+    @Test
     fun theDetailSubSurfaceEntryGateIsOrthogonalToTheP705SupportMatrix() {
         // The two gates compose at the render site (entry gate AND capability gate); this test pins
         // the orthogonality so the triple can never silently collapse into the matrix's two fields

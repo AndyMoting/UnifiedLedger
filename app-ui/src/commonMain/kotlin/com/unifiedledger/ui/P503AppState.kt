@@ -8,6 +8,9 @@ import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.P806SnapshotFailure
+import com.unifiedledger.application.P806TransactionCursor
+import com.unifiedledger.application.P806Window
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.SearchFailureCode
 import com.unifiedledger.application.TagMerchantFilterCursor
@@ -464,8 +467,10 @@ sealed interface P503AppState {
          * [TransactionDetailReturnTo.AccountsFlow] = the account-flow entry (close returns the
          * carried flow whole: loaded rows, totalCount and the sampled scroll preserved);
          * [TransactionDetailReturnTo.Search] = the search-result entry (close returns the carried
-         * search surface whole: loaded pages, totalCount/cursor and the sampled scroll preserved).
-         * The frozen domain is THREE values — there is NO `Overview(...)` variant, the HOME target
+         * search surface whole: loaded pages, totalCount/cursor and the sampled scroll preserved);
+         * [TransactionDetailReturnTo.ReportDrilldown] = the report-drilldown entry (close returns
+         * the carried drilldown whole: loaded rows, count, cursor and scroll preserved).
+         * The frozen domain is FOUR values — there is NO `Overview(...)` variant, the HOME target
          * IS `null` (D-360 Q1). The carried write-back sites share
          * [resolveTransactionDetailReturnTo] as their overview identity map; close returns the
          * TARGET SURFACE itself (`when (returnTo)` in the reducer, the ReconciliationBackTarget
@@ -547,6 +552,63 @@ sealed interface P503AppState {
         val listScroll: ListScrollPosition? = null,
     ) : P503AppState {
         /** Whether the account postings walk may still continue. */
+        val hasMorePages: Boolean get() = nextCursor != null
+    }
+
+    /**
+     * P8-06 batch 3 (D-362 1/2; spec sections 3.7/3.9/3.10.4): the read-only report drilldown — ONE
+     * full-screen secondary surface shared by the report period entry, a level-1 category's
+     * 「全部明细」 entry and a level-2 category's own entry. [overview] is carried so every exit
+     * restores the exact analysis page (tab, period cursor, report slot and its scroll position);
+     * [target] is the typed condition the page was opened for (the period window, or one category
+     * subtree of that window).
+     *
+     * The rows are the ordinary detail page read through one P806 drilldown snapshot per request
+     * ([com.unifiedledger.application.P806DrilldownQuery], page 50, its frozen keyset order and
+     * cursor). [loadedRows] accumulates the landed pages (no re-sort: the read's order is the
+     * display order, day-grouped by the screen); [totalCount] is the snapshot's own exact count
+     * (`null` = no success yet, never a fabricated zero). [nextCursor] is the P806 continuation
+     * cursor (`null` = the last page, or no success yet). [failure] is the last request's typed
+     * failure: the loaded rows/count stay visible beside it (fail-closed, never a silent truncation)
+     * and the cursor is kept so a retry re-requests the same page — EXCEPT after a generation or
+     * catalog advance, where the cursor is cleared so the retry reads the first page. [unwired]
+     * marks a graph without the drilldown read.
+     *
+     * [pageRequestToken] is the HOST-assigned monotonic request identity: it outlives this state, so
+     * a close + reopen keeps issuing newer tokens, and a landing applies only when its capture still
+     * matches. [loadedGeneration]/[loadedCatalogVersion] are the provenance of the loaded page set; a
+     * continuation may only run and only append while both still match. [landedAsOf] is the read
+     * instant shown in the header (`null` = the clock was unusable; this query has no clock
+     * dependency, so the read still runs and the header simply carries no time). [listScroll] is this
+     * page's OWN one-shot restore slot (the read-only detail round trip), consumed once by
+     * [P503UiEvent.ListScrollRestored]; it is never the analysis page's scroll position.
+     */
+    data class ReportDrilldown(
+        val overview: OverviewEmpty,
+        val target: ReportDrilldownTarget,
+        /** The landed detail rows, in the read's own keyset order (day-grouped by the screen). */
+        val loadedRows: List<LedgerEntryRow> = emptyList(),
+        /** The last successful snapshot's exact transaction count (`null` = never succeeded). */
+        val totalCount: Int? = null,
+        /** The P806 continuation cursor (`null` = last page, or no success yet). */
+        val nextCursor: P806TransactionCursor? = null,
+        /** True while one drilldown-page read is in flight (a duplicate request is absorbed). */
+        val rowsLoading: Boolean = false,
+        /** The last request's typed failure; the loaded rows/count stay beside it. */
+        val failure: P806SnapshotFailure? = null,
+        /** This graph wires no P806 drilldown query: an explicit state, never an empty result. */
+        val unwired: Boolean = false,
+        /** The host's monotonic request identity of the drilldown-page read (see the KDoc). */
+        val pageRequestToken: Long = 0,
+        /** The provenance of the loaded page set (see the KDoc). */
+        val loadedGeneration: Generation? = null,
+        val loadedCatalogVersion: Long? = null,
+        /** The read instant of the last accepted landing (`null` = no usable clock). */
+        val landedAsOf: Instant? = null,
+        /** This page's one-shot restore slot for the read-only detail round trip. */
+        val listScroll: ListScrollPosition? = null,
+    ) : P503AppState {
+        /** Whether the drilldown page walk may still continue. */
         val hasMorePages: Boolean get() = nextCursor != null
     }
 
@@ -1130,8 +1192,36 @@ sealed interface P503AppState {
 }
 
 /**
- * P8-06 typed returnTo 批 1 (D-360 Q1/D-361) and 批 2: the typed return target of a
- * [P503AppState.TransactionDetail]. The frozen domain is THREE values:
+ * P8-06 batch 3 (D-362 1; spec sections 3.7/3.9/3.10.4): the typed condition one
+ * [P503AppState.ReportDrilldown] page is read for.
+ *
+ * [Period] is the report region's own resolved window (「本期全部明细」); [Category] adds one
+ * category subtree predicate (a level-1 「全部明细」 entry or a level-2 row's own entry) — the
+ * window is the same, the application's drilldown predicate adds the optional category EXISTS.
+ * This batch freezes exactly these two variants: the day-bucket variant belongs to the calendar
+ * batch, and no third unreachable value is declared. Every `when` over this type is exhaustive and
+ * carries no `else`.
+ */
+sealed interface ReportDrilldownTarget {
+    /** The period window the report slot resolved (the shared, frozen report geometry). */
+    val window: P806Window
+
+    /** 「本期全部明细」: the whole period window, no category predicate. */
+    data class Period(
+        override val window: P806Window,
+    ) : ReportDrilldownTarget
+
+    /** One category subtree of that window (a level-1 全部明细 or a level-2 自身明细 entry). */
+    data class Category(
+        override val window: P806Window,
+        val categoryId: CategoryId,
+        val categoryName: String,
+    ) : ReportDrilldownTarget
+}
+
+/**
+ * P8-06 typed returnTo 批 1 (D-360 Q1/D-361), 批 2 and P8-06 batch 3 (D-362 1): the typed return
+ * target of a [P503AppState.TransactionDetail]. The frozen domain is FOUR values:
  * - `null` = the HOME entry — the return target is the detail's own [P503AppState.TransactionDetail.overview]
  *   (today's behavior, byte-identical);
  * - [AccountsFlow] = the account-flow entry — the return target is the carried
@@ -1139,7 +1229,10 @@ sealed interface P503AppState {
  *   travel inside the carried instance; no separate scroll field exists, D-360 Q1);
  * - [Search] = the search-result entry — the return target is the carried
  *   [P503AppState.Search] (its loaded pages, totalCount/cursor and sampled
- *   [P503AppState.Search.listScroll] travel inside the carried instance; no separate scroll field).
+ *   [P503AppState.Search.listScroll] travel inside the carried instance; no separate scroll field);
+ * - [ReportDrilldown] = the report drilldown entry — the return target is the carried
+ *   [P503AppState.ReportDrilldown] (its loaded rows, count, cursor and sampled
+ *   [P503AppState.ReportDrilldown.listScroll] travel inside the carried instance).
  *
  * There is deliberately NO `Overview(...)` variant: HOME has exactly one encoding, `null`.
  */
@@ -1153,13 +1246,19 @@ sealed interface TransactionDetailReturnTo {
     data class Search(
         val carriedSearch: P503AppState.Search,
     ) : TransactionDetailReturnTo
+
+    /** Return to this exact report-drilldown surface, carried whole. */
+    data class ReportDrilldown(
+        val carriedDrilldown: P503AppState.ReportDrilldown,
+    ) : TransactionDetailReturnTo
 }
 
 /**
  * P8-06 typed returnTo 批 1 (D-361) and 批 2: the overview IDENTITY MAP. It answers one question
  * only — which `OverviewEmpty` does a carried landing belong to, given a detail: `null` (HOME
  * entry) → the detail's own overview; [TransactionDetailReturnTo.AccountsFlow] → the carried
- * flow's overview; [TransactionDetailReturnTo.Search] → the carried search's overview. Its real
+ * flow's overview; [TransactionDetailReturnTo.Search] → the carried search's overview;
+ * [TransactionDetailReturnTo.ReportDrilldown] → the carried drilldown's overview. Its real
  * consumer is the carrier construction point
  * ([P503AppState.carriedReportCarrier]'s TransactionDetail branch), where the design invariant
  * "TransactionDetail.overview is always the current value of the overview the close will return"
@@ -1176,6 +1275,7 @@ internal fun resolveTransactionDetailReturnTo(
         null -> detail.overview
         is TransactionDetailReturnTo.AccountsFlow -> returnTo.carriedFlow.overview
         is TransactionDetailReturnTo.Search -> returnTo.carriedSearch.overview
+        is TransactionDetailReturnTo.ReportDrilldown -> returnTo.carriedDrilldown.overview
     }
 
 /**
@@ -1183,7 +1283,8 @@ internal fun resolveTransactionDetailReturnTo(
  * identity map ([resolveTransactionDetailReturnTo], embedded). It puts [overview] into BOTH places
  * the detail carries an overview — the detail's own field (the HOME return target, and the source
  * the failure branch preserves) AND the carried target surface's overview (the
- * [TransactionDetailReturnTo.AccountsFlow] or [TransactionDetailReturnTo.Search] return target) —
+ * [TransactionDetailReturnTo.AccountsFlow], [TransactionDetailReturnTo.Search] or
+ * [TransactionDetailReturnTo.ReportDrilldown] return target) —
  * as the SAME instance, so the surface the close returns never holds a payload another site forgot
  * to write. The carried surface's own fields (loaded rows/pages, counts, cursors, listScroll) are
  * untouched by the copy.
@@ -1194,6 +1295,8 @@ internal fun P503AppState.TransactionDetail.withResolvedOverview(overview: P503A
             copy(overview = overview, returnTo = target.copy(carriedFlow = target.carriedFlow.copy(overview = overview)))
         is TransactionDetailReturnTo.Search ->
             copy(overview = overview, returnTo = target.copy(carriedSearch = target.carriedSearch.copy(overview = overview)))
+        is TransactionDetailReturnTo.ReportDrilldown ->
+            copy(overview = overview, returnTo = target.copy(carriedDrilldown = target.carriedDrilldown.copy(overview = overview)))
         null -> copy(overview = overview)
     }
 
@@ -1402,6 +1505,13 @@ internal fun P503AppState.carriedReportCarrier(): ReportCarrier? =
             ReportCarrier(resolveTransactionDetailReturnTo(carrier.returnTo, carrier)) { overview -> carrier.withResolvedOverview(overview) }
         }
         is P503AppState.AccountFlow -> {
+            val carrier = this
+            ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
+        }
+        // P8-06 batch 3 (D-362 1; the taskbook's frozen §2.4 shape): the report drilldown carries
+        // the analysis page's overview, so a report landing arriving while the drilldown is open
+        // converges the slot the close returns instead of leaving it loading.
+        is P503AppState.ReportDrilldown -> {
             val carrier = this
             ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
         }
