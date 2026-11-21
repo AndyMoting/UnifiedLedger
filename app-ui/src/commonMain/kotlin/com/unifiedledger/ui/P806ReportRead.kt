@@ -53,12 +53,10 @@ data class P806ReportRequestIdentity(
 )
 
 /** The ordered currency axis of [this] payload; the empty axis when nothing has landed. */
-internal fun P806ReportView?.p806CurrencyAxis(): List<CurrencyUnit> =
-    this?.currencies?.map { row -> row.currency }.orEmpty()
+internal fun P806ReportView?.p806CurrencyAxis(): List<CurrencyUnit> = this?.currencies?.map { row -> row.currency }.orEmpty()
 
 /** The per-currency payload rows of [this] payload, keyed by currency. */
-internal fun P806ReportView?.p806CurrencyPayloads(): Map<CurrencyUnit, P806CurrencyView> =
-    this?.currencies?.associateBy { row -> row.currency }.orEmpty()
+internal fun P806ReportView?.p806CurrencyPayloads(): Map<CurrencyUnit, P806CurrencyView> = this?.currencies?.associateBy { row -> row.currency }.orEmpty()
 
 /**
  * The identity of the read for [slot]'s already-accepted request: the token, the ledger, the
