@@ -28,7 +28,13 @@ internal fun p806ReportDrilldownEntryVisible(
  * report period read used, never a second resolution.
  */
 internal fun p806DrilldownPeriodTarget(slot: P806ReportRegionState?): ReportDrilldownTarget.Period? {
-    val window = slot?.takeIf { candidate -> p806ReportSlotIsEligible(candidate) }?.landed?.period?.window ?: return null
+    val window =
+        slot
+            ?.takeIf { candidate -> p806ReportSlotIsEligible(candidate) }
+            ?.landed
+            ?.period
+            ?.window
+            ?: return null
     return ReportDrilldownTarget.Period(window)
 }
 
@@ -43,7 +49,13 @@ internal fun p806DrilldownCategoryTarget(
     categoryId: CategoryId,
     categoryName: String,
 ): ReportDrilldownTarget.Category? {
-    val window = slot?.takeIf { candidate -> p806ReportSlotIsEligible(candidate) }?.landed?.period?.window ?: return null
+    val window =
+        slot
+            ?.takeIf { candidate -> p806ReportSlotIsEligible(candidate) }
+            ?.landed
+            ?.period
+            ?.window
+            ?: return null
     return ReportDrilldownTarget.Category(window = window, categoryId = categoryId, categoryName = categoryName)
 }
 

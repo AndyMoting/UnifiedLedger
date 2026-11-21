@@ -1636,7 +1636,10 @@ fun P503App(
     }
 
     /** Opens one category drilldown (a level-1 「全部明细」 or a level-2 row's own entry). */
-    fun openCategoryReportDrilldown(categoryId: CategoryId, categoryName: String) {
+    fun openCategoryReportDrilldown(
+        categoryId: CategoryId,
+        categoryName: String,
+    ) {
         if (!drilldownWired) return
         val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
         val target = p806DrilldownCategoryTarget(overview.reportRegion, categoryId, categoryName) ?: return
