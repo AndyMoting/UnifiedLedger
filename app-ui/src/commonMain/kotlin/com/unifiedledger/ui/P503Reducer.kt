@@ -514,9 +514,11 @@ class P503ReducerImpl(
     }
 
     /**
-     * P8-06 batch b (D-343 section 3.7): the ONE place a report landing changes an overview. Only
-     * the slot's ACTIVE request can land (a superseded token, another period or another ledger is a
-     * no-op); a matching request whose generation/catalog advanced ends only its loading and keeps
+     * P8-06 batch b (D-343 section 3.7; D-362 section 4): the ONE place a report landing changes an
+     * overview. Only the slot's ACTIVE request can land (a superseded token, another period,
+     * another ledger, or a request whose issued currency axis / per-currency rows no longer match
+     * the slot's current payload is a no-op); a matching request whose
+     * generation/catalog advanced ends only its loading and keeps
      * the last success labelled as old context; a rejected payload or a typed read failure is
      * carried as the failure after ending that request. A success replaces the payload WHOLE and
      * anchors the requested period on the resolved window, so the week/month/year cursors step from
@@ -530,6 +532,10 @@ class P503ReducerImpl(
         val read = event.read
         return when (p806ReportLandingDecision(overview, read, event.currentGeneration, event.currentCatalogVersion)) {
             P806ReportLandingDecision.STALE_REQUEST -> overview
+            // P8-06 batch 5 (D-362 section 4): the payload context the request was issued against is
+            // no longer the slot's current one. Same whole-block drop as a stale request: the slot,
+            // its payload and its loading marker stay exactly as they were.
+            P806ReportLandingDecision.STALE_CONTEXT -> overview
             // Every branch below CONCLUDES the fenced request, so the payload stops being write-stale
             // (the failure or the success now explains it); a stale request that matches nothing
             // keeps the stale mark, so old data can never read as current meanwhile.
