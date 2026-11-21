@@ -671,6 +671,12 @@ sealed interface P503UiEvent {
      */
     data class OpenReportDrilldown(
         val target: ReportDrilldownTarget,
+        /**
+         * P8-06 batch 4 (D-362 1): the calendar position sampled at a DAY click, carried into the
+         * calendar the detail returns to. `null` on the report-region entries (batch 3 semantics
+         * unchanged).
+         */
+        val originCalendarScroll: ListScrollPosition? = null,
     ) : P503UiEvent
 
     /**
@@ -708,6 +714,61 @@ sealed interface P503UiEvent {
         val currentGeneration: Generation?,
         val currentCatalogVersion: Long?,
     ) : P503UiEvent
+
+    // ---- P8-06 batch 4 monthly calendar (D-362 1; spec sections 3.7/3.8/3.10; zero formal effect) ----
+    // Discipline (table 6.2a): every event below is absorbed in every state outside its designed
+    // effect and throws nowhere; the central guard covers the family, so a late/stale dispatch can
+    // never reach `unhandled`.
+
+    /**
+     * Opens the full-screen monthly calendar for [month] — the host's resolved initial month
+     * (`overview.selectedMonth ?: resolvedCurrentMonth`). The reducer only carries the overview and
+     * seeds the calendar's OWN cursor; the host then requests the month as a background read, so
+     * opening itself performs no IO. [month] is never written back to the overview's shared cursor.
+     * Effect only on [P503AppState.OverviewEmpty]; absorbed everywhere else.
+     */
+    data class OpenCalendar(
+        val month: kotlinx.datetime.YearMonth,
+    ) : P503UiEvent
+
+    /**
+     * Moves the calendar's OWN month cursor (‹ / ›). It writes no overview field and dispatches no
+     * `SelectMonth`; the host then mints a new request token and reads the new month. A same-month
+     * selection changes nothing. Effect only on [P503AppState.Calendar]; absorbed everywhere else.
+     */
+    data class SelectCalendarMonth(
+        val month: kotlinx.datetime.YearMonth,
+    ) : P503UiEvent
+
+    /**
+     * Requests the calendar's current month: the first read on open, a month switch and the
+     * explicit retry. [requestToken] is the HOST-assigned monotonic identity: a token not newer than
+     * the stored one is absorbed unchanged. Effect on [P503AppState.Calendar] is the single-flight
+     * marker + the token (不切态 — the host action owns the read); absorbed everywhere else.
+     */
+    data class RequestCalendarMonth(
+        val requestToken: Long,
+    ) : P503UiEvent
+
+    /**
+     * One calendar-month read landed. It applies only while [read]'s token is still the surface's
+     * ACTIVE request, its month is still the cursor, and its capture matches the generation/catalog
+     * version the host sampled on the main thread at landing time. A late payload from an old
+     * token, a different month, an old generation or an advanced catalog is dropped whole;
+     * a matching payload that is not one consistent month snapshot is a typed invalid state.
+     * Absorbed in every state other than [P503AppState.Calendar].
+     */
+    data class CalendarMonthLanded(
+        val read: P806CalendarRead,
+        val currentGeneration: Generation?,
+        val currentCatalogVersion: Long?,
+    ) : P503UiEvent
+
+    /**
+     * Closes the calendar back to the exact preserved overview. No read is dispatched. Effect only
+     * on [P503AppState.Calendar]; absorbed everywhere else.
+     */
+    data object CloseCalendar : P503UiEvent
 
     // ---- P8-01a i3a reconciliation events (D-308; spec sections 2.2/2.3/2.4/2.5/2.6) ----
     // Discipline (table 6.2a): every event below is absorbed in every state outside its designed

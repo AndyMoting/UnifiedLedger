@@ -89,6 +89,7 @@ object P806Folds {
                 day.postingTotals.forEach(accumulator::add)
                 P806CalendarDayView(
                     date = day.date,
+                    window = day.window,
                     currencies =
                         snapshot.currencyAxis.map { currency ->
                             val positive = accumulator.positiveExpense[currency] ?: 0L

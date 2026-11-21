@@ -15,6 +15,8 @@ import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionVersionId
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -547,5 +549,35 @@ class P806DrilldownReducerTest {
         assertSame(state.overview, failed.monthlyOverview)
         // The refresh family is absorbed (the fresh current state lands when the overview returns).
         assertSame(state, reducer.reduce(state, P503UiEvent.RefreshFailed))
+    }
+
+    @Test
+    fun aDayTargetCarriesItsCalendarReturnAndCloseRestoresThatExactCalendar() {
+        // P8-06 batch 4 (D-362 1): a day detail opened from the calendar returns the calendar the
+        // user left — same month, payload and scroll — while period/category targets keep the
+        // batch-3 overview return (the next test).
+        val source = overview()
+        val calendar =
+            P503AppState.Calendar(
+                overview = source,
+                month = YearMonth(2026, kotlinx.datetime.Month.NOVEMBER),
+                listScroll = ListScrollPosition(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = 320),
+            )
+        val dayTarget = ReportDrilldownTarget.Day(window = window, date = LocalDate(2026, 11, 5))
+        val day = P503AppState.ReportDrilldown(overview = source, target = dayTarget, returnToCalendar = calendar)
+        assertSame(calendar, reducer.reduce(day, P503UiEvent.CloseReportDrilldown))
+        assertSame(calendar, reducer.reduce(day, P503UiEvent.Back))
+        // A day target is still the shared page's target: the header names it and it reads the same
+        // window through the drilldown query.
+        assertEquals(dayTarget, day.target)
+        assertEquals(dayTarget.window, day.target.window)
+    }
+
+    @Test
+    fun aPeriodTargetWithoutACalendarReturnKeepsTheOriginalOverviewReturn() {
+        val overview = overview()
+        val period = P503AppState.ReportDrilldown(overview = overview, target = target)
+        assertSame(overview, reducer.reduce(period, P503UiEvent.CloseReportDrilldown))
+        assertSame(overview, reducer.reduce(period, P503UiEvent.Back))
     }
 }

@@ -314,9 +314,17 @@ data class P806ReportView(
     val dailyAverageNotApplicable: Boolean get() = period == null
 }
 
-/** One calendar day: per-currency amounts plus the day's global contributing transaction count. */
+/**
+ * One calendar day: per-currency amounts plus the day's global contributing transaction count.
+ *
+ * P8-06 batch 4 (D-362 1): [window] is the day's OWN half-open local window, carried from the read
+ * snapshot unchanged. The day-detail entry hands this window to the shared drilldown read, so the
+ * UI never recomputes a timezone boundary or a day length (the reporting zone and its historical DST
+ * rules stay in the application layer).
+ */
 data class P806CalendarDayView(
     val date: LocalDate,
+    val window: P806Window,
     val currencies: List<P806CalendarCurrencyView>,
     val transactionCount: Int,
 )

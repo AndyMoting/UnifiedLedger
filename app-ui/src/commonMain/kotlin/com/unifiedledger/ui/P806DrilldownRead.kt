@@ -153,6 +153,9 @@ internal fun readP806DrilldownPage(
         when (val target = request.target) {
             is ReportDrilldownTarget.Period -> null
             is ReportDrilldownTarget.Category -> target.categoryId
+            // P8-06 batch 4 (D-362 1): a day bucket is one window with no category predicate — the
+            // read's own window is already the target's, so only the optional category differs.
+            is ReportDrilldownTarget.Day -> null
         }
     val result = query.query(request.target.window, categoryId = categoryId, cursor = request.cursor)
     return P806DrilldownPageRead.Landed(

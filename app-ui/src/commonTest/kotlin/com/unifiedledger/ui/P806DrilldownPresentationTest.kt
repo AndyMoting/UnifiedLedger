@@ -195,6 +195,13 @@ class P806DrilldownPresentationTest {
         )
         assertNull(drilldown(landedAsOf = null).landedAsOf)
         assertNotNull(drilldown(landedAsOf = asOf).landedAsOf)
+        // P8-06 batch 4: a calendar day target names the day itself.
+        assertEquals(
+            "2026-11-05 明细",
+            p806DrilldownHeaderLabel(
+                drilldown(target = ReportDrilldownTarget.Day(window = window, date = LocalDate(2026, 11, 5))),
+            ),
+        )
     }
 
     // ---------------------------------------------------------------- the fail-closed row/footer helpers
