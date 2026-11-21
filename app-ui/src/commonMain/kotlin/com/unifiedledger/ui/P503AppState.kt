@@ -459,14 +459,17 @@ sealed interface P503AppState {
          */
         val versionHistory: com.unifiedledger.application.TransactionVersionHistoryResult? = null,
         /**
-         * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): the typed return target of this detail.
-         * `null` = the HOME entry (close returns [overview], today's behavior unchanged);
+         * P8-06 typed returnTo 批 1 (D-360 Q1/D-361) and 批 2: the typed return target of this
+         * detail. `null` = the HOME entry (close returns [overview], today's behavior unchanged);
          * [TransactionDetailReturnTo.AccountsFlow] = the account-flow entry (close returns the
-         * carried flow whole: loaded rows, totalCount and the sampled scroll preserved). The
-         * frozen domain is TWO values — there is NO `Overview(...)` variant, the HOME target IS
-         * `null` (D-360 Q1). The carried write-back sites share [resolveTransactionDetailReturnTo]
-         * as their overview identity map; close returns the TARGET SURFACE itself
-         * (`when (returnTo)` in the reducer, the ReconciliationBackTarget precedent).
+         * carried flow whole: loaded rows, totalCount and the sampled scroll preserved);
+         * [TransactionDetailReturnTo.Search] = the search-result entry (close returns the carried
+         * search surface whole: loaded pages, totalCount/cursor and the sampled scroll preserved).
+         * The frozen domain is THREE values — there is NO `Overview(...)` variant, the HOME target
+         * IS `null` (D-360 Q1). The carried write-back sites share
+         * [resolveTransactionDetailReturnTo] as their overview identity map; close returns the
+         * TARGET SURFACE itself (`when (returnTo)` in the reducer, the ReconciliationBackTarget
+         * precedent).
          *
          * `originTab` 填法说明（勿读出含义）：账户面进入时 `originTab` 填入口所在 overview 的
          * `selectedTab`，仅仅因为 `TransactionDetail.originTab` 是必填字段、而该字段在详情路径
@@ -1086,7 +1089,13 @@ sealed interface P503AppState {
         /** R1: a read was dispatched for the current condition; cleared by every page reset. */
         val readIssued: Boolean = false,
         val requestToken: Long = 0L,
-        /** Registered for the future detail route; never filled today (no secondary surface opens from search). */
+        /**
+         * P8-06 typed returnTo 批 2: the restore slot of this surface's OWN list position. The
+         * reducer's synchronous `SelectTransaction` transition writes the position sampled when the
+         * row opened the read-only detail, so the carried [P503AppState.Search] returned by close
+         * lands on the same row; the screen consumes the slot once through
+         * [P503UiEvent.ListScrollRestored] after it applied the restore.
+         */
         val listScroll: ListScrollPosition? = null,
     ) : P503AppState
 
@@ -1121,13 +1130,16 @@ sealed interface P503AppState {
 }
 
 /**
- * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): the typed return target of a
- * [P503AppState.TransactionDetail]. The frozen domain is TWO values:
+ * P8-06 typed returnTo 批 1 (D-360 Q1/D-361) and 批 2: the typed return target of a
+ * [P503AppState.TransactionDetail]. The frozen domain is THREE values:
  * - `null` = the HOME entry — the return target is the detail's own [P503AppState.TransactionDetail.overview]
  *   (today's behavior, byte-identical);
  * - [AccountsFlow] = the account-flow entry — the return target is the carried
  *   [P503AppState.AccountFlow] (its loaded rows, totalCount and sampled [P503AppState.AccountFlow.listScroll]
- *   travel inside the carried instance; no separate scroll field exists, D-360 Q1).
+ *   travel inside the carried instance; no separate scroll field exists, D-360 Q1);
+ * - [Search] = the search-result entry — the return target is the carried
+ *   [P503AppState.Search] (its loaded pages, totalCount/cursor and sampled
+ *   [P503AppState.Search.listScroll] travel inside the carried instance; no separate scroll field).
  *
  * There is deliberately NO `Overview(...)` variant: HOME has exactly one encoding, `null`.
  */
@@ -1136,16 +1148,22 @@ sealed interface TransactionDetailReturnTo {
     data class AccountsFlow(
         val carriedFlow: P503AppState.AccountFlow,
     ) : TransactionDetailReturnTo
+
+    /** Return to this exact search-result surface, carried whole. */
+    data class Search(
+        val carriedSearch: P503AppState.Search,
+    ) : TransactionDetailReturnTo
 }
 
 /**
- * P8-06 typed returnTo 批 1 (D-361): the overview IDENTITY MAP. It answers one question only —
- * which `OverviewEmpty` does a carried landing belong to, given a detail: `null` (HOME entry) →
- * the detail's own overview; [TransactionDetailReturnTo.AccountsFlow] → the carried flow's
- * overview. Its real consumer is the carrier construction point
+ * P8-06 typed returnTo 批 1 (D-361) and 批 2: the overview IDENTITY MAP. It answers one question
+ * only — which `OverviewEmpty` does a carried landing belong to, given a detail: `null` (HOME
+ * entry) → the detail's own overview; [TransactionDetailReturnTo.AccountsFlow] → the carried
+ * flow's overview; [TransactionDetailReturnTo.Search] → the carried search's overview. Its real
+ * consumer is the carrier construction point
  * ([P503AppState.carriedReportCarrier]'s TransactionDetail branch), where the design invariant
  * "TransactionDetail.overview is always the current value of the overview the close will return"
- * makes the answer identical on both branches; the write-back sites' PAIRED shape is
+ * makes the answer identical on every branch; the write-back sites' PAIRED shape is
  * [P503AppState.TransactionDetail.withResolvedOverview], which embeds this same mapping. Close/Back
  * do NOT call this — closing returns the carried target SURFACE whole (the
  * [ReconciliationBackTarget.surface] precedent), which this overview-level mapping cannot express.
@@ -1157,21 +1175,25 @@ internal fun resolveTransactionDetailReturnTo(
     when (returnTo) {
         null -> detail.overview
         is TransactionDetailReturnTo.AccountsFlow -> returnTo.carriedFlow.overview
+        is TransactionDetailReturnTo.Search -> returnTo.carriedSearch.overview
     }
 
 /**
- * P8-06 typed returnTo 批 1 (D-361): the write-back sites' PAIRED shape of the overview identity
- * map ([resolveTransactionDetailReturnTo], embedded). It puts [overview] into BOTH places the
- * detail carries an overview — the detail's own field (the HOME return target, and the source the
- * failure branch preserves) AND the carried account flow's overview (the
- * [TransactionDetailReturnTo.AccountsFlow] return target) — as the SAME instance, so the flow the
- * close returns never holds a payload another site forgot to write. The carried flow's own fields
- * (loaded rows, totalCount, listScroll) are untouched by the copy.
+ * P8-06 typed returnTo 批 1 (D-361) and 批 2: the write-back sites' PAIRED shape of the overview
+ * identity map ([resolveTransactionDetailReturnTo], embedded). It puts [overview] into BOTH places
+ * the detail carries an overview — the detail's own field (the HOME return target, and the source
+ * the failure branch preserves) AND the carried target surface's overview (the
+ * [TransactionDetailReturnTo.AccountsFlow] or [TransactionDetailReturnTo.Search] return target) —
+ * as the SAME instance, so the surface the close returns never holds a payload another site forgot
+ * to write. The carried surface's own fields (loaded rows/pages, counts, cursors, listScroll) are
+ * untouched by the copy.
  */
 internal fun P503AppState.TransactionDetail.withResolvedOverview(overview: P503AppState.OverviewEmpty): P503AppState.TransactionDetail =
     when (val target = returnTo) {
         is TransactionDetailReturnTo.AccountsFlow ->
             copy(overview = overview, returnTo = target.copy(carriedFlow = target.carriedFlow.copy(overview = overview)))
+        is TransactionDetailReturnTo.Search ->
+            copy(overview = overview, returnTo = target.copy(carriedSearch = target.carriedSearch.copy(overview = overview)))
         null -> copy(overview = overview)
     }
 

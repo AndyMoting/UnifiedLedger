@@ -39,6 +39,7 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CatalogItem
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
+import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.ui.theme.LocalP8Palette
 import kotlinx.datetime.LocalDate
 
@@ -64,9 +65,12 @@ import kotlinx.datetime.LocalDate
  * failure can never read as "没有找到". The surface has zero write entries and no calendar entry
  * (V-11 — the calendar belongs to P8-06).
  *
- * The rows are read-only in this slice: routing the read-only transaction detail from here needs a
- * back target the search surface does not carry yet (registered residual), so the row is presented
- * without a click rather than with one the reducer would absorb.
+ * P8-06 typed returnTo 批 2 (D-360/D-361): the rows are read-only in the data sense, but each one
+ * now opens the read-only transaction detail when the host wires [onSelectTransaction]. The screen
+ * itself owns no return target: the host samples this surface's scroll position and carries the
+ * whole [P503AppState.Search] inside the typed return target, so close returns the same surface.
+ * A `null` callback (unwired detail read face) renders the rows without a click rather than with
+ * one the reducer would absorb.
  */
 @Composable
 internal fun P503SearchScreen(
@@ -85,6 +89,7 @@ internal fun P503SearchScreen(
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
     onClose: () -> Unit,
+    onSelectTransaction: ((TransactionId) -> Unit)? = null,
     registerListState: ((LazyListState) -> Unit)? = null,
     restoreScrollTo: ListScrollPosition? = null,
     onScrollRestored: () -> Unit = {},
@@ -92,7 +97,8 @@ internal fun P503SearchScreen(
     val palette = LocalP8Palette.current
     // 返回保滚动位: the list state is HOISTED to the screen so the sampled position and the restored
     // one address the same object (the home list's mechanism, reused as-is for D7-5's LazyColumn).
-    // The restore slot is registered for a future secondary surface and is never filled today.
+    // P8-06 typed returnTo 批 2: the host samples this state when a row opens the detail and the
+    // returned surface consumes the slot once through ListScrollRestored.
     val listState = rememberLazyListState()
     LaunchedEffect(registerListState) { registerListState?.invoke(listState) }
     val pendingRestore = restoreScrollTo
@@ -323,9 +329,10 @@ internal fun P503SearchScreen(
                     }
                     if (collapsedDays[group.date] != true) {
                         items(group.rows, key = { it.transactionId.value }) { row ->
-                            // D7-1: the SAME flow row, no merchant/tag badge projection. Read-only
-                            // here (no detail route from this surface yet — registered residual).
-                            LedgerEntryFlowRow(row, accountNames, onSelectTransaction = {}, interactionsEnabled = false)
+                            // D7-1: the SAME flow row, no merchant/tag badge projection. P8-06
+                            // typed returnTo 批 2: clickable exactly when the host wired the detail
+                            // entry (a null callback means the read face is unwired — no dead click).
+                            LedgerEntryFlowRow(row, accountNames, onSelectTransaction = { onSelectTransaction?.invoke(it) }, interactionsEnabled = onSelectTransaction != null)
                             HorizontalDivider()
                         }
                     }

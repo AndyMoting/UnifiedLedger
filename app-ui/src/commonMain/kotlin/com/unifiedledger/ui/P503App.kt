@@ -570,9 +570,9 @@ fun P503App(
     var reconciliationQueueListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
     var accountFlowListState by remember { mutableStateOf<androidx.compose.foundation.ScrollState?>(null) }
     // P8-02 i2a (D7-5): the search result surface is a LazyColumn like the home list, so its sampled
-    // position is the LazyListState pair (not the plain-scroll mapping the queue/flow use). The screen
-    // registers it for the FUTURE detail route and nothing samples it today: no secondary surface
-    // opens from search, so the state's restore slot stays unfilled (the next slice consumes it).
+    // position is the LazyListState pair (not the plain-scroll mapping the queue/flow use).
+    // P8-06 typed returnTo 批 2: the detail entry samples it synchronously at click time and the
+    // returned Search surface consumes the restore slot once (ListScrollRestored).
     var searchListState by remember { mutableStateOf<androidx.compose.foundation.lazy.LazyListState?>(null) }
     val homeFlowScrollSampler: () -> ListScrollPosition? = {
         homeFlowListState?.let { list -> ListScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) }
@@ -585,6 +585,12 @@ fun P503App(
     }
     val accountFlowScrollSampler: () -> ListScrollPosition? = {
         accountFlowListState?.let { scroll -> ListScrollPosition(0, scroll.value) }
+    }
+    // P8-06 typed returnTo 批 2: the search result list's sampled position (the LazyListState pair,
+    // the home-list mechanism). Sampled synchronously at the row click and carried inside the
+    // returned Search surface's own listScroll slot.
+    val searchScrollSampler: () -> ListScrollPosition? = {
+        searchListState?.let { list -> ListScrollPosition(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) }
     }
     val ledgerViewWired = ledger.surfaces.ledgerView
     // P7-07 07.D (D-184; spec section 5): the budget surface wiring probe and the current-name
@@ -1288,10 +1294,11 @@ fun P503App(
      * late/stale write-back is impossible by construction. P8-00 b3 (V-6): the SAME lease reads
      * the financial version history (the annotation-history twin; a null read renders no block,
      * never a fabricated chain).
-     * P8-06 typed returnTo 批 1 (D-360 Q1/D-361): [returnTo] is the typed return target — `null`
-     * (the HOME entry, every existing call site) keeps today's behavior byte-identical;
-     * `TransactionDetailReturnTo.AccountsFlow(carriedFlow)` (the account-flow entry) carries the
-     * sampled flow whole, so close returns the same surface with rows/count/scroll preserved.
+     * P8-06 typed returnTo 批 1 (D-360 Q1/D-361) and 批 2: [returnTo] is the typed return target —
+     * `null` (the HOME entry) keeps today's behavior byte-identical;
+     * `TransactionDetailReturnTo.AccountsFlow(carriedFlow)` (the account-flow entry) and
+     * `TransactionDetailReturnTo.Search(carriedSearch)` (the search-result entry) carry the sampled
+     * surface whole, so close returns the same surface with pages/count/scroll preserved.
      */
     fun selectTransaction(
         transactionId: TransactionId,
@@ -5804,6 +5811,11 @@ fun P503App(
                     // surface. The condition area's option projections come from the SAME cached
                     // authority that feeds the editor and the management sections, through the rule
                     // the retired filter applied (disabled included, tombstoned excluded).
+                    // P8-06 typed returnTo 批 2 (D-360/D-361): a result row opens the read-only
+                    // detail when the detail read face is probed (an unwired graph renders no dead
+                    // row click). The click re-reads the latest state (the account-flow shape), so a
+                    // page that landed since the last recomposition is still carried whole, and the
+                    // scroll sampler runs synchronously at click time.
                     is P503AppState.Search -> {
                         val authority = cachedTagMerchantAuthority
                         P503SearchScreen(
@@ -5822,6 +5834,17 @@ fun P503App(
                             onLoadMore = ::requestSearchNextPage,
                             onRetryLoadMore = ::requestSearchNextPage,
                             onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            onSelectTransaction =
+                                if (ledger.surfaces.ledgerView) {
+                                    { transactionId ->
+                                        val search = latestState.value as? P503AppState.Search
+                                        if (search != null) {
+                                            selectTransaction(transactionId, searchScrollSampler(), TransactionDetailReturnTo.Search(search))
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
                             registerListState = { searchListState = it },
                             restoreScrollTo = current.listScroll,
                             onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
@@ -6245,8 +6268,8 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         is P503AppState.BudgetConfig -> true
         // P8-02 i2a (D7-4; spec section 2.4): the search result surface returns to its preserved
         // overview (a read-only surface — its in-flight page read is absorbable, so there is no
-        // submitting marker to intercept; the one-shot restore slot is registered for a future
-        // secondary surface and is never filled today).
+        // submitting marker to intercept; P8-06 typed returnTo 批 2 now fills the one-shot restore
+        // slot from the detail entry and consumes it after the return).
         is P503AppState.Search -> true
         // P7-06 06.B (D-177): the export surface returns to its preserved overview; while an export
         // is running it keeps its marker and must not leave (提交中不得离开), so the back channel is

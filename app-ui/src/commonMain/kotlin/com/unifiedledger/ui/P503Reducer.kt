@@ -771,8 +771,9 @@ class P503ReducerImpl(
      * ([P503AppState.OverviewEmpty.originListScroll]), the account flow (P8-01a i3a F6: the position
      * sampled when its reconciliation queue opened), the reconciliation queue
      * ([P503AppState.ReconciliationQueue.listScroll]) and the P8-02 i2a search surface
-     * ([P503AppState.Search.listScroll]; registered for a future secondary surface and never
-     * filled today) — where its ONE effect is clearing the slot after the screen applied it (the
+     * ([P503AppState.Search.listScroll]; P8-06 typed returnTo 批 2 fills it when a result row
+     * opens the detail, and this consume clears it once after the return) — where its ONE effect
+     * is clearing the slot after the screen applied it (the
      * same event, the same mechanism, one slot per surface). Every other surface is absorbed
      * whole, so the value can never pollute a surface it does not belong to and a late dispatch
      * can never reach `unhandled`.
@@ -1027,6 +1028,15 @@ class P503ReducerImpl(
      * already-selected window/tag-match/merchant is a no-op: the screen dispatches those events on
      * every tap, so an unchanged condition must never wipe the landed page. Back restores the
      * exact preserved overview.
+     *
+     * P8-06 typed returnTo 批 2 (D-360 Q1/D-361): `SelectTransaction` opens the result row's
+     * read-only detail carrying this whole surface as the typed
+     * [TransactionDetailReturnTo.Search] return target (the account-flow entry's carried shape):
+     * an in-flight page read's marker is dropped first (the returned footer must never stay
+     * loading), the sampled scroll rides [P503AppState.Search.listScroll], and the carried
+     * instance keeps its condition, loaded pages, totalCount and cursor — so close returns the
+     * same surface and issues no read (回程不补读). A surface with nothing in flight and no sample
+     * is carried by reference (no churn).
      */
     private fun reduceSearch(
         state: P503AppState.Search,
@@ -1037,6 +1047,28 @@ class P503ReducerImpl(
             P503UiEvent.Back -> state.overview
             // The surface's own restore slot is consumed exactly once (the originListScroll shape).
             P503UiEvent.ListScrollRestored -> if (state.listScroll == null) state else state.copy(listScroll = null)
+            // P8-06 typed returnTo 批 2 (D-360 Q1/D-361): the result row's read-only detail entry.
+            // The carried shape is the account-flow entry's (D-361 batch 2): drop an in-flight page
+            // read's marker so the returned footer is not permanently loading (the token stays —
+            // it is the host's monotonic sequence), let the sampled position ride this surface's
+            // own restore slot, and carry the WHOLE surface inside the typed returnTo. The scroll
+            // rides the event's existing field (no new scroll field) and is consumed once by
+            // ListScrollRestored after the return. Nothing in flight and no sample ⇒ carried by
+            // reference (no churn).
+            is P503UiEvent.SelectTransaction -> {
+                val carried = if (state.pageLoading) state.copy(pageLoading = false) else state
+                val carriedSearch = if (event.homeFlowScroll == null) carried else carried.copy(listScroll = event.homeFlowScroll)
+                P503AppState.TransactionDetail(
+                    overview = carriedSearch.overview,
+                    // originTab 填法：该字段在详情路径无任何消费者（reducer 不读、详情屏不接收），
+                    // 这里只做既有构造形的合规填充 — 语义为零，返回目的地由 returnTo 独自承载
+                    // (见 P503AppState.TransactionDetail.returnTo 的 KDoc；勿读出含义).
+                    originTab = carriedSearch.overview.selectedTab,
+                    transactionId = event.transactionId,
+                    detail = event.result,
+                    returnTo = TransactionDetailReturnTo.Search(carriedSearch),
+                )
+            }
             is P503UiEvent.UpdateSearchKeyword -> state.copy(keywordDraft = event.text)
             is P503UiEvent.SelectSearchWindow ->
                 if (state.window == event.choice) state else state.resetSearchPages().copy(window = event.choice)
@@ -1924,36 +1956,38 @@ class P503ReducerImpl(
      * update on the stored overview, the other new read-only events are absorbed, and every
      * pre-existing event stays unlisted (ISE, G-B). The page has zero edit entries.
      *
-     * P8-06 typed returnTo 批 1 (D-360 Q2/D-361): Close/Back return the carried TARGET SURFACE
-     * (`when (returnTo)`: `null` → the detail's own overview; `AccountsFlow(carriedFlow)` → the
-     * carried AccountFlow instance — the ReconciliationBackTarget surface() precedent). The
-     * carried monthly/budget landings below keep overview identity across both carriers through
-     * [resolveTransactionDetailReturnTo]'s paired write-back, so the returned flow never holds a
-     * payload a landing forgot to update.
+     * P8-06 typed returnTo 批 1 (D-360 Q2/D-361) and 批 2: Close/Back return the carried TARGET
+     * SURFACE (`when (returnTo)`: `null` → the detail's own overview; `AccountsFlow(carriedFlow)`
+     * → the carried AccountFlow instance; `Search(carriedSearch)` → the carried Search instance —
+     * the ReconciliationBackTarget surface() precedent). The carried monthly/budget landings below
+     * keep overview identity across every carrier through [resolveTransactionDetailReturnTo]'s
+     * paired write-back, so the returned surface never holds a payload a landing forgot to update.
      */
     private fun reduceTransactionDetail(
         state: P503AppState.TransactionDetail,
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
-            // P8-06 typed returnTo 批 1 (D-360 Q2/D-361): close returns the carried TARGET SURFACE
-            // whole — the ReconciliationBackTarget.surface() precedent (基线 :2327/:2248), not a
-            // projection of it. `null` (HOME entry) returns the detail's own overview: today's
+            // P8-06 typed returnTo 批 1 (D-360 Q2/D-361) and 批 2: close returns the carried TARGET
+            // SURFACE whole — the ReconciliationBackTarget.surface() precedent (基线 :2327/:2248),
+            // not a projection of it. `null` (HOME entry) returns the detail's own overview: today's
             // behavior byte-identical (every existing assertSame(source, closed) stays true).
-            // `AccountsFlow(carriedFlow)` returns the carried AccountFlow instance itself — loaded
-            // rows, totalCount and listScroll travel back with it (§五.2). Close/Back do NOT go
-            // through resolveTransactionDetailReturnTo: that function is the write-back sites'
-            // overview identity map; the close's job is the whole surface.
+            // `AccountsFlow(carriedFlow)` / `Search(carriedSearch)` return the carried instance
+            // itself — loaded rows/pages, counts and listScroll travel back with it (§五.2). Close/
+            // Back do NOT go through resolveTransactionDetailReturnTo: that function is the
+            // write-back sites' overview identity map; the close's job is the whole surface.
             P503UiEvent.CloseTransactionDetail ->
                 when (val target = state.returnTo) {
                     null -> state.overview
                     is TransactionDetailReturnTo.AccountsFlow -> target.carriedFlow
+                    is TransactionDetailReturnTo.Search -> target.carriedSearch
                 }
             // System back = CloseTransactionDetail semantics (spec section 6.2 back bullet).
             P503UiEvent.Back ->
                 when (val target = state.returnTo) {
                     null -> state.overview
                     is TransactionDetailReturnTo.AccountsFlow -> target.carriedFlow
+                    is TransactionDetailReturnTo.Search -> target.carriedSearch
                 }
             // P7-08 08.D (spec section 3.5): the read-only history block's payload. The central
             // guard has already matched the transaction id, so this applies whole; the block is

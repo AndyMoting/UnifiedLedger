@@ -460,4 +460,163 @@ class P503SearchReducerTest {
         // A second consume has nothing to clear and returns the same instance (no churn).
         assertSame(consumed, reducer.reduce(consumed, P503UiEvent.ListScrollRestored))
     }
+
+    // ---- P8-06 typed returnTo 批 2: the search row's detail entry and the typed return ----
+
+    private fun landedSearch(): P503AppState.Search =
+        assertIs<P503AppState.Search>(
+            reducer.reduce(
+                reducer.reduce(
+                    searchState().copy(
+                        window = SearchWindowChoice.CURRENT_MONTH,
+                        keywordDraft = "咖啡",
+                        tagIds = setOf(tagA),
+                        merchantId = merchant,
+                    ),
+                    P503UiEvent.SubmitSearch,
+                ),
+                P503UiEvent.SearchPageLanded(
+                    1L,
+                    successPage(entry("tx-1", "2026-11-01T00:00:00Z"), hasMore = true, totalCount = 9L),
+                ),
+            ),
+        )
+
+    private fun openDetail(
+        state: P503AppState.Search,
+        scroll: ListScrollPosition? = null,
+    ): P503AppState.TransactionDetail =
+        assertIs<P503AppState.TransactionDetail>(
+            reducer.reduce(
+                state,
+                P503UiEvent.SelectTransaction(
+                    TransactionId("tx-1"),
+                    com.unifiedledger.application.TransactionDetailResult.NotFound,
+                    homeFlowScroll = scroll,
+                ),
+            ),
+        )
+
+    @Test
+    fun aSearchRowOpensTheDetailCarryingTheWholeSearchSurfaceAsTheTypedReturnTarget() {
+        // Exit criteria 1 and 4: the row click is a designed transition (never the `else -> state`
+        // absorption), and the WHOLE surface travels inside the typed returnTo — pages, count,
+        // cursor and the sampled position (no new scroll field, D-360 Q1, no Overview variant).
+        val landed = landedSearch()
+        val sample = ListScrollPosition(4, 2)
+        val entered = openDetail(landed, sample)
+        val target = assertIs<TransactionDetailReturnTo.Search>(entered.returnTo)
+        // The condition group travels with the surface too (window/keyword/tags/merchant), so the
+        // return lands on the SAME search, not a re-derived one.
+        assertEquals(landed.window, target.carriedSearch.window)
+        assertEquals(landed.keyword, target.carriedSearch.keyword)
+        assertEquals(landed.tagIds, target.carriedSearch.tagIds)
+        assertEquals(landed.merchantId, target.carriedSearch.merchantId)
+        assertEquals(landed.requestToken, target.carriedSearch.requestToken)
+        assertEquals(landed.entries, target.carriedSearch.entries)
+        assertEquals(landed.totalCount, target.carriedSearch.totalCount)
+        assertEquals(landed.hasMore, target.carriedSearch.hasMore)
+        assertEquals(landed.nextCursor, target.carriedSearch.nextCursor)
+        assertEquals(sample, target.carriedSearch.listScroll)
+        // One overview instance across the detail and the carried surface (the write-back invariant).
+        assertSame(landed.overview, target.carriedSearch.overview)
+        assertSame(target.carriedSearch.overview, entered.overview)
+        // originTab is the entry overview's tab — a compliance fill with no consumer (KDoc).
+        assertEquals(landed.overview.selectedTab, entered.originTab)
+        assertEquals(TransactionId("tx-1"), entered.transactionId)
+    }
+
+    @Test
+    fun closingTheCarriedSearchDetailReturnsTheSameSurfaceWithPagesCountAndScrollPreserved() {
+        // Exit criterion 2: Close/Back return the carried TARGET SURFACE itself (the
+        // ReconciliationBackTarget surface() precedent), so 返回 lands on the same loaded surface
+        // and issues no read (回程不补读).
+        val landed = landedSearch()
+        val sample = ListScrollPosition(3, 7)
+        val entered = openDetail(landed, sample)
+        val target = assertIs<TransactionDetailReturnTo.Search>(entered.returnTo)
+        val closedByButton = assertIs<P503AppState.Search>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail))
+        assertSame(target.carriedSearch, closedByButton)
+        assertEquals(landed.entries, closedByButton.entries)
+        assertEquals(landed.totalCount, closedByButton.totalCount)
+        assertEquals(landed.hasMore, closedByButton.hasMore)
+        assertEquals(landed.nextCursor, closedByButton.nextCursor)
+        assertEquals(sample, closedByButton.listScroll)
+        // System back = CloseTransactionDetail semantics.
+        val enteredAgain = openDetail(landed, ListScrollPosition(5, 1))
+        val closedByBack = assertIs<P503AppState.Search>(reducer.reduce(enteredAgain, P503UiEvent.Back))
+        assertSame(assertIs<TransactionDetailReturnTo.Search>(enteredAgain.returnTo).carriedSearch, closedByBack)
+        assertEquals(ListScrollPosition(5, 1), closedByBack.listScroll)
+        // The restore slot is consumed exactly once after the return.
+        val consumed = assertIs<P503AppState.Search>(reducer.reduce(closedByBack, P503UiEvent.ListScrollRestored))
+        assertNull(consumed.listScroll)
+        assertSame(consumed, reducer.reduce(consumed, P503UiEvent.ListScrollRestored))
+    }
+
+    @Test
+    fun leavingForTheDetailDropsTheInFlightMarkerAndAbsorbsItsLateLanding() {
+        // Exit criterion 3 (synthetic state): a page read in flight when the row opens is dropped
+        // from the carried instance, so the returned footer is never permanently loading; the token
+        // survives (it is the host's monotonic sequence) and the late landing can write nothing.
+        val loading = assertIs<P503AppState.Search>(reducer.reduce(searchState(), P503UiEvent.SubmitSearch))
+        assertTrue(loading.pageLoading)
+        val entered = openDetail(loading)
+        val carried = assertIs<TransactionDetailReturnTo.Search>(entered.returnTo).carriedSearch
+        assertTrue(!carried.pageLoading)
+        assertEquals(loading.requestToken, carried.requestToken)
+        assertEquals(loading.keyword, carried.keyword)
+        // The late landing is absorbed on the detail (the search family's central guard).
+        assertSame(
+            entered,
+            reducer.reduce(entered, P503UiEvent.SearchPageLanded(1L, successPage(entry("tx-late", "2026-11-02T00:00:00Z")))),
+        )
+        // And after the return it finds no active request on the restored surface.
+        val returned = assertIs<P503AppState.Search>(reducer.reduce(entered, P503UiEvent.CloseTransactionDetail))
+        assertSame(
+            returned,
+            reducer.reduce(returned, P503UiEvent.SearchPageLanded(1L, successPage(entry("tx-late", "2026-11-02T00:00:00Z")))),
+        )
+    }
+
+    @Test
+    fun anEmptySampleCarriesTheSurfaceByReferenceAndANonEmptyOneLandsInTheRestoreSlot() {
+        // Exit criterion 4: no sample and no in-flight marker ⇒ the carried instance IS the live
+        // one (no churn); a sample writes the same slot the restore consumes once.
+        val idle = searchState()
+        val withoutSample = openDetail(idle)
+        assertSame(idle, assertIs<TransactionDetailReturnTo.Search>(withoutSample.returnTo).carriedSearch)
+
+        val sample = ListScrollPosition(6, 1)
+        val withSample = openDetail(idle, sample)
+        val carried = assertIs<TransactionDetailReturnTo.Search>(withSample.returnTo).carriedSearch
+        assertEquals(sample, carried.listScroll)
+        assertSame(idle.overview, carried.overview)
+    }
+
+    @Test
+    fun theSearchTargetResolvesAndWritesBackBothOverviewsAsOneInstance() {
+        // Exit criterion 5 (synthetic state): the resolver's Search branch returns the carried
+        // search's overview; the paired write-back puts the landed overview into BOTH places as the
+        // SAME instance while leaving the carried surface's pages/count/scroll untouched.
+        val landed = landedSearch()
+        val entered = openDetail(landed, ListScrollPosition(2, 3))
+        val target = assertIs<TransactionDetailReturnTo.Search>(entered.returnTo)
+        assertSame(target.carriedSearch.overview, resolveTransactionDetailReturnTo(entered.returnTo, entered))
+
+        val fresh = landed.overview.copy(monthlyReloadRequired = true)
+        val updated = entered.withResolvedOverview(fresh)
+        assertSame(fresh, updated.overview)
+        val updatedTarget = assertIs<TransactionDetailReturnTo.Search>(updated.returnTo)
+        assertSame(fresh, updatedTarget.carriedSearch.overview)
+        assertSame(updated.overview, updatedTarget.carriedSearch.overview)
+        assertEquals(target.carriedSearch.entries, updatedTarget.carriedSearch.entries)
+        assertEquals(target.carriedSearch.totalCount, updatedTarget.carriedSearch.totalCount)
+        assertEquals(target.carriedSearch.hasMore, updatedTarget.carriedSearch.hasMore)
+        assertEquals(target.carriedSearch.nextCursor, updatedTarget.carriedSearch.nextCursor)
+        assertEquals(target.carriedSearch.listScroll, updatedTarget.carriedSearch.listScroll)
+
+        // Exit criterion 6 negative control: the HOME path (`returnTo == null`) still resolves to
+        // the detail's own overview instance — the untouched oracle shape.
+        assertSame(entered.overview, resolveTransactionDetailReturnTo(null, entered))
+    }
 }
