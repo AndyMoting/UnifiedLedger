@@ -109,6 +109,7 @@ import com.unifiedledger.application.ManualTransferSubmissionResult
 import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.P802_SEARCH_PAGE_SIZE
+import com.unifiedledger.application.P806CalendarDayView
 import com.unifiedledger.application.P806Period
 import com.unifiedledger.application.P806PeriodKind
 import com.unifiedledger.application.ParseManualExpenseAmount
@@ -1644,6 +1645,95 @@ fun P503App(
         val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
         val target = p806DrilldownCategoryTarget(overview.reportRegion, categoryId, categoryName) ?: return
         dispatch(P503UiEvent.OpenReportDrilldown(target))
+        startReportDrilldownRead()
+    }
+
+    // ------------------------------------------------ P8-06 batch 4 monthly calendar host surface
+
+    /** Whether this graph wires the P806 calendar read (a pure probe, so no dead entry renders). */
+    val calendarWired = ledger.surfaces.p806Calendar
+
+    /** The calendar reads run through the same acquire-first lease order as the report reads. */
+    val calendarLease = remember(ledger) { LeaseScopeCalendarSeam(ledger) }
+
+    /**
+     * The monotonic calendar request-token sequence. It outlives the surface state, so a close +
+     * reopen (even the same month) hands out tokens newer than any read the previous open carries.
+     */
+    val calendarRequestSequence = remember(ledger) { P806CalendarRequestSequence() }
+
+    /**
+     * Starts one calendar-month read for the surface's CURRENT cursor. The token is assigned here
+     * and the reducer stores it synchronously; the identity then binds the token, the ledger and the
+     * calendar's own YearMonth. The read runs OFF the UI thread through the acquire-first lease and
+     * lands with the CURRENT generation/catalog version captured on the main thread.
+     */
+    fun startCalendarRead() {
+        val current = latestState.value as? P503AppState.Calendar ?: return
+        val requestToken = calendarRequestSequence.next()
+        dispatch(P503UiEvent.RequestCalendarMonth(requestToken))
+        val requesting = latestState.value as? P503AppState.Calendar ?: return
+        if (!requesting.loading || requesting.requestToken != requestToken) return
+        val request =
+            P806CalendarRequestIdentity(
+                token = requestToken,
+                ledgerId = requesting.overview.state.ledgerId,
+                month = requesting.month,
+            )
+        scope.launch(Dispatchers.Default) {
+            val read = calendarLease.read(request)
+            scope.launch {
+                dispatch(
+                    P503UiEvent.CalendarMonthLanded(
+                        read = read,
+                        currentGeneration = ledger.activeGenerationForLanding(),
+                        currentCatalogVersion = ledger.currentCatalogVersion,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Opens the monthly calendar at the host-resolved initial month
+     * (`overview.selectedMonth ?: resolvedCurrentMonth`) when [p806CalendarEntryAvailable] holds.
+     * The callback is offered under the same predicate, so an unresolved month never shows an entry
+     * that cannot open, and no guessed month is ever opened. The calendar's cursor starts at that
+     * month and is never written back to the overview.
+     */
+    fun openCalendar() {
+        val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
+        if (!p806CalendarEntryAvailable(calendarWired, overview.selectedMonth, resolvedCurrentMonth)) return
+        val month = p806CalendarInitialMonth(overview.selectedMonth, resolvedCurrentMonth) ?: return
+        dispatch(P503UiEvent.OpenCalendar(month))
+        startCalendarRead()
+    }
+
+    /** Moves ONLY the calendar's own month cursor, then reads that month. */
+    fun shiftCalendarMonth(offset: Int) {
+        val current = latestState.value as? P503AppState.Calendar ?: return
+        val month = p806CalendarShiftedMonth(current.month, offset)
+        dispatch(P503UiEvent.SelectCalendarMonth(month))
+        startCalendarRead()
+    }
+
+    /**
+     * Opens the shared detail page for [day] with that day's OWN window (no UI day-boundary math)
+     * and carries the whole calendar as the return target, so close restores the same month,
+     * payload and sampled scroll with no re-read.
+     */
+    fun openCalendarDay(
+        day: P806CalendarDayView,
+        sampledScroll: ListScrollPosition?,
+    ) {
+        if (!drilldownWired) return
+        if (latestState.value !is P503AppState.Calendar) return
+        dispatch(
+            P503UiEvent.OpenReportDrilldown(
+                target = ReportDrilldownTarget.Day(window = day.window, date = day.date),
+                originCalendarScroll = sampledScroll,
+            ),
+        )
         startReportDrilldownRead()
     }
 
@@ -5443,6 +5533,16 @@ fun P503App(
                                             onSampleScroll = homeFlowScrollSampler,
                                             onRegisterListState = { homeFlowListState = it },
                                             onSelectMonth = ::selectMonth,
+                                            // P8-06 batch 4 (D-362 1): 收支日历 renders the entry only
+                                            // when the graph wires its read AND the initial month
+                                            // resolves (the selected month first). The same predicate
+                                            // gates `openCalendar`, so no shown entry can be dead.
+                                            onOpenCalendar =
+                                                if (p806CalendarEntryAvailable(calendarWired, current.selectedMonth, resolvedCurrentMonth)) {
+                                                    { openCalendar() }
+                                                } else {
+                                                    null
+                                                },
                                             // P8-02 i2a (D7-4/D7-7; spec section 2.4): the search capsule
                                             // is wired to the independent result surface only when this
                                             // composition bound the search port; `openSearch` samples the list
@@ -5703,6 +5803,26 @@ fun P503App(
                                             selectTransaction(transactionId, sampledScroll, TransactionDetailReturnTo.ReportDrilldown(drilldown))
                                         }
                                     }
+                                } else {
+                                    null
+                                },
+                            restoreScrollTo = current.listScroll,
+                            onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
+                        )
+                    // P8-06 batch 4 (D-362 1; spec sections 3.7/3.8/3.10): the monthly calendar — one
+                    // read-only full-screen page. Zero write entries: 返回, the calendar's own month
+                    // steps and a day cell's shared detail entry (which carries this surface whole
+                    // as the typed return target, so close restores the same month/payload/scroll
+                    // with no re-read).
+                    is P503AppState.Calendar ->
+                        P503CalendarScreen(
+                            state = current,
+                            onClose = { if (isBackDispatchSafe(latestState.value)) dispatch(P503UiEvent.Back) },
+                            onShiftMonth = ::shiftCalendarMonth,
+                            onRetry = ::startCalendarRead,
+                            onOpenDay =
+                                if (drilldownWired) {
+                                    { day, sampledScroll -> openCalendarDay(day, sampledScroll) }
                                 } else {
                                     null
                                 },
@@ -6395,6 +6515,9 @@ private fun isBackEnabled(state: P503AppState): Boolean =
         // P8-06 batch 3 (D-362 1): the report drilldown closes back to the preserved analysis page
         // (its report slot and hoisted scroll position kept; a read-only return starts no read).
         is P503AppState.ReportDrilldown -> true
+        // P8-06 batch 4 (D-362 1): the monthly calendar closes back to the preserved overview (its
+        // own month cursor and payload discarded with the surface; no read on close).
+        is P503AppState.Calendar -> true
         // P8-01a i3a (spec section 2.2): the queue returns to the carried account flow, and the
         // candidate/confirm/audit surface returns to its carried queue (or the overview for entry B).
         is P503AppState.ReconciliationQueue -> true

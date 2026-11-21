@@ -129,6 +129,7 @@ class P806FoldsTest {
         val view = P806Folds.calendar(snapshot, ledgerId, catalog)
         val day = view.days.single()
         assertEquals(2, day.currencies.size)
+        assertEquals(zeroDay.window, day.window)
         assertTrue(day.currencies.all { it.ordinaryIncomeMinorUnits == 0L && it.netExpenseMinorUnits == 0L })
         assertEquals(0, day.transactionCount)
     }
@@ -154,6 +155,7 @@ class P806FoldsTest {
             )
         val single = view.days.single()
         assertEquals(2, single.currencies.size)
+        assertEquals(day.window, single.window)
         assertEquals(100L, single.currencies.first { it.currency == cny }.netExpenseMinorUnits)
         assertEquals(50L, single.currencies.first { it.currency == usd }.netExpenseMinorUnits)
         assertEquals(2, single.transactionCount)

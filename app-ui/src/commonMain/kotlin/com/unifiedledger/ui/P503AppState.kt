@@ -8,6 +8,7 @@ import com.unifiedledger.application.EntryType
 import com.unifiedledger.application.ExpenseDraft
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.P806CalendarView
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.P806TransactionCursor
 import com.unifiedledger.application.P806Window
@@ -24,6 +25,8 @@ import com.unifiedledger.domain.CounterpartyId
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
 import com.unifiedledger.domain.TransactionId
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.YearMonth
 import kotlin.time.Instant
 
 /**
@@ -607,10 +610,60 @@ sealed interface P503AppState {
         val landedAsOf: Instant? = null,
         /** This page's one-shot restore slot for the read-only detail round trip. */
         val listScroll: ListScrollPosition? = null,
+        /**
+         * P8-06 batch 4 (D-362 1): the calendar surface a DAY target was opened from, carried
+         * whole so the day detail's close returns the same month, payload and scroll. `null` on the
+         * batch-3 period/category paths, whose close still returns [overview] unchanged (the
+         * original return semantics). Additive with a `null` default so every pre-batch-4
+         * construction keeps compiling.
+         */
+        val returnToCalendar: Calendar? = null,
     ) : P503AppState {
         /** Whether the drilldown page walk may still continue. */
         val hasMorePages: Boolean get() = nextCursor != null
     }
+
+    /**
+     * P8-06 batch 4 (D-362 1; spec sections 3.7/3.8/3.10): the read-only monthly calendar — ONE
+     * full-screen secondary surface reached from the HOME month row. [overview] is carried so every
+     * exit restores the exact page, and [month] is this surface's OWN cursor: shifting it never
+     * dispatches `SelectMonth` and never writes the overview's month cursor (the calendar and the
+     * home month are independent).
+     *
+     * [loaded] is the last ACCEPTED month payload (one `P806CalendarSnapshot` folded per local day,
+     * including zero-contribution days with explicit per-axis zero rows). A failed, stale or
+     * refused read keeps it visible, clearly labelled by its own month and read instant — the
+     * surface never turns a failure into a blank or a zero month. [loading] is the single-flight
+     * marker of the current request; [failure] is the last request's typed failure. [unwired] marks
+     * a graph without the calendar read (no entry renders there). [requestToken] is the HOST's
+     * monotonic identity: a newer month mints a new token, and a late payload from an old token, an
+     * old generation, an advanced catalog or a different month is dropped whole.
+     * [loadedGeneration]/[loadedCatalogVersion] are the provenance of [loaded]; [landedAsOf] is the
+     * read instant when the existing source supplies one. [listScroll] is this surface's own
+     * one-shot restore slot for the day-detail round trip.
+     */
+    data class Calendar(
+        val overview: OverviewEmpty,
+        /** The calendar's independent month cursor (never the overview's `selectedMonth`). */
+        val month: YearMonth,
+        /** The last accepted month payload; kept, labelled as old context, on a later failure. */
+        val loaded: P806CalendarView? = null,
+        /** True while one calendar-month read is in flight (a duplicate request is absorbed). */
+        val loading: Boolean = false,
+        /** The last request's typed failure; [loaded] stays visible beside it. */
+        val failure: P806SnapshotFailure? = null,
+        /** This graph wires no P806 calendar query: an explicit state, never an empty month. */
+        val unwired: Boolean = false,
+        /** The host's monotonic request identity of the calendar-month read. */
+        val requestToken: Long = 0L,
+        /** The provenance of the accepted payload. */
+        val loadedGeneration: Generation? = null,
+        val loadedCatalogVersion: Long? = null,
+        /** The read instant of the last accepted landing (`null` = no usable clock source). */
+        val landedAsOf: Instant? = null,
+        /** This surface's one-shot restore slot for the day-detail round trip. */
+        val listScroll: ListScrollPosition? = null,
+    ) : P503AppState
 
     /**
      * P8-01a i3a (D-308 items 2/6/8; spec sections 2.2/2.3): the account reconciliation queue — the
@@ -1198,8 +1251,9 @@ sealed interface P503AppState {
  * [Period] is the report region's own resolved window (「本期全部明细」); [Category] adds one
  * category subtree predicate (a level-1 「全部明细」 entry or a level-2 row's own entry) — the
  * window is the same, the application's drilldown predicate adds the optional category EXISTS.
- * This batch freezes exactly these two variants: the day-bucket variant belongs to the calendar
- * batch, and no third unreachable value is declared. Every `when` over this type is exhaustive and
+ * [Day] is one calendar cell's own half-open window (P8-06 batch 4, D-362 1): the window comes from
+ * the day's `P806CalendarDaySnapshot` unchanged, so the UI never recomputes a reporting-zone day
+ * boundary. No unreachable value is declared. Every `when` over this type is exhaustive and
  * carries no `else`.
  */
 sealed interface ReportDrilldownTarget {
@@ -1216,6 +1270,15 @@ sealed interface ReportDrilldownTarget {
         override val window: P806Window,
         val categoryId: CategoryId,
         val categoryName: String,
+    ) : ReportDrilldownTarget
+
+    /**
+     * One calendar day (P8-06 batch 4, D-362 1): the day's own window, no category predicate.
+     * [date] is the displayed day and header label; the predicate is [window] alone.
+     */
+    data class Day(
+        override val window: P806Window,
+        val date: LocalDate,
     ) : ReportDrilldownTarget
 }
 
@@ -1280,14 +1343,15 @@ internal fun resolveTransactionDetailReturnTo(
 
 /**
  * P8-06 typed returnTo 批 1 (D-361) and 批 2: the write-back sites' PAIRED shape of the overview
- * identity map ([resolveTransactionDetailReturnTo], embedded). It puts [overview] into BOTH places
- * the detail carries an overview — the detail's own field (the HOME return target, and the source
- * the failure branch preserves) AND the carried target surface's overview (the
- * [TransactionDetailReturnTo.AccountsFlow], [TransactionDetailReturnTo.Search] or
- * [TransactionDetailReturnTo.ReportDrilldown] return target) —
- * as the SAME instance, so the surface the close returns never holds a payload another site forgot
- * to write. The carried surface's own fields (loaded rows/pages, counts, cursors, listScroll) are
- * untouched by the copy.
+ * identity map ([resolveTransactionDetailReturnTo], embedded). It puts [overview] into EVERY place
+ * the detail's return path can observe it — the detail's own field (the HOME return target, and the
+ * source the failure branch preserves), the carried target surface's overview
+ * ([TransactionDetailReturnTo.AccountsFlow], [TransactionDetailReturnTo.Search] or
+ * [TransactionDetailReturnTo.ReportDrilldown]), and, for a drilldown reached from the monthly
+ * calendar, the nested `returnToCalendar.overview` inside that carried drilldown — as the SAME
+ * instance, so the surface the close returns never holds a payload another site forgot to write.
+ * The carried surfaces' own fields (loaded rows/pages, counts, cursors, listScroll, and the
+ * calendar's month/payload/read scroll) are untouched by the copy.
  */
 internal fun P503AppState.TransactionDetail.withResolvedOverview(overview: P503AppState.OverviewEmpty): P503AppState.TransactionDetail =
     when (val target = returnTo) {
@@ -1296,7 +1360,21 @@ internal fun P503AppState.TransactionDetail.withResolvedOverview(overview: P503A
         is TransactionDetailReturnTo.Search ->
             copy(overview = overview, returnTo = target.copy(carriedSearch = target.carriedSearch.copy(overview = overview)))
         is TransactionDetailReturnTo.ReportDrilldown ->
-            copy(overview = overview, returnTo = target.copy(carriedDrilldown = target.carriedDrilldown.copy(overview = overview)))
+            copy(
+                overview = overview,
+                returnTo =
+                    target.copy(
+                        carriedDrilldown =
+                            target.carriedDrilldown.copy(
+                                overview = overview,
+                                // P8-06 batch 4 (D-362 1): a day detail opened from the calendar
+                                // carries the calendar whole; its overview is the same return
+                                // target, so a two-close return never sees a stale month payload.
+                                // The calendar's own month/payload/scroll stay untouched.
+                                returnToCalendar = target.carriedDrilldown.returnToCalendar?.copy(overview = overview),
+                            ),
+                    ),
+            )
         null -> copy(overview = overview)
     }
 
@@ -1499,9 +1577,10 @@ internal fun P503AppState.carriedReportCarrier(): ReportCarrier? =
             // invariant "TransactionDetail.overview is always the current value of the overview
             // the close will return" makes the two identical on both branches (null → the field;
             // AccountsFlow → the carried flow's overview, the same instance by the invariant).
-            // The landing writes BOTH carried overviews through the ONE paired write-back, so the
-            // flow the close returns is never a stale slot. The write-back's paired shape is
-            // [withResolvedOverview], which embeds this same identity map.
+            // The landing writes the detail's own overview, the carried surface's overview AND a
+            // carried calendar's nested overview through the ONE paired write-back, so the surfaces
+            // the close (or the two closes for a calendar day) return are never stale slots. The
+            // write-back's paired shape is [withResolvedOverview], which embeds this same identity map.
             ReportCarrier(resolveTransactionDetailReturnTo(carrier.returnTo, carrier)) { overview -> carrier.withResolvedOverview(overview) }
         }
         is P503AppState.AccountFlow -> {
@@ -1512,6 +1591,18 @@ internal fun P503AppState.carriedReportCarrier(): ReportCarrier? =
         // the analysis page's overview, so a report landing arriving while the drilldown is open
         // converges the slot the close returns instead of leaving it loading.
         is P503AppState.ReportDrilldown -> {
+            val carrier = this
+            // P8-06 batch 4 (D-362 1): a day detail carries its calendar in `returnToCalendar`, so
+            // the landing writes BOTH carried overviews — the close returns a calendar whose
+            // overview is the same instance the overview-level landing just updated.
+            ReportCarrier(carrier.overview) { overview ->
+                carrier.copy(overview = overview, returnToCalendar = carrier.returnToCalendar?.copy(overview = overview))
+            }
+        }
+        // P8-06 batch 4 (D-362 1): the calendar carries the HOME overview, so a report landing that
+        // arrives while the calendar (or a day detail opened from it) is visible converges the
+        // overview every close returns instead of leaving its slot stale or loading.
+        is P503AppState.Calendar -> {
             val carrier = this
             ReportCarrier(carrier.overview) { overview -> carrier.copy(overview = overview) }
         }

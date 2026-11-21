@@ -111,6 +111,8 @@ class P503ReducerImpl(
         // P8-06 batch 3 (D-362 1/2): the report drilldown family's central guard (the report-region
         // family's shape).
         if (reportDrilldownEventAbsorbed(effective, event)) return effective
+        // P8-06 batch 4 (D-362 1): the monthly calendar family's central guard.
+        if (calendarEventAbsorbed(effective, event)) return effective
         if (reconciliationEventAbsorbed(effective, event)) return effective
         if (refundEntryEventAbsorbed(effective, event)) return effective
         if (listScrollRestoredEventAbsorbed(effective, event)) return effective
@@ -122,6 +124,7 @@ class P503ReducerImpl(
                 is P503AppState.TransactionDetail -> reduceTransactionDetail(effective, event)
                 is P503AppState.AccountFlow -> reduceAccountFlow(effective, event)
                 is P503AppState.ReportDrilldown -> reduceReportDrilldown(effective, event)
+                is P503AppState.Calendar -> reduceCalendar(effective, event)
                 is P503AppState.ReconciliationQueue -> reduceReconciliationQueue(effective, event)
                 is P503AppState.ReconciliationDetail -> reduceReconciliationDetail(effective, event)
                 is P503AppState.ImportCandidateDetail -> reduceImportCandidateDetail(effective, event)
@@ -468,11 +471,32 @@ class P503ReducerImpl(
         event: P503UiEvent,
     ): Boolean =
         when (event) {
-            is P503UiEvent.OpenReportDrilldown -> state !is P503AppState.OverviewEmpty
+            is P503UiEvent.OpenReportDrilldown -> state !is P503AppState.OverviewEmpty && state !is P503AppState.Calendar
             P503UiEvent.CloseReportDrilldown,
             is P503UiEvent.RequestReportDrilldownPage,
             is P503UiEvent.ReportDrilldownPageLanded,
             -> state !is P503AppState.ReportDrilldown
+            else -> false
+        }
+
+    /**
+     * P8-06 batch 4 (D-362 1; spec sections 3.7/3.8/3.10): the monthly calendar event family is
+     * state-preserving outside its designed states (the drilldown family's central-guard shape).
+     * `OpenCalendar` has its one effect on [P503AppState.OverviewEmpty]; the month cursor, the read
+     * request, the landing and the close act only on [P503AppState.Calendar]. Everywhere else every
+     * family event is absorbed, so a late or stale dispatch can never reach `unhandled`.
+     */
+    private fun calendarEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        when (event) {
+            is P503UiEvent.OpenCalendar -> state !is P503AppState.OverviewEmpty
+            P503UiEvent.CloseCalendar,
+            is P503UiEvent.SelectCalendarMonth,
+            is P503UiEvent.RequestCalendarMonth,
+            is P503UiEvent.CalendarMonthLanded,
+            -> state !is P503AppState.Calendar
             else -> false
         }
 
@@ -817,7 +841,8 @@ class P503ReducerImpl(
             state !is P503AppState.AccountFlow &&
             state !is P503AppState.ReconciliationQueue &&
             state !is P503AppState.Search &&
-            state !is P503AppState.ReportDrilldown
+            state !is P503AppState.ReportDrilldown &&
+            state !is P503AppState.Calendar
 
     /**
      * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
@@ -1866,6 +1891,12 @@ class P503ReducerImpl(
             // performs zero IO. The UI affords it only on an eligible region.
             is P503UiEvent.OpenReportDrilldown ->
                 P503AppState.ReportDrilldown(overview = state, target = event.target)
+            // P8-06 batch 4 (D-362 1): the HOME month row opens the monthly calendar with the
+            // host-resolved initial month. The exact overview is preserved as the back target; the
+            // calendar's own cursor starts at that month and is never written back to it. The host
+            // requests the month as a background read right after this event (zero IO here).
+            is P503UiEvent.OpenCalendar ->
+                P503AppState.Calendar(overview = state, month = event.month)
             // P8-01a i3a (spec section 2.2 entry B): the import candidate row's
             // 「用于核对既有分录」 action opens the SAME candidate surface in evidence-focused mode,
             // carrying this overview as its back target. The evidence may have no projection yet
@@ -2730,9 +2761,9 @@ class P503ReducerImpl(
         event: P503UiEvent,
     ): P503AppState =
         when (event) {
-            P503UiEvent.CloseReportDrilldown -> state.overview
+            P503UiEvent.CloseReportDrilldown -> state.returnToCalendar ?: state.overview
             // System back = CloseReportDrilldown semantics (the CloseTransactionDetail back bullet).
-            P503UiEvent.Back -> state.overview
+            P503UiEvent.Back -> state.returnToCalendar ?: state.overview
             is P503UiEvent.RequestReportDrilldownPage ->
                 // Only a NEWER host token starts a read; an absorbed call leaves token, marker and
                 // failure untouched (单飞 by token — a superseded landing can then never match).
@@ -2813,6 +2844,19 @@ class P503ReducerImpl(
                                     selectableMonths = event.selectableMonths,
                                     monthlyReloadRequired = false,
                                 ),
+                            // The carried calendar holds the same overview; keep its copy current so
+                            // a day-detail close returns the updated month payload.
+                            returnToCalendar =
+                                state.returnToCalendar?.let { calendar ->
+                                    calendar.copy(
+                                        overview =
+                                            calendar.overview.copy(
+                                                monthlyActivity = result.activity,
+                                                selectableMonths = event.selectableMonths,
+                                                monthlyReloadRequired = false,
+                                            ),
+                                    )
+                                },
                         )
                     com.unifiedledger.application.MonthlyActivityResult.InvalidState,
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,
@@ -2884,6 +2928,148 @@ class P503ReducerImpl(
                 state.copy(rowsLoading = false, unwired = true)
             is P806DrilldownPageRead.StaleProvenance ->
                 state.copy(rowsLoading = true, nextCursor = null)
+        }
+
+    /**
+     * P8-06 batch 4 (D-362 1; spec sections 3.7/3.8/3.10): the monthly calendar. Only its designed
+     * events react: Close/Back return the preserved overview (no read), a month selection moves ONLY
+     * the calendar's own cursor, the host request advances the single-flight marker + its newer
+     * token, and the landing applies only while [p806CalendarLandingDecision] still accepts its
+     * identity. A day click opens the shared [P503AppState.ReportDrilldown] with the day's OWN
+     * window and carries this calendar whole as its return target (the sampled scroll rides
+     * [P503AppState.Calendar.listScroll]); `ListScrollRestored` consumes that slot once. A monthly
+     * cycle landing is APPLIED to the carried overview (the read-only detail precedent); the budget
+     * branch is the same defensive dead branch the drilldown carries. The refresh family is
+     * absorbed. Every other event is absorbed by the central guards; every pre-existing event stays
+     * unlisted (ISE, G-B). The page has zero write entries.
+     */
+    private fun reduceCalendar(
+        state: P503AppState.Calendar,
+        event: P503UiEvent,
+    ): P503AppState =
+        when (event) {
+            P503UiEvent.CloseCalendar -> state.overview
+            // System back = CloseCalendar semantics.
+            P503UiEvent.Back -> state.overview
+            is P503UiEvent.SelectCalendarMonth ->
+                // The calendar's OWN cursor only — never `SelectMonth`, never the overview's month.
+                if (event.month == state.month) state else state.copy(month = event.month, failure = null)
+            is P503UiEvent.RequestCalendarMonth ->
+                if (event.requestToken <= state.requestToken) {
+                    state
+                } else {
+                    state.copy(requestToken = event.requestToken, loading = true, failure = null)
+                }
+            is P503UiEvent.CalendarMonthLanded ->
+                when (p806CalendarLandingDecision(state, event.read, event.currentGeneration, event.currentCatalogVersion)) {
+                    // A late payload from an old token, another month or another ledger is dropped
+                    // whole and starts no re-read.
+                    P806CalendarLandingDecision.STALE_TOKEN,
+                    P806CalendarLandingDecision.STALE_LEDGER,
+                    P806CalendarLandingDecision.STALE_MONTH,
+                    -> state
+                    // The matching request's graph advanced: end only its loading, keep the last
+                    // accepted month labelled as old context, and leave the retry to the user.
+                    P806CalendarLandingDecision.STALE_GENERATION ->
+                        state.copy(
+                            loading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable,
+                        )
+                    P806CalendarLandingDecision.CATALOG_ADVANCED ->
+                        state.copy(
+                            loading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch,
+                        )
+                    // A matched request answered with a payload that is not one consistent month
+                    // snapshot: drop it whole, never render it as a partial calendar.
+                    P806CalendarLandingDecision.PAYLOAD_REJECTED ->
+                        state.copy(
+                            loading = false,
+                            failure = com.unifiedledger.application.P806SnapshotFailure.InvalidState,
+                        )
+                    P806CalendarLandingDecision.ACCEPTED -> applyCalendarMonth(state, event.read)
+                }
+            // P8-06 batch 4: a DAY click opens the shared detail page with the day's own window.
+            // Any in-flight month read's marker is dropped, the sampled calendar scroll rides this
+            // surface's own restore slot, and the WHOLE calendar is carried as the return target.
+            is P503UiEvent.OpenReportDrilldown -> {
+                if (event.target !is ReportDrilldownTarget.Day) {
+                    state
+                } else {
+                    val carried =
+                        state.copy(
+                            loading = false,
+                            listScroll = event.originCalendarScroll ?: state.listScroll,
+                        )
+                    P503AppState.ReportDrilldown(
+                        overview = carried.overview,
+                        target = event.target,
+                        returnToCalendar = carried,
+                    )
+                }
+            }
+            P503UiEvent.ListScrollRestored ->
+                if (state.listScroll == null) state else state.copy(listScroll = null)
+            // 详情态同语义: a monthly cycle landing updates the carried overview in place.
+            is P503UiEvent.MonthlyActivityResult ->
+                when (val result = event.result) {
+                    is com.unifiedledger.application.MonthlyActivityResult.Success ->
+                        state.copy(
+                            overview =
+                                state.overview.copy(
+                                    monthlyActivity = result.activity,
+                                    selectableMonths = event.selectableMonths,
+                                    monthlyReloadRequired = false,
+                                ),
+                        )
+                    com.unifiedledger.application.MonthlyActivityResult.InvalidState,
+                    com.unifiedledger.application.MonthlyActivityResult.Unavailable,
+                    -> P503AppState.InfrastructureFailure(InfrastructureFailureContext.READ, monthlyOverview = state.overview)
+                }
+            // DEFENSIVE DEAD BRANCH (the drilldown/AccountFlow precedent): `budgetEventAbsorbed`
+            // absorbs a budget landing before dispatch, so this branch is unreachable by
+            // construction and kept only so the family stays closed here.
+            is P503UiEvent.BudgetMonthLanded -> state.copy(overview = state.overview.copy(budgetView = event.result))
+            // The refresh family keeps the surface and its preserved overview as it was.
+            is P503UiEvent.InitialLoadResult,
+            P503UiEvent.InitialLoadFailed,
+            is P503UiEvent.RefreshResult,
+            P503UiEvent.RefreshFailed,
+            -> state
+            else -> unhandled(state, event)
+        }
+
+    /**
+     * P8-06 batch 4: applies one ACCEPTED calendar read. A success replaces the payload whole and
+     * records its provenance + read instant; a typed failure keeps the previous payload visible
+     * (labelled by its own month in the screen), the marker ends. A refused lease is the typed
+     * Unavailable; an unwired graph is its own state.
+     */
+    private fun applyCalendarMonth(
+        state: P503AppState.Calendar,
+        read: P806CalendarRead,
+    ): P503AppState.Calendar =
+        when (read) {
+            is P806CalendarRead.Landed ->
+                when (val result = read.result) {
+                    is com.unifiedledger.application.P806SnapshotResult.Success ->
+                        state.copy(
+                            month = result.snapshot.month,
+                            loaded = result.snapshot,
+                            loading = false,
+                            failure = null,
+                            unwired = false,
+                            loadedGeneration = read.capture.generation,
+                            loadedCatalogVersion = read.capture.catalogVersion,
+                            landedAsOf = read.capture.asOf,
+                        )
+                    is com.unifiedledger.application.P806SnapshotResult.Failed ->
+                        state.copy(loading = false, failure = result.failure)
+                }
+            is P806CalendarRead.Refused ->
+                state.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable)
+            is P806CalendarRead.Unwired ->
+                state.copy(loading = false, unwired = true)
         }
 
     /**

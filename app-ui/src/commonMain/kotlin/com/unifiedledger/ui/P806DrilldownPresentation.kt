@@ -90,15 +90,16 @@ internal fun p806DrilldownFace(state: P503AppState.ReportDrilldown): P806Drilldo
 
 /**
  * The header label of the open drilldown: the typed target's own name (「本期全部明细」 for the
- * period window, the captured category name for a category subtree), plus ` · 读取时点 <asOf>` when
- * the last accepted landing captured a read instant. A clock-less read carries no time suffix
- * instead of a fabricated one.
+ * period window, the captured category name for a category subtree, the date for a calendar day),
+ * plus ` · 读取时点 <asOf>` when the last accepted landing captured a read instant. A clock-less
+ * read carries no time suffix instead of a fabricated one.
  */
 internal fun p806DrilldownHeaderLabel(state: P503AppState.ReportDrilldown): String {
     val base =
         when (val target = state.target) {
             is ReportDrilldownTarget.Period -> "本期全部明细"
             is ReportDrilldownTarget.Category -> target.categoryName
+            is ReportDrilldownTarget.Day -> "${target.date} 明细"
         }
     val asOf = state.landedAsOf ?: return base
     return "$base · 读取时点 $asOf"

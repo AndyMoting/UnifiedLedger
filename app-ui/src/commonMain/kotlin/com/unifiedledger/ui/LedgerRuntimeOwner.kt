@@ -905,6 +905,10 @@ class LedgerLeaseScope(
                 // surface. A pure null check of the session-only drilldown query (never an
                 // invocation), so the report region renders its entries only when the read exists.
                 p806Drilldown = facade.p806DrilldownQuery != null,
+                // P8-06 batch 4 (D-362 1): the calendar read surface. A pure null check of the
+                // session-only calendar query (never an invocation), so the HOME month row renders
+                // the calendar entry only when that capability exists.
+                p806Calendar = facade.p806CalendarQuery != null,
             )
         }
 
@@ -1129,6 +1133,10 @@ data class LedgerSurfaces(
     // built the drilldown read. A pure field probe, never an invocation, so the report region
     // renders its period/category entries only when the drilldown page can actually be read.
     val p806Drilldown: Boolean = false,
+    // P8-06 batch 4 (D-362 1; spec sections 3.7/3.8/3.10): the composition root's catalog session
+    // built the calendar read. A pure field probe, never an invocation, so the HOME month row
+    // renders the 收支日历 entry only when the month can actually be read.
+    val p806Calendar: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean
