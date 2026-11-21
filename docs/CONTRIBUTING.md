@@ -383,6 +383,7 @@ Python 分片：`python-shards`（矩阵 1/2）按 `tools/ci/python-shards.txt`�
 - 新建或实质修改的 `docs/specs/` 设计在人工审查时必须标记为 `approved`、`proposal`、`superseded` 或 `historical`。尚未标记的既有设计保留其已在正式文档、决定或 Golden 登记中确认的 authority，并在下次实质修改时分类；`project_docs` 不负责推断或批量迁移该状态。
 - 确认后的产品行为、账务规则和架构变化必须同步更新对应文档。
 - `CURRENT_STATE.md` 只保留当前检查点、阻塞和唯一下一步。
+- `docs/ARCHIVE_*.md` 保存逐字历史，不参与正式文档检查；归档内容随原文档一并人工复核，当前事实只写正式文档。
 - 文档不得包含本机绝对路径、个人账务数据或临时讨论记录。
 - 需求、账务规则、架构、决定、黄金测试和当前状态各自只维护所属职责，避免复制整段内容。
 
