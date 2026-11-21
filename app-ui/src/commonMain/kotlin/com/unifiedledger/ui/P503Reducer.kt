@@ -2846,16 +2846,17 @@ class P503ReducerImpl(
                                 ),
                             // The carried calendar holds the same overview; keep its copy current so
                             // a day-detail close returns the updated month payload.
-                            returnToCalendar = state.returnToCalendar?.let { calendar ->
-                                calendar.copy(
-                                    overview =
-                                        calendar.overview.copy(
-                                            monthlyActivity = result.activity,
-                                            selectableMonths = event.selectableMonths,
-                                            monthlyReloadRequired = false,
-                                        ),
-                                )
-                            },
+                            returnToCalendar =
+                                state.returnToCalendar?.let { calendar ->
+                                    calendar.copy(
+                                        overview =
+                                            calendar.overview.copy(
+                                                monthlyActivity = result.activity,
+                                                selectableMonths = event.selectableMonths,
+                                                monthlyReloadRequired = false,
+                                            ),
+                                    )
+                                },
                         )
                     com.unifiedledger.application.MonthlyActivityResult.InvalidState,
                     com.unifiedledger.application.MonthlyActivityResult.Unavailable,

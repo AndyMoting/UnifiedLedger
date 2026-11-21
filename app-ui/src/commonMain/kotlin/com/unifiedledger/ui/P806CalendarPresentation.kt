@@ -75,6 +75,7 @@ internal fun p806CalendarShiftedMonth(
     month: YearMonth,
     offset: Int,
 ): YearMonth = month.plus(offset, kotlinx.datetime.DateTimeUnit.MONTH)
+
 /** One date cell: the date itself plus its accepted payload (null only for a malformed payload). */
 internal data class P806CalendarCell(
     val date: LocalDate,

@@ -225,5 +225,4 @@ private fun P806CalendarDayCell(
 }
 
 /** The cell's primary intensity magnitude: its largest positive net expense across the axis. */
-private fun p806CalendarCellExpense(day: P806CalendarDayView): Long =
-    day.currencies.maxOfOrNull { row -> row.netExpenseMinorUnits }?.coerceAtLeast(0L) ?: 0L
+private fun p806CalendarCellExpense(day: P806CalendarDayView): Long = day.currencies.maxOfOrNull { row -> row.netExpenseMinorUnits }?.coerceAtLeast(0L) ?: 0L
