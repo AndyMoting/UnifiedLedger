@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -55,9 +57,12 @@ import kotlin.time.Instant
  * exact minor units at the currency's precision; all decisions that matter are pure functions here
  * so the JVM tests hold them without a Compose runtime.
  *
- * Drilldown entries, the calendar, the typed detail return target and any write action are OUT of
- * this slice by the batch contract, so a category row opens no page: a level-1 row only expands and
- * collapses its own level-2 children in local UI state (D-343 section 3.9.1).
+ * Drilldown entries for the report period and category subtrees are offered by this batch (P8-06
+ * batch 3; D-362 1/Spec 3.9) when the graph wires the read and the slot is the shared eligibility
+ * seam's current result with a resolved window. A level-1 row tap still only expands/collapses its
+ * own level-2 children in local UI state; its 「全部明细」 button is a child that consumes its own
+ * click, and a level-2 row's whole row opens its own detail page. The calendar and any write action
+ * stay out of this slice.
  */
 
 /**
@@ -343,6 +348,12 @@ internal fun p806ReportCategoryExpansionMarker(expanded: Boolean): String = if (
 /** The accessibility click label of one level-1 row: the action plus that row's current name. */
 internal fun p806ReportCategoryExpandActionLabel(categoryName: String): String = "展开或收起$categoryName"
 
+/** The click/TalkBack label of one level-1 row's 「全部明细」 entry (P8-06 batch 3). */
+internal fun p806ReportCategoryAllDetailActionLabel(categoryName: String): String = "查看${categoryName}全部明细"
+
+/** The click/TalkBack label of one level-2 row's own detail entry (P8-06 batch 3). */
+internal fun p806ReportCategoryDetailActionLabel(categoryName: String): String = "查看${categoryName}明细"
+
 /**
  * The level-2 rows that render under one level-1 row: all of its children while it is expanded, none
  * while it is collapsed. The level-1 row itself — total included — stays visible in both states.
@@ -568,14 +579,19 @@ private fun P806ReportCurrencyBlock(row: P806CurrencyView) {
  * the explicit 无分类 row (D-343 section 3.9.1). The level-1 row and its total stay visible in both
  * states; the children render only while their level-1 row is expanded, so the section never shows a
  * child's contribution without its parent's. The interaction shape follows the P503 category region
- * precedent — a clickable row with the "展开或收起<name>" label and a `▾`/`▸` marker — and opens no
- * detail page (drilldown is a later batch).
+ * precedent — a clickable row with the "展开或收起<name>" label and a `▾`/`▸` marker.
+ *
+ * P8-06 batch 3 (D-362 1; spec section 3.9): when [onOpenCategoryDrilldown] is non-null (the graph
+ * is wired and the slot is eligible), the level-1 row gains a separate 「全部明细」 button that
+ * consumes its own click (so the row keeps toggling), and every level-2 row becomes a whole-row
+ * clickable opening its own detail page. A null callback renders no dead affordance.
  */
 @Composable
 private fun P806ReportCategorySection(
     title: String,
     categories: List<P806CategoryView>,
     uncategorized: List<P806CategoryCurrencyTotal>,
+    onOpenCategoryDrilldown: ((CategoryId, String) -> Unit)?,
 ) {
     val uncategorizedRow = p806ReportUncategorizedRowText(uncategorized)
     if (categories.isEmpty() && uncategorizedRow == null) return
@@ -596,15 +612,50 @@ private fun P806ReportCategorySection(
             Text(p806ReportCategoryExpansionMarker(expanded), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.width(4.dp))
             Text(p806ReportCategoryRowText(levelOne), style = MaterialTheme.typography.bodyMedium)
+            // The entry is a CHILD of the row: it consumes its own click, so tapping it opens the
+            // subtree page while tapping the rest of the row keeps toggling. The frozen
+            // 「查看<name>全部明细」 label must ride the CLICK ACTION (not only the node's content
+            // description), so a TalkBack user hears it as this row's action. A Material3
+            // TextButton takes no onClickLabel, and adding a second semantics onClick action beside
+            // its own would expose two actions for one invocation; the clickable text below carries
+            // exactly one labeled action (`Modifier.clickable(onClickLabel = …, role =
+            // Role.Button)` — the same mapping onClickLabel uses) and keeps the current bodySmall
+            // text with the same 12/8 padding and Material3's 48dp minimum touch target.
+            if (onOpenCategoryDrilldown != null) {
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "全部明细",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier =
+                        Modifier
+                            .minimumInteractiveComponentSize()
+                            .clickable(
+                                onClickLabel = p806ReportCategoryAllDetailActionLabel(levelOne.categoryName),
+                                role = Role.Button,
+                            ) {
+                                onOpenCategoryDrilldown(levelOne.categoryId, levelOne.categoryName)
+                            }.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
         }
         p806ReportCategoryVisibleChildren(levelOne, expanded).forEach { child ->
+            val childModifier =
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (onOpenCategoryDrilldown != null) {
+                            Modifier.clickable(onClickLabel = p806ReportCategoryDetailActionLabel(child.categoryName)) {
+                                onOpenCategoryDrilldown(child.categoryId, child.categoryName)
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ).semantics { contentDescription = p806ReportCategoryAccessibilityText(child, level = 2) }
+                    .padding(start = 16.dp)
             Text(
                 p806ReportCategoryRowText(child),
                 style = MaterialTheme.typography.bodyMedium,
-                modifier =
-                    Modifier
-                        .padding(start = 16.dp)
-                        .semantics { contentDescription = p806ReportCategoryAccessibilityText(child, level = 2) },
+                modifier = childModifier,
             )
         }
     }
@@ -652,14 +703,29 @@ internal fun P503ReportRegion(
     onUpdateCustomRange: (String, String) -> Unit,
     onCommitCustomRange: () -> Unit,
     onRetry: () -> Unit,
+    // P8-06 batch 3 (D-362 1; spec section 3.9): the drilldown entries. The graph's capability probe
+    // ANDs with the shared eligibility seam ([p806ReportDrilldownEntryVisible]), so an unwired graph
+    // or an ineligible slot renders no dead entry. The callbacks are the host's reads (the region
+    // itself reads nothing).
+    drilldownWired: Boolean = false,
+    onOpenPeriodDrilldown: (() -> Unit)? = null,
+    onOpenCategoryDrilldown: ((CategoryId, String) -> Unit)? = null,
 ) {
     val face = p806ReportRegionFace(state)
     if (face == P806ReportRegionFace.NOT_RENDERED) return
+    val drilldownEntryVisible = p806ReportDrilldownEntryVisible(state, drilldownWired)
+    val categoryDrilldown = if (drilldownEntryVisible) onOpenCategoryDrilldown else null
     Column(modifier = Modifier.fillMaxWidth()) {
         Spacer(Modifier.height(12.dp))
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
-        Text("报表期间", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("报表期间", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            // 「本期全部明细」: the period window's one drilldown entry (only with a resolved window).
+            if (drilldownEntryVisible && onOpenPeriodDrilldown != null) {
+                TextButton(onClick = onOpenPeriodDrilldown) { Text("本期全部明细", style = MaterialTheme.typography.bodySmall) }
+            }
+        }
         Text(p806ReportIndependentPeriodNotice(), style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(4.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
@@ -754,11 +820,13 @@ internal fun P503ReportRegion(
                         title = "支出分类",
                         categories = view.expenseCategories,
                         uncategorized = view.uncategorizedExpenseTotals,
+                        onOpenCategoryDrilldown = categoryDrilldown,
                     )
                     P806ReportCategorySection(
                         title = "收入分类",
                         categories = view.incomeCategories,
                         uncategorized = view.uncategorizedIncomeTotals,
+                        onOpenCategoryDrilldown = categoryDrilldown,
                     )
                 }
             }

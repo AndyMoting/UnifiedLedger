@@ -2,6 +2,7 @@ package com.unifiedledger.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -499,12 +500,17 @@ fun P503AnalysisScreen(
     // [monthlyActivity]. The host passes it only when the graph wires the P806 report read; null
     // keeps every pre-batch call site compiling and renders no dead region.
     reportRegion: (@Composable () -> Unit)? = null,
+    // P8-06 batch 3 (D-362 1/2; spec section 3.7): the analysis page's scroll state, HOISTED by the
+    // host so opening and closing the full-screen report drilldown loses neither the analysis page's
+    // position nor (on a READ failure) the retained page's position. The shell and every other page
+    // keep their own internal `rememberScrollState`.
+    scrollState: ScrollState,
 ) {
     // DEF-B (D-268): the Analysis tab summarizes the exact SQL aggregates carried by [state];
     // the bounded `state.transactions` projection is never summarized as if it were the ledger.
     val summary = remember(state, summarizeActivity) { summarizeActivity.summarizeAggregate(state) }
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState),
     ) {
         if (summary.totalTransactionCount == 0) {
             Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
