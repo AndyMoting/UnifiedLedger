@@ -42,6 +42,11 @@ ASSISTANT_TRACES = (
 )
 
 
+MAX_DOCUMENT_LINE_LENGTH = 2000
+MAX_DOCUMENT_BYTES = 120_000
+LENGTH_EXEMPT_DOCUMENTS = ("docs/DECISIONS.md",)
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     code: str
@@ -104,6 +109,26 @@ def validate_formal_docs(root: Path) -> list[ValidationIssue]:
     markdown_link = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
     for relative_path, path, text in documents:
+        if relative_path not in LENGTH_EXEMPT_DOCUMENTS:
+            byte_size = path.stat().st_size
+            if byte_size > MAX_DOCUMENT_BYTES:
+                issues.append(
+                    ValidationIssue(
+                        "oversized-document",
+                        relative_path,
+                        f"document is {byte_size} bytes (limit {MAX_DOCUMENT_BYTES})",
+                    )
+                )
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if len(line) > MAX_DOCUMENT_LINE_LENGTH:
+                    issues.append(
+                        ValidationIssue(
+                            "long-line",
+                            relative_path,
+                            f"line {line_number} is {len(line)} characters "
+                            f"(limit {MAX_DOCUMENT_LINE_LENGTH})",
+                        )
+                    )
         folded_text = text.casefold()
         if any(name.casefold() in folded_text for name in PROHIBITED_REFERENCES):
             issues.append(

@@ -145,6 +145,38 @@ class ProjectDocsValidatorTests(unittest.TestCase):
             issues = validate_formal_docs(root)
         self.assertTrue(any(issue.code == "unfinished-marker" for issue in issues))
 
+    def test_reports_long_lines(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            (root / "docs" / "CURRENT_STATE.md").write_text(
+                "x" * 2001, encoding="utf-8"
+            )
+            issues = validate_formal_docs(root)
+        self.assertEqual(["long-line"], [i.code for i in issues])
+        self.assertIn("line 1", issues[0].message)
+
+    def test_reports_oversized_documents(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            line = "x" * 2000
+            (root / "docs" / "CURRENT_STATE.md").write_text(
+                chr(10).join([line] * 61), encoding="utf-8"
+            )
+            issues = validate_formal_docs(root)
+        self.assertEqual(["oversized-document"], [i.code for i in issues])
+
+    def test_exempts_decisions_from_length_checks(self):
+        with TemporaryDirectory() as directory:
+            root = build_minimal_document_tree(Path(directory))
+            line = "x" * 2000
+            padding = chr(10).join([line] * 61 + ["x" * 2001])
+            (root / "docs" / "DECISIONS.md").write_text(
+                "## D-001 First" + chr(10) + padding + chr(10),
+                encoding="utf-8",
+            )
+            issues = validate_formal_docs(root)
+        self.assertEqual([], issues)
+
     def test_accepts_a_complete_minimal_tree(self):
         with TemporaryDirectory() as directory:
             root = build_minimal_document_tree(Path(directory))
