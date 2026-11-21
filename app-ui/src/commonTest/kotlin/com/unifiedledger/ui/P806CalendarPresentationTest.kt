@@ -134,7 +134,12 @@ class P806CalendarPresentationTest {
         // 2026-11-01 is a Sunday, so a Monday-first grid starts with six blanks.
         assertEquals(6, grid.leadingBlanks)
         assertEquals(6, grid.weeks.size)
-        assertTrue(grid.weeks.first().take(6).all { it == null })
+        assertTrue(
+            grid.weeks
+                .first()
+                .take(6)
+                .all { it == null },
+        )
         assertEquals(LocalDate(2026, 11, 1), grid.weeks.first()[6]?.date)
         // 2026-11-30 is a Monday, so it opens the final Monday-first row (column 0), and the rest of
         // that row is padding.
@@ -157,7 +162,14 @@ class P806CalendarPresentationTest {
         val january = YearMonth(2026, kotlinx.datetime.Month.JANUARY)
         val januaryGrid = p806CalendarGrid(january, view(month = january).days)
         assertEquals(31, januaryGrid.weeks.flatten().count { it != null })
-        assertEquals(LocalDate(2026, 1, 31), januaryGrid.weeks.flatten().filterNotNull().last().date)
+        assertEquals(
+            LocalDate(2026, 1, 31),
+            januaryGrid.weeks
+                .flatten()
+                .filterNotNull()
+                .last()
+                .date,
+        )
         assertTrue(januaryGrid.weeks.all { it.size == 7 })
     }
 

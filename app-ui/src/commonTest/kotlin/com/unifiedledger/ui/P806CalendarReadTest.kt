@@ -153,8 +153,7 @@ class P806CalendarReadTest {
         token: Long,
         month: YearMonth = this.month,
         ledger: LedgerId = ledgerId,
-    ): P806CalendarRequestIdentity =
-        P806CalendarRequestIdentity(token = token, ledgerId = ledger, month = month)
+    ): P806CalendarRequestIdentity = P806CalendarRequestIdentity(token = token, ledgerId = ledger, month = month)
 
     private fun overview(ledger: LedgerId = ledgerId): P503AppState.OverviewEmpty =
         P503AppState.OverviewEmpty(
@@ -214,16 +213,16 @@ class P806CalendarReadTest {
                         com.unifiedledger.application.P806CalendarDayView(
                             date = LocalDate(month.year, month.month, dayOfMonth),
                             window = P806Window(1_000L, 2_000L),
-                            currencies = axis.map { currency ->
-                                com.unifiedledger.application.P806CalendarCurrencyView(currency, 0L, 0L)
-                            },
+                            currencies =
+                                axis.map { currency ->
+                                    com.unifiedledger.application.P806CalendarCurrencyView(currency, 0L, 0L)
+                                },
                             transactionCount = 0,
                         )
                     },
         )
 
-    private fun calendarViewResult(month: YearMonth = this.month): P806SnapshotResult<P806CalendarView> =
-        P806SnapshotResult.Success(calendarView(month))
+    private fun calendarViewResult(month: YearMonth = this.month): P806SnapshotResult<P806CalendarView> = P806SnapshotResult.Success(calendarView(month))
 
     // ---------------------------------------------------------------- the read capture
 

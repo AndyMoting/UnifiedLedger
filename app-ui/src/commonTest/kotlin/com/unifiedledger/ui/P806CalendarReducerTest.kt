@@ -179,7 +179,13 @@ class P806CalendarReducerTest {
         val read = landed(identity(token = 5), P806SnapshotResult.Success(view(totalCount = 2)))
         val applied = assertIs<P503AppState.Calendar>(reducer.reduce(state, P503UiEvent.CalendarMonthLanded(read, 3, 7L)))
         assertEquals(month, applied.month)
-        assertEquals(2, applied.loaded?.days?.first()?.transactionCount)
+        assertEquals(
+            2,
+            applied.loaded
+                ?.days
+                ?.first()
+                ?.transactionCount,
+        )
         assertEquals(false, applied.loading)
         assertNull(applied.failure)
         assertEquals(3, applied.loadedGeneration)
@@ -303,7 +309,8 @@ class P806CalendarReducerTest {
                 reducer.reduce(
                     detail,
                     P503UiEvent.MonthlyActivityResult(
-                        com.unifiedledger.application.MonthlyActivityResult.Success(activity),
+                        com.unifiedledger.application.MonthlyActivityResult
+                            .Success(activity),
                         emptyList(),
                     ),
                 ),
