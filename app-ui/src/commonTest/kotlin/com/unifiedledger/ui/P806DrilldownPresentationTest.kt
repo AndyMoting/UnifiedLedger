@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.P806Period
 import com.unifiedledger.application.P806PeriodKind
 import com.unifiedledger.application.P806ReportView
@@ -11,7 +12,6 @@ import com.unifiedledger.application.P806TransactionPage
 import com.unifiedledger.application.P806Window
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
-import com.unifiedledger.domain.LedgerEntryRow
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind

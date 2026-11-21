@@ -8,6 +8,7 @@ import com.unifiedledger.application.ConfirmedIncomeReceipt
 import com.unifiedledger.application.ConfirmedTransferReceipt
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.LedgerCurrentStateReadPort
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.ManualExpenseCommitRecord
 import com.unifiedledger.application.ManualIncomeCommitRecord
 import com.unifiedledger.application.ManualTransferCommitRecord
@@ -24,7 +25,6 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
-import com.unifiedledger.domain.LedgerEntryRow
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind

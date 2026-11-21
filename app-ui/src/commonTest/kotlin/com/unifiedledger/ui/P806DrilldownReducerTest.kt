@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.P806DrilldownView
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.P806SnapshotResult
@@ -10,7 +11,6 @@ import com.unifiedledger.application.P806Window
 import com.unifiedledger.application.ParseManualExpenseAmount
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
-import com.unifiedledger.domain.LedgerEntryRow
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.domain.TransactionKind
