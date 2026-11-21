@@ -26,12 +26,14 @@ import kotlin.test.assertTrue
 /**
  * P8-06 typed returnTo 批 1 (D-361): the carried-write-back test for the ONE carrier variant that
  * had no existing test — `carriedReportCarrier`'s `TransactionDetail` branch — now that the detail
- * carries a TYPED return target. The frozen design (D-360 Q1): the returnTo domain is two values,
- * `null` (HOME) and `TransactionDetailReturnTo.AccountsFlow(carriedFlow)`. Every write site is the
- * ONE paired write-back ([P503AppState.TransactionDetail.withResolvedOverview]): both carried
- * overviews — the detail's own field AND the account-flow carrier's — receive the SAME landed
- * payload instance, so the flow the close returns (the whole carried
- * [P503AppState.AccountFlow]) never holds a payload a landing forgot to update.
+ * carries a TYPED return target. The frozen design (D-360 Q1; D-361 batch 2): the returnTo domain
+ * is three values — `null` (HOME), `TransactionDetailReturnTo.AccountsFlow(carriedFlow)` and
+ * `TransactionDetailReturnTo.Search(carriedSearch)`. Every write site is the ONE paired write-back
+ * ([P503AppState.TransactionDetail.withResolvedOverview]): both carried overviews — the detail's
+ * own field AND the carried target surface's ([P503AppState.AccountFlow] or
+ * [P503AppState.Search]) — receive the SAME landed payload instance, so the surface the close
+ * returns never holds a payload a landing forgot to update. This file exercises the account-flow
+ * carrier (the one with no pre-existing test); the search carrier rides the same write-back.
  *
  * The sites asserted here are exactly the D-361 roster: the report-carrier rebuild (this file's
  * namesake), the reducer's `BudgetMonthLanded` and `MonthlyActivityResult` Success transitions
@@ -112,6 +114,7 @@ class P806CarriedReportTransactionDetailTest {
             overview =
                 when (returnTo) {
                     is TransactionDetailReturnTo.AccountsFlow -> returnTo.carriedFlow.overview
+                    is TransactionDetailReturnTo.Search -> returnTo.carriedSearch.overview
                     null -> homeOverview()
                 },
             originTab = P503Tab.HOME,
