@@ -281,7 +281,12 @@ class P806DrilldownReadTest {
                 ),
             )
         assertEquals(cursor, landed.request.cursor)
-        assertEquals(cursor, setup.port.drilldownRequests.single().cursor)
+        assertEquals(
+            cursor,
+            setup.port.drilldownRequests
+                .single()
+                .cursor,
+        )
     }
 
     @Test
