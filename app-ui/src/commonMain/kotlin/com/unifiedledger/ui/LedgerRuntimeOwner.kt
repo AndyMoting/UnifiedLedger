@@ -901,6 +901,10 @@ class LedgerLeaseScope(
                 // null check of the session-only report query (never an invocation), so the analysis
                 // page renders the independent report region only when the capability exists.
                 p806Report = facade.p806ReportQuery != null,
+                // P8-06 batch 3 (D-362 1; spec sections 3.9/3.10.4): the report drilldown read
+                // surface. A pure null check of the session-only drilldown query (never an
+                // invocation), so the report region renders its entries only when the read exists.
+                p806Drilldown = facade.p806DrilldownQuery != null,
             )
         }
 
@@ -1121,6 +1125,10 @@ data class LedgerSurfaces(
     // report read. A pure field probe, never an invocation, so the analysis page renders the report
     // region only when the surface can actually be read.
     val p806Report: Boolean = false,
+    // P8-06 batch 3 (D-362 1; spec sections 3.9/3.10.4): the composition root's catalog session
+    // built the drilldown read. A pure field probe, never an invocation, so the report region
+    // renders its period/category entries only when the drilldown page can actually be read.
+    val p806Drilldown: Boolean = false,
 ) {
     /** The queue surface (entry A) is reachable: the read face is wired. */
     val accountReconciliationQueue: Boolean

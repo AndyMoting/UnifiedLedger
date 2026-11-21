@@ -24,16 +24,18 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * P8-06 typed returnTo 批 1 (D-361): the carried-write-back test for the ONE carrier variant that
- * had no existing test — `carriedReportCarrier`'s `TransactionDetail` branch — now that the detail
- * carries a TYPED return target. The frozen design (D-360 Q1; D-361 batch 2): the returnTo domain
- * is three values — `null` (HOME), `TransactionDetailReturnTo.AccountsFlow(carriedFlow)` and
- * `TransactionDetailReturnTo.Search(carriedSearch)`. Every write site is the ONE paired write-back
- * ([P503AppState.TransactionDetail.withResolvedOverview]): both carried overviews — the detail's
- * own field AND the carried target surface's ([P503AppState.AccountFlow] or
- * [P503AppState.Search]) — receive the SAME landed payload instance, so the surface the close
- * returns never holds a payload a landing forgot to update. This file exercises the account-flow
- * carrier (the one with no pre-existing test); the search carrier rides the same write-back.
+ * P8-06 typed returnTo 批 1 (D-361) and batch 3 (D-362 1): the carried-write-back test for the ONE
+ * carrier variant that had no existing test — `carriedReportCarrier`'s `TransactionDetail` branch —
+ * now that the detail carries a TYPED return target. The frozen design (D-360 Q1; D-361 batch 2;
+ * D-362 1): the returnTo domain is four values — `null` (HOME),
+ * `TransactionDetailReturnTo.AccountsFlow(carriedFlow)`, `TransactionDetailReturnTo.Search(carriedSearch)`
+ * and `TransactionDetailReturnTo.ReportDrilldown(carriedDrilldown)`. Every write site is the ONE
+ * paired write-back ([P503AppState.TransactionDetail.withResolvedOverview]): both carried overviews —
+ * the detail's own field AND the carried target surface's ([P503AppState.AccountFlow],
+ * [P503AppState.Search] or [P503AppState.ReportDrilldown]) — receive the SAME landed payload
+ * instance, so the surface the close returns never holds a payload a landing forgot to update. This
+ * file exercises the account-flow carrier (the one with no pre-existing test) and the batch-3
+ * report-drilldown carrier; the search carrier rides the same write-back.
  *
  * The sites asserted here are exactly the D-361 roster: the report-carrier rebuild (this file's
  * namesake), the reducer's `BudgetMonthLanded` and `MonthlyActivityResult` Success transitions
@@ -115,6 +117,7 @@ class P806CarriedReportTransactionDetailTest {
                 when (returnTo) {
                     is TransactionDetailReturnTo.AccountsFlow -> returnTo.carriedFlow.overview
                     is TransactionDetailReturnTo.Search -> returnTo.carriedSearch.overview
+                    is TransactionDetailReturnTo.ReportDrilldown -> returnTo.carriedDrilldown.overview
                     null -> homeOverview()
                 },
             originTab = P503Tab.HOME,
@@ -151,6 +154,36 @@ class P806CarriedReportTransactionDetailTest {
         assertEquals(1, target.carriedFlow.totalCount)
         assertEquals(ListScrollPosition(2, 10), target.carriedFlow.listScroll)
         assertEquals("零钱 · 资产 · CNY", target.carriedFlow.balanceLine)
+    }
+
+    @Test
+    fun theCarrierOfAReportDrilldownDetailWritesBothOverviewsWithTheSameInstance() {
+        // P8-06 batch 3 (D-362 1): the drilldown is the fourth typed return target. Its carrier
+        // branch follows the explicit §2.4 shape — the carried state keeps its own loaded rows,
+        // count, cursor and restore slot while the paired write-back refreshes its overview.
+        val drilldown =
+            P503AppState.ReportDrilldown(
+                overview = homeOverview(),
+                target = ReportDrilldownTarget.Period(com.unifiedledger.application.P806Window(startEpochNanos = 1_000L, endEpochNanos = 2_000L)),
+                totalCount = 1,
+                loadedGeneration = 3,
+                loadedCatalogVersion = 7L,
+                listScroll = ListScrollPosition(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = 120),
+            )
+        val detailState = detail(TransactionDetailReturnTo.ReportDrilldown(drilldown))
+        val landedOverview = homeOverview().copy(monthlyReloadRequired = false)
+        val rebuilt = assertNotNull(detailState.carriedReportCarrier()).rebuild(landedOverview)
+        val rebuiltDetail = assertIs<P503AppState.TransactionDetail>(rebuilt)
+        // The paired write-back: the detail's own overview AND the carried drilldown's overview
+        // hold the SAME landed instance — the returned drilldown reads either and gets the fresh
+        // payload, while its own payload fields are untouched by the copy.
+        assertSame(landedOverview, rebuiltDetail.overview)
+        val target = assertIs<TransactionDetailReturnTo.ReportDrilldown>(rebuiltDetail.returnTo)
+        assertSame(landedOverview, target.carriedDrilldown.overview)
+        assertEquals(1, target.carriedDrilldown.totalCount)
+        assertEquals(3, target.carriedDrilldown.loadedGeneration)
+        assertEquals(7L, target.carriedDrilldown.loadedCatalogVersion)
+        assertEquals(ListScrollPosition(0, 120), target.carriedDrilldown.listScroll)
     }
 
     @Test

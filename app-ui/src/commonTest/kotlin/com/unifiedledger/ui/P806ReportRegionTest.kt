@@ -552,4 +552,50 @@ class P806ReportRegionTest {
         assertEquals("普通收支笔数：4", p806ReportTransactionCountText(reportView()))
         assertEquals("普通收支笔数：0", p806ReportTransactionCountText(reportView(transactionCount = 0, currencies = emptyList())))
     }
+
+    // ---- P8-06 batch 3 (D-362 1/2; spec section 3.9): the drilldown entry's shared eligibility seam ----
+
+    @Test
+    fun theDrilldownEntryReusesTheSlotEligibilitySeamAndRequiresAPeriodWindow() {
+        // READY non-empty with a period + wired capability: the entry is offered.
+        assertTrue(p806ReportDrilldownEntryVisible(loaded(), wired = true))
+        // An EMPTY zero-contribution report with a period still offers the period entry (the
+        // category entries are withheld by the screen: no category row exists).
+        assertTrue(
+            p806ReportDrilldownEntryVisible(
+                loaded(reportView(transactionCount = 0, currencies = listOf(currencyView(income = 0L, netExpense = 0L, dailyAverage = 0L, count = 0)))),
+                wired = true,
+            ),
+        )
+        // The same eligibility seam the host's re-seed and the landing decision share: a pending
+        // read, a typed failure and a write-stale payload each withhold the entry.
+        assertTrue(!p806ReportDrilldownEntryVisible(loaded(loading = true), wired = true))
+        assertTrue(!p806ReportDrilldownEntryVisible(loaded().copy(failure = P806SnapshotFailure.Unavailable), wired = true))
+        assertTrue(!p806ReportDrilldownEntryVisible(loaded().copy(writeStale = true), wired = true))
+        // Unwired / no slot / no period (empty ledger or ALL without a span): no entry, no zero.
+        assertTrue(!p806ReportDrilldownEntryVisible(loaded(), wired = false))
+        assertTrue(!p806ReportDrilldownEntryVisible(null, wired = true))
+        assertTrue(!p806ReportDrilldownEntryVisible(P806ReportRegionState(unwired = true), wired = true))
+        assertTrue(!p806ReportDrilldownEntryVisible(loaded(reportView(period = null)), wired = true))
+    }
+
+    @Test
+    fun theLevelOneExpansionInteractionIsUnchangedByTheEntryAddition() {
+        // Tapping a level-1 row still only toggles its own expansion state; the row keeps its
+        // 「展开或收起<name>」 click label and the new entry is a separate child button.
+        val categoryId = CategoryId("category-food")
+        assertEquals(emptySet(), p806ReportCategoryInitialExpansion())
+        assertEquals(setOf(categoryId), p806ReportCategoryToggled(p806ReportCategoryInitialExpansion(), categoryId))
+        assertEquals(emptySet(), p806ReportCategoryToggled(setOf(categoryId), categoryId))
+        assertEquals("展开或收起餐饮", p806ReportCategoryExpandActionLabel("餐饮"))
+    }
+
+    @Test
+    fun theDrilldownEntryClickLabelsNameTheirRow() {
+        // The child 全部明细 entry and the level-2 row carry the SAME frozen strings as their
+        // click-action labels (P8-06 batch 3 §2.5); the composable wires them through
+        // `clickable(onClickLabel = …)`, so these pure helpers are the single string source.
+        assertEquals("查看餐饮全部明细", p806ReportCategoryAllDetailActionLabel("餐饮"))
+        assertEquals("查看餐饮明细", p806ReportCategoryDetailActionLabel("餐饮"))
+    }
 }
