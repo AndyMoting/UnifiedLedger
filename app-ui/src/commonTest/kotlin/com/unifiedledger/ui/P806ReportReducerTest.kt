@@ -50,6 +50,7 @@ class P806ReportReducerTest {
     private val otherLedgerId = LedgerId("ledger-other")
     private val expenseAccountId = AccountId("expense-food")
     private val cny = CurrencyUnit("CNY", 2)
+    private val usd = CurrencyUnit("USD", 2)
     private val readInstant = Instant.parse("2026-11-18T02:00:00Z")
     private val reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
 
@@ -90,6 +91,86 @@ class P806ReportReducerTest {
             futureTransactionCount = 0,
             detailPage = P806TransactionPage(rows = emptyList(), nextCursor = null),
             detailCount = 4,
+        )
+
+    /** A two-currency payload: the fixture whose ordered axis and per-currency rows can move apart. */
+    private fun twoCurrencyView(): P806ReportView =
+        P806ReportView(
+            ledgerId = ledgerId,
+            period = resolvedMonth(),
+            currencies =
+                listOf(
+                    P806CurrencyView(
+                        currency = cny,
+                        ordinaryIncomeMinorUnits = 0L,
+                        netExpenseMinorUnits = 3_000L,
+                        balanceMinorUnits = -3_000L,
+                        positiveExpenseMinorUnits = 3_000L,
+                        refundMinorUnits = 0L,
+                        dailyAverageMinorUnits = 100L,
+                        transactionCount = 4,
+                    ),
+                    P806CurrencyView(
+                        currency = usd,
+                        ordinaryIncomeMinorUnits = 0L,
+                        netExpenseMinorUnits = 2_000L,
+                        balanceMinorUnits = -2_000L,
+                        positiveExpenseMinorUnits = 2_000L,
+                        refundMinorUnits = 0L,
+                        dailyAverageMinorUnits = 50L,
+                        transactionCount = 2,
+                    ),
+                ),
+            expenseCategories = emptyList(),
+            incomeCategories = emptyList(),
+            uncategorizedExpenseTotals = emptyList(),
+            uncategorizedIncomeTotals = emptyList(),
+            transactionCount = 6,
+            futureTransactionCount = 0,
+            detailPage = P806TransactionPage(rows = emptyList(), nextCursor = null),
+            detailCount = 6,
+        )
+
+    /** The same two-currency payload with its axis ORDER swapped; every per-currency row is unchanged. */
+    private fun twoCurrencyViewAxisReordered(): P806ReportView = twoCurrencyView().let { payload -> payload.copy(currencies = payload.currencies.reversed()) }
+
+    /** The same two-currency payload with ONE exact USD amount changed; the axis order is unchanged. */
+    private fun twoCurrencyViewWithChangedUsdRow(): P806ReportView =
+        twoCurrencyView().let { payload ->
+            payload.copy(
+                currencies =
+                    payload.currencies.map { row ->
+                        if (row.currency == usd) row.copy(netExpenseMinorUnits = 2_001L) else row
+                    },
+            )
+        }
+
+    /** A payload whose axis is the NEW currency USD only. */
+    private fun usdView(): P806ReportView =
+        P806ReportView(
+            ledgerId = ledgerId,
+            period = resolvedMonth(),
+            currencies =
+                listOf(
+                    P806CurrencyView(
+                        currency = usd,
+                        ordinaryIncomeMinorUnits = 0L,
+                        netExpenseMinorUnits = 2_000L,
+                        balanceMinorUnits = -2_000L,
+                        positiveExpenseMinorUnits = 2_000L,
+                        refundMinorUnits = 0L,
+                        dailyAverageMinorUnits = 50L,
+                        transactionCount = 2,
+                    ),
+                ),
+            expenseCategories = emptyList(),
+            incomeCategories = emptyList(),
+            uncategorizedExpenseTotals = emptyList(),
+            uncategorizedIncomeTotals = emptyList(),
+            transactionCount = 2,
+            futureTransactionCount = 0,
+            detailPage = P806TransactionPage(rows = emptyList(), nextCursor = null),
+            detailCount = 2,
         )
 
     private fun resolvedMonth(): P806ResolvedPeriod =
@@ -150,11 +231,20 @@ class P806ReportReducerTest {
         period: P806Period = P806Period(P806PeriodKind.MONTH),
         generation: Generation = 3,
         catalogVersion: Long = 7L,
+        currencyAxis: List<CurrencyUnit> = emptyList(),
+        currencyPayloads: Map<CurrencyUnit, P806CurrencyView> = emptyMap(),
     ): P806ReportRead.Landed =
         P806ReportRead.Landed(
             capture =
                 P806ReportReadCapture(
-                    request = P806ReportRequestIdentity(token = token, ledgerId = ledgerId, period = period),
+                    request =
+                        P806ReportRequestIdentity(
+                            token = token,
+                            ledgerId = ledgerId,
+                            period = period,
+                            currencyAxis = currencyAxis,
+                            currencyPayloads = currencyPayloads,
+                        ),
                     generation = generation,
                     catalogVersion = catalogVersion,
                     asOf = readInstant,
@@ -168,17 +258,31 @@ class P806ReportReducerTest {
         generation: Generation = 3,
         catalogVersion: Long = 7L,
         snapshot: P806ResolvedPeriod = resolvedMonth(),
+        currencyAxis: List<CurrencyUnit> = emptyList(),
+        currencyPayloads: Map<CurrencyUnit, P806CurrencyView> = emptyMap(),
     ): P806ReportRead.Landed =
         P806ReportRead.Landed(
             capture =
                 P806ReportReadCapture(
-                    request = P806ReportRequestIdentity(token = token, ledgerId = ledgerId, period = period),
+                    request =
+                        P806ReportRequestIdentity(
+                            token = token,
+                            ledgerId = ledgerId,
+                            period = period,
+                            currencyAxis = currencyAxis,
+                            currencyPayloads = currencyPayloads,
+                        ),
                     generation = generation,
                     catalogVersion = catalogVersion,
                     asOf = readInstant,
                 ),
             result = P806SnapshotResult.Success(view(snapshot)),
         )
+
+    /** The request context derived at issue when [loadedSlot]'s payload was the current one. */
+    private fun capturedMonthAxis(): List<CurrencyUnit> = view(resolvedMonth()).p806CurrencyAxis()
+
+    private fun capturedMonthPayloads(): Map<CurrencyUnit, P806CurrencyView> = view(resolvedMonth()).p806CurrencyPayloads()
 
     private fun queueRow(
         postingId: String = "posting-1",
@@ -291,7 +395,14 @@ class P806ReportReducerTest {
                             P806ReportRead.Landed(
                                 capture =
                                     P806ReportReadCapture(
-                                        request = P806ReportRequestIdentity(token = 5L, ledgerId = ledgerId, period = custom),
+                                        request =
+                                            P806ReportRequestIdentity(
+                                                token = 5L,
+                                                ledgerId = ledgerId,
+                                                period = custom,
+                                                currencyAxis = capturedMonthAxis(),
+                                                currencyPayloads = capturedMonthPayloads(),
+                                            ),
                                         generation = 3,
                                         catalogVersion = 7L,
                                         asOf = readInstant,
@@ -357,7 +468,7 @@ class P806ReportReducerTest {
         val period = assertNotNull(started.reportRegion).period
         val advanced =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(started, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period), currentGeneration = 3, currentCatalogVersion = 8L)),
+                reducer.reduce(started, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 8L)),
             )
         val slot = assertNotNull(advanced.reportRegion)
         assertTrue(!slot.loading)
@@ -365,7 +476,7 @@ class P806ReportReducerTest {
         assertNotNull(slot.landed)
         val swapped =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(started, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period), currentGeneration = 4, currentCatalogVersion = 7L)),
+                reducer.reduce(started, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 4, currentCatalogVersion = 7L)),
             )
         assertEquals(P806SnapshotFailure.Unavailable, assertNotNull(swapped.reportRegion).failure)
         // A payload from another ledger is dropped whole as an invalid state.
@@ -374,7 +485,7 @@ class P806ReportReducerTest {
                 reducer.reduce(
                     started,
                     P503UiEvent.ReportPeriodResult(
-                        successRead(token = 5L, period = period).copy(
+                        successRead(token = 5L, period = period, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()).copy(
                             result = P806SnapshotResult.Success(view(resolvedMonth(), ledger = otherLedgerId)),
                         ),
                         currentGeneration = 3,
@@ -409,7 +520,7 @@ class P806ReportReducerTest {
         val detour = assertIs<P503AppState.AccountFlow>(reducer.reduce(started, P503UiEvent.SelectAccountFlow(expenseAccountId, "餐饮 · 支出 · CNY", 0L, cny)))
         val landed =
             assertIs<P503AppState.AccountFlow>(
-                reducer.reduce(detour, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period, snapshot = resolvedYear(2025)), currentGeneration = 3, currentCatalogVersion = 7L)),
+                reducer.reduce(detour, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period, snapshot = resolvedYear(2025), currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
             )
         val carried = assertNotNull(landed.overview.reportRegion)
         assertTrue(!carried.loading)
@@ -560,7 +671,7 @@ class P806ReportReducerTest {
         // Opening again never resets an existing slot (no read is lost behind it).
         assertSame(reopened, reducer.reduce(reopened, P503UiEvent.OpenReportRegion()))
         // The old read cannot land on the refreshed/re-opened overview: no request is in flight.
-        assertSame(reopened, reducer.reduce(reopened, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period), currentGeneration = 3, currentCatalogVersion = 7L)))
+        assertSame(reopened, reducer.reduce(reopened, P503UiEvent.ReportPeriodResult(successRead(token = 5L, period = period, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)))
     }
 
     @Test
@@ -745,7 +856,7 @@ class P806ReportReducerTest {
         assertEquals(P806ReportRegionFace.LOADING, p806ReportRegionFace(fencedSlot))
         assertTrue(!p806ReportSlotIsEligible(fencedSlot))
         // The OLD successful result (token 9) arrives before the refresh's own outcome: fenced, no change.
-        assertSame(fenced, reducer.reduce(fenced, P503UiEvent.ReportPeriodResult(successRead(token = 9L), currentGeneration = 3, currentCatalogVersion = 7L)))
+        assertSame(fenced, reducer.reduce(fenced, P503UiEvent.ReportPeriodResult(successRead(token = 9L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)))
         // A fenced in-flight marker is not a concluded landing: the memory records nothing, so it
         // cannot re-seed the old payload as READY (the write's history mark is exercised by
         // [aFailedRefreshRetryReseedsThePreWriteSlotOnlyAsOldHistoryAndANewReadReachesReady]).
@@ -759,7 +870,7 @@ class P806ReportReducerTest {
         val requesting = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(fenced, P503UiEvent.RetryReportPeriod(requestToken = 10L, period = P806Period(P806PeriodKind.MONTH))))
         assertTrue(assertNotNull(requesting.reportRegion).loading)
         assertTrue(assertNotNull(requesting.reportRegion).writeStale)
-        val landed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(requesting, P503UiEvent.ReportPeriodResult(successRead(token = 10L), currentGeneration = 3, currentCatalogVersion = 7L)))
+        val landed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(requesting, P503UiEvent.ReportPeriodResult(successRead(token = 10L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)))
         val landedSlot = assertNotNull(landed.reportRegion)
         assertTrue(!landedSlot.writeStale)
         assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(landedSlot))
@@ -787,7 +898,7 @@ class P806ReportReducerTest {
         // Its old result is fenced there too, and the carried state records nothing eligible.
         val carriedOld =
             assertIs<P503AppState.AccountFlow>(
-                reducer.reduce(carried, P503UiEvent.ReportPeriodResult(successRead(token = 11L), currentGeneration = 3, currentCatalogVersion = 7L)),
+                reducer.reduce(carried, P503UiEvent.ReportPeriodResult(successRead(token = 11L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
             )
         val carriedOldSlot = assertNotNull(carriedOld.overview.reportRegion)
         assertEquals(carriedSlot, carriedOldSlot)
@@ -869,7 +980,7 @@ class P806ReportReducerTest {
         assertTrue(assertNotNull(requesting.reportRegion).loading)
         val landedAgain =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(requesting, P503UiEvent.ReportPeriodResult(successRead(token = 6L), currentGeneration = 3, currentCatalogVersion = 7L)),
+                reducer.reduce(requesting, P503UiEvent.ReportPeriodResult(successRead(token = 6L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
             )
         memory.record(landedAgain)
         assertNotNull(memory.previousFor(3, 7L))
@@ -907,7 +1018,7 @@ class P806ReportReducerTest {
         assertTrue(assertNotNull(fenced.reportRegion).writeStale)
         // 3. The owed re-read is accepted (its token is above the fence) and FAILS.
         val reread = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(fenced, P503UiEvent.RetryReportPeriod(requestToken = 6L, period = P806Period(P806PeriodKind.MONTH))))
-        val failed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(reread, P503UiEvent.ReportPeriodResult(failedRead(token = 6L), currentGeneration = 3, currentCatalogVersion = 7L)))
+        val failed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(reread, P503UiEvent.ReportPeriodResult(failedRead(token = 6L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)))
         val slot = assertNotNull(failed.reportRegion)
         assertEquals(P806SnapshotFailure.Unavailable, slot.failure)
         assertTrue(!slot.loading)
@@ -937,7 +1048,7 @@ class P806ReportReducerTest {
         assertEquals(P806ReportRegionFace.FAILED, p806ReportRegionFace(reopenedSlot))
         // 5. Only the CURRENT request's success restores READY (the explicit retry is that request).
         val current = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(reopened, P503UiEvent.RetryReportPeriod(requestToken = 8L)))
-        val landed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(current, P503UiEvent.ReportPeriodResult(successRead(token = 8L), currentGeneration = 3, currentCatalogVersion = 7L)))
+        val landed = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(current, P503UiEvent.ReportPeriodResult(successRead(token = 8L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)))
         assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(assertNotNull(landed.reportRegion)))
     }
 
@@ -959,7 +1070,16 @@ class P806ReportReducerTest {
                 reducer.reduce(
                     reread,
                     P503UiEvent.ReportPeriodResult(
-                        read = P806ReportRead.Refused(P806ReportRequestIdentity(token = 6L, ledgerId = ledgerId, period = P806Period(P806PeriodKind.MONTH))),
+                        read =
+                            P806ReportRead.Refused(
+                                P806ReportRequestIdentity(
+                                    token = 6L,
+                                    ledgerId = ledgerId,
+                                    period = P806Period(P806PeriodKind.MONTH),
+                                    currencyAxis = capturedMonthAxis(),
+                                    currencyPayloads = capturedMonthPayloads(),
+                                ),
+                            ),
                         currentGeneration = 3,
                         currentCatalogVersion = 7L,
                     ),
@@ -1066,7 +1186,7 @@ class P806ReportReducerTest {
         // Its own landing still applies and becomes the current result.
         val landed =
             assertIs<P503AppState.AccountFlow>(
-                reducer.reduce(afterFailure, P503UiEvent.ReportPeriodResult(successRead(token = 10L), currentGeneration = 3, currentCatalogVersion = 7L)),
+                reducer.reduce(afterFailure, P503UiEvent.ReportPeriodResult(successRead(token = 10L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
             )
         val landedSlot = assertNotNull(landed.overview.reportRegion)
         assertTrue(!landedSlot.loading)
@@ -1237,6 +1357,141 @@ class P806ReportReducerTest {
         // Same success, no request in flight: the host's entry starts no read (零补读).
         assertTrue(!slot.loading)
         assertTrue(!slot.writeStale)
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(slot))
+    }
+
+    /**
+     * P8-06 batch 5 (D-362 section 4; spec section 3.7.5): with the same token, ledger and period, a
+     * pure AXIS change between the context derived at issue and the slot's CURRENT payload rejects
+     * the late read WHOLE. The identity comes from the real issuance factory over the slot's
+     * then-current payload; only the slot's current axis order moved, so only the ordered axis
+     * dimension differs. The slot keeps its payload and its loading marker.
+     */
+    @Test
+    fun anAxisReorderInTheSlotsCurrentPayloadRejectsTheLateReadWhole() {
+        val base =
+            overview(
+                P806ReportRegionState(
+                    period = P806Period(P806PeriodKind.MONTH),
+                    kind = P806PeriodKind.MONTH,
+                    requestToken = 5L,
+                    loading = true,
+                    landed = twoCurrencyView(),
+                ),
+            )
+        val read =
+            P806ReportRead.Landed(
+                capture =
+                    P806ReportReadCapture(
+                        request =
+                            p806ReportRequestIdentity(
+                                token = 5L,
+                                ledgerId = ledgerId,
+                                slot = assertNotNull(base.reportRegion),
+                            ),
+                        generation = 3,
+                        catalogVersion = 7L,
+                        asOf = readInstant,
+                    ),
+                result = P806SnapshotResult.Success(twoCurrencyView()),
+            )
+        // Same token, ledger and period; the same rows now displayed in the other axis order.
+        val page =
+            base.copy(
+                reportRegion = assertNotNull(base.reportRegion).copy(landed = twoCurrencyViewAxisReordered()),
+            )
+        assertEquals(P806ReportLandingDecision.STALE_CONTEXT, p806ReportLandingDecision(page, read, 3, 7L))
+        assertSame(page, reducer.reduce(page, P503UiEvent.ReportPeriodResult(read, currentGeneration = 3, currentCatalogVersion = 7L)))
+        assertTrue(assertNotNull(page.reportRegion).loading)
+    }
+
+    /**
+     * P8-06 batch 5 (D-362 section 4; spec section 3.7.5): with the same axis, token, ledger and
+     * period, ONE exact per-currency amount changing in the slot's CURRENT payload rejects the late
+     * read WHOLE. The axis order is identical, so only the per-currency dimension differs; the slot
+     * keeps its payload and its loading marker.
+     */
+    @Test
+    fun aPerCurrencyRowChangeInTheSlotsCurrentPayloadRejectsTheLateReadWhole() {
+        val base =
+            overview(
+                P806ReportRegionState(
+                    period = P806Period(P806PeriodKind.MONTH),
+                    kind = P806PeriodKind.MONTH,
+                    requestToken = 5L,
+                    loading = true,
+                    landed = twoCurrencyView(),
+                ),
+            )
+        val read =
+            P806ReportRead.Landed(
+                capture =
+                    P806ReportReadCapture(
+                        request =
+                            p806ReportRequestIdentity(
+                                token = 5L,
+                                ledgerId = ledgerId,
+                                slot = assertNotNull(base.reportRegion),
+                            ),
+                        generation = 3,
+                        catalogVersion = 7L,
+                        asOf = readInstant,
+                    ),
+                result = P806SnapshotResult.Success(twoCurrencyView()),
+            )
+        // Same token, ledger, period and axis order; only one USD amount in the slot's payload moved.
+        val page =
+            base.copy(
+                reportRegion = assertNotNull(base.reportRegion).copy(landed = twoCurrencyViewWithChangedUsdRow()),
+            )
+        assertEquals(P806ReportLandingDecision.STALE_CONTEXT, p806ReportLandingDecision(page, read, 3, 7L))
+        assertSame(page, reducer.reduce(page, P503UiEvent.ReportPeriodResult(read, currentGeneration = 3, currentCatalogVersion = 7L)))
+        assertTrue(assertNotNull(page.reportRegion).loading)
+    }
+
+    /**
+     * P8-06 batch 5 (D-362 section 4; spec section 3.7.5): a legitimate FIRST read (empty context),
+     * an EMPTY success and an AUTHORITATIVE re-read may land a NEW axis and new payload. Here the
+     * issued context is the previous CNY payload and the new snapshot's own axis is USD: the issued
+     * context, not the snapshot's axis, is what the guard compares while the slot still holds it, so
+     * the new axis is accepted and replaces the payload whole.
+     */
+    @Test
+    fun aLegalNewAxisLandsWhileTheIssuedContextHeldThePreviousAxis() {
+        val base =
+            overview(
+                P806ReportRegionState(
+                    period = P806Period(P806PeriodKind.MONTH),
+                    kind = P806PeriodKind.MONTH,
+                    requestToken = 5L,
+                    loading = true,
+                    landed = view(resolvedMonth()),
+                ),
+            )
+        val read =
+            P806ReportRead.Landed(
+                capture =
+                    P806ReportReadCapture(
+                        request =
+                            p806ReportRequestIdentity(
+                                token = 5L,
+                                ledgerId = ledgerId,
+                                slot = assertNotNull(base.reportRegion),
+                            ),
+                        generation = 3,
+                        catalogVersion = 7L,
+                        asOf = readInstant,
+                    ),
+                result = P806SnapshotResult.Success(usdView()),
+            )
+        assertEquals(P806ReportLandingDecision.ACCEPTED, p806ReportLandingDecision(base, read, 3, 7L))
+        val landed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(base, P503UiEvent.ReportPeriodResult(read, currentGeneration = 3, currentCatalogVersion = 7L)),
+            )
+        val slot = assertNotNull(landed.reportRegion)
+        assertTrue(!slot.loading)
+        assertEquals(listOf(usd), assertNotNull(slot.landed).currencies.map { row -> row.currency })
         assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(slot))
     }
 }

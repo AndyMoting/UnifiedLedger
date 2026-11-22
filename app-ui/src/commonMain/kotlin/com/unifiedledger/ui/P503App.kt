@@ -1465,7 +1465,9 @@ fun P503App(
      * P8-06 batch b (D-343 section 3.7): starts one report read — the initial load, the user's five
      * period choices, the explicit retry and the post-write re-request all end here. The token is
      * assigned here and the reducer stores it synchronously; the identity then binds the token, the
-     * ledger and the period definition the reducer accepted. The read runs OFF the UI thread through
+     * ledger, the period definition the reducer accepted AND the payload context the slot holds at
+     * this launch (the applied ordered currency axis and each currency's row). The read runs OFF the
+     * UI thread through
      * the acquire-first lease and lands with the CURRENT generation and catalog version captured on
      * the main thread, so a superseded read never touches a newer request. The landing hop records
      * the landed slot for the next rebuild and tells the coordinator what is now READY.
@@ -1474,7 +1476,7 @@ fun P503App(
         val overview = latestState.value as? P503AppState.OverviewEmpty ?: return
         val slot = overview.reportRegion ?: return
         if (!slot.loading || slot.requestToken != requestToken) return
-        val request = P806ReportRequestIdentity(token = requestToken, ledgerId = overview.state.ledgerId, period = slot.period)
+        val request = p806ReportRequestIdentity(token = requestToken, ledgerId = overview.state.ledgerId, slot = slot)
         scope.launch(Dispatchers.Default) {
             val read = readP806Report(reportReadLease, request, ledger.ledgerClock)
             scope.launch {

@@ -546,6 +546,23 @@ class P806ReportReadTest {
     // ---------------------------------------------------------------- the landing decision (acceptance B)
 
     @Test
+    fun theIssuedIdentityDerivesTheSlotsCurrentPayloadContextAndAFreshSlotYieldsItEmpty() {
+        // P8-06 batch 5 (D-362 4): the identity a read echoes is derived at issue from the payload
+        // the slot holds now — the ordered axis plus each currency's exact row — and a first read
+        // derives the empty context.
+        val setup = sessionSetup()
+        val read = assertIs<P806ReportRead.Landed>(readP806Report(Seam(generation = 3, facade = setup.facade), identity(token = 5), clock))
+        val payload = assertIs<P806SnapshotResult.Success<P806ReportView>>(read.result).snapshot
+        val slot = P806ReportRegionState(requestToken = 6L, loading = true, landed = payload)
+        val issued = p806ReportRequestIdentity(token = 6L, ledgerId = ledgerId, slot = slot)
+        assertEquals(listOf(cny), issued.currencyAxis)
+        assertEquals(payload.p806CurrencyPayloads(), issued.currencyPayloads)
+        val fresh = p806ReportRequestIdentity(token = 1L, ledgerId = ledgerId, slot = P806ReportRegionState(requestToken = 1L, loading = true))
+        assertTrue(fresh.currencyAxis.isEmpty())
+        assertTrue(fresh.currencyPayloads.isEmpty())
+    }
+
+    @Test
     fun theLandingDecisionAcceptsTheMatchingCaptureAndRejectsAnotherTokenPeriodOrLedger() {
         val setup = sessionSetup()
         val read = assertIs<P806ReportRead.Landed>(readP806Report(Seam(generation = 3, facade = setup.facade), identity(token = 5), clock))

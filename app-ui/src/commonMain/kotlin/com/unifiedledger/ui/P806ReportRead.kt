@@ -1,10 +1,12 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.P806CurrencyView
 import com.unifiedledger.application.P806Period
 import com.unifiedledger.application.P806ReportView
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.P806SnapshotResult
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerId
 import kotlin.time.Instant
 
@@ -13,30 +15,67 @@ import kotlin.time.Instant
  *
  * One report read is one P806 report snapshot (the composite typed read: period amounts, counts,
  * the currency axis, the detail head) under ONE acquire-first lease. The capture binds the request
- * identity (token, ledger, period definition) to the acquire-time generation and to the QUERY
- * INSTANCE's construction catalog version — never to the catalog's current value — plus the
- * application read instant the surface shows as its as-of. The landing decision compares that
- * capture with the active generation and the catalog's current version (comparison only) and
- * requires the request to still be the slot's ACTIVE request; the payload itself must belong to one
- * snapshot.
+ * identity (token, ledger, period definition, and the payload context derived at issue time — the
+ * ordered currency axis plus each currency's row) to the acquire-time generation
+ * and to the QUERY INSTANCE's construction catalog version — never to the catalog's current value —
+ * plus the application read instant the surface shows as its as-of. The landing decision compares
+ * that capture with the active generation and the catalog's current version (comparison only) and
+ * requires the request to still be the slot's ACTIVE request with the same current payload
+ * context; the payload itself must belong to one snapshot.
  *
  * Nothing here labels a read as a database commit time, and nothing here performs Shanghai time
  * arithmetic: the period geometry belongs to the application layer.
  */
 
 /**
- * The identity of one report request (D-343 section 3.7: request identity).
+ * The identity of one report request (D-343 section 3.7; D-362 section 4: request identity).
  *
  * [token] is the host's monotonic request token; [period] is the requested period definition
  * (kind plus its explicit anchor, or the custom dates). The parsed window is NOT part of the
  * identity: it is resolved by the application layer from the period and the ledger span, and a
  * stale resolution never outlives the request it was read for.
+ *
+ * [currencyAxis] and [currencyPayloads] are the payload context the slot HELD when the request was
+ * issued (the applied payload's ordered currency axis and each currency's row; empty for a first
+ * read). They are derived from the slot's current payload at issue and compared at landing with the
+ * context derived from the slot's current payload then — never with the new snapshot's own axis, so
+ * a legal first read, an empty success or an authoritative re-read may land a different axis and
+ * payload. [currencyPayloads] is keyed by currency, so a pure AXIS reorder leaves every per-currency
+ * row unchanged and the two dimensions are compared separately. The exact amounts are compared only
+ * in memory and never travel to a log or a store.
  */
 data class P806ReportRequestIdentity(
     val token: Long,
     val ledgerId: LedgerId,
     val period: P806Period,
+    val currencyAxis: List<CurrencyUnit> = emptyList(),
+    val currencyPayloads: Map<CurrencyUnit, P806CurrencyView> = emptyMap(),
 )
+
+/** The ordered currency axis of [this] payload; the empty axis when nothing has landed. */
+internal fun P806ReportView?.p806CurrencyAxis(): List<CurrencyUnit> = this?.currencies?.map { row -> row.currency }.orEmpty()
+
+/** The per-currency payload rows of [this] payload, keyed by currency. */
+internal fun P806ReportView?.p806CurrencyPayloads(): Map<CurrencyUnit, P806CurrencyView> = this?.currencies?.associateBy { row -> row.currency }.orEmpty()
+
+/**
+ * The identity of the read for [slot]'s already-accepted request: the token, the ledger, the
+ * requested period and the payload context the slot holds NOW (its applied axis and per-currency
+ * rows). A fresh slot issues the empty context; a legal first read or re-read therefore compares
+ * only the context the user was actually looking at when the request was issued.
+ */
+internal fun p806ReportRequestIdentity(
+    token: Long,
+    ledgerId: LedgerId,
+    slot: P806ReportRegionState,
+): P806ReportRequestIdentity =
+    P806ReportRequestIdentity(
+        token = token,
+        ledgerId = ledgerId,
+        period = slot.period,
+        currencyAxis = slot.landed.p806CurrencyAxis(),
+        currencyPayloads = slot.landed.p806CurrencyPayloads(),
+    )
 
 /**
  * One completed report read: the request, the lease generation it ran under, the catalog version
@@ -80,7 +119,10 @@ sealed interface P806ReportRead {
  *
  * [STALE_REQUEST] covers a read that is no longer the slot's ACTIVE request, a superseded token, a
  * different requested period and another ledger: such a landing changes nothing, so a newer request
- * keeps its own loading state. [STALE_GENERATION] and [CATALOG_ADVANCED] end ONLY the matching
+ * keeps its own loading state. [STALE_CONTEXT] is the same whole-block drop for the payload
+ * context: with the same token, ledger and period, a changed ordered currency axis or a changed
+ * per-currency row still rejects the read whole, without touching the slot or its
+ * loading. [STALE_GENERATION] and [CATALOG_ADVANCED] end ONLY the matching
  * request's loading (the last success stays visible, labelled as old context) and leave the retry to
  * the user. [PAYLOAD_REJECTED] is a matching active request whose success payload does not belong to
  * one snapshot (another ledger, or a duplicated currency axis): the payload is dropped whole and the
@@ -89,6 +131,7 @@ sealed interface P806ReportRead {
 internal enum class P806ReportLandingDecision {
     ACCEPTED,
     STALE_REQUEST,
+    STALE_CONTEXT,
     STALE_GENERATION,
     CATALOG_ADVANCED,
     PAYLOAD_REJECTED,
@@ -279,8 +322,11 @@ internal class P806ReportSlotMemory {
  * The landing verdict, evaluated on the UI thread against the CURRENT generation and catalog
  * version. A landing is considered only while the slot still marks this request in flight (a
  * duplicated completion, or one that arrived after a newer request took over, changes nothing) and
- * only for the request's own ledger and period. The captures are compared as captured; the current
- * catalog version is only compared, never used to stamp a payload.
+ * only for the request's own ledger, period and payload context (the ordered currency axis and the
+ * per-currency rows, derived independently from the slot's CURRENT payload and compared
+ * separately). The new snapshot's own axis is NOT compared with that context: its consistency is
+ * the payload check's business. The catalog version is only compared, never used to stamp a
+ * payload.
  */
 internal fun p806ReportLandingDecision(
     state: P503AppState.OverviewEmpty,
@@ -298,6 +344,12 @@ internal fun p806ReportLandingDecision(
     if (request.token != slot.requestToken) return P806ReportLandingDecision.STALE_REQUEST
     if (request.ledgerId != state.state.ledgerId) return P806ReportLandingDecision.STALE_REQUEST
     if (request.period != slot.period) return P806ReportLandingDecision.STALE_REQUEST
+    // The payload context the slot held at issue must still be the one it holds now. An axis change
+    // or a per-currency row change rejects the read WHOLE — the slot keeps its payload and loading,
+    // and this cannot preempt a first read, an empty success or an authoritative re-read, whose new
+    // snapshot axis is compared only by the payload check below.
+    if (request.currencyAxis != slot.landed.p806CurrencyAxis()) return P806ReportLandingDecision.STALE_CONTEXT
+    if (request.currencyPayloads != slot.landed.p806CurrencyPayloads()) return P806ReportLandingDecision.STALE_CONTEXT
     return when (read) {
         is P806ReportRead.Refused -> P806ReportLandingDecision.ACCEPTED
         is P806ReportRead.Unwired ->
