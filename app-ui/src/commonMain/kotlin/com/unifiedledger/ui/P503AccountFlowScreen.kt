@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.P806AccountPostingRow
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.TransactionId
 import com.unifiedledger.ui.theme.LocalP8Palette
 
@@ -107,7 +108,7 @@ internal fun P503AccountFlowScreen(
         // rendered). The balance is the account's exact display balance (minor units + currency),
         // formatted through the exact pipeline — never floating point.
         Text(
-            state.balanceCurrency.code + " " + formatMinorUnits(state.balanceMinorUnits, state.balanceCurrency.precision),
+            accountBalanceText(state.balanceMinorUnits, state.balanceCurrency),
             style = MaterialTheme.typography.headlineMedium,
         )
         Text(
@@ -324,6 +325,17 @@ private fun P8AccountFlowRow(
         )
     }
 }
+
+/**
+ * The one source of an account's current-balance display text: the currency code first, then the
+ * exact signed display amount ([p806MinorUnitsText] keeps the `Long.MIN_VALUE` end exact). The
+ * account-flow balance headline and the asset screen's per-account row both render this, so the
+ * two V-8 projections (余额大字＝资产页当前余额) cannot drift and neither loses the last minor unit.
+ */
+internal fun accountBalanceText(
+    minorUnits: Long,
+    currency: CurrencyUnit,
+): String = "${currency.code} ${p806MinorUnitsText(minorUnits, currency.precision)}"
 
 /**
  * The one source of the posting row's account-and-amount text: the account name, the exact signed
