@@ -4,9 +4,11 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CatalogAuthority
 import com.unifiedledger.application.LedgerClock
+import com.unifiedledger.application.MonthlyActivityResult
 import com.unifiedledger.application.P806AccountRequest
 import com.unifiedledger.application.P806CalendarQuery
 import com.unifiedledger.application.P806CalendarView
+import com.unifiedledger.application.P806CategoryCurrencyTotal
 import com.unifiedledger.application.P806DrilldownRequest
 import com.unifiedledger.application.P806DrilldownSnapshot
 import com.unifiedledger.application.P806DrilldownView
@@ -18,6 +20,7 @@ import com.unifiedledger.application.P806ReportView
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.P806SnapshotResult
 import com.unifiedledger.application.P806Window
+import com.unifiedledger.application.QueryMonthlyActivity
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
@@ -64,6 +67,7 @@ class P806CoverageTest {
     private val salaryLeaf = CategoryId("cat-salary-leaf")
     private val bonusAccount = AccountId("income-bonus")
     private val usdExpense = AccountId("expense-usd")
+    private val miscExpense = AccountId("expense-misc")
 
     @Test
     fun perCurrencyCountsComeFromTheSnapshotAndNeverSumToTheGlobalCount() {
@@ -211,8 +215,16 @@ class P806CoverageTest {
                 insertTransaction(driver, "tx-clean", "EXPENSE", null, "2026-11-02T00:00:00Z", "2026-11-02T00:00:00Z", listOf(breakfast to 100L, cash to -100L))
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-            // A successful read can only be produced by three zero counters.
-            assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(adapter.readReportSnapshot(reportRequest(version, catalog)))
+            // V-11 clean side: the clean window is genuinely non-empty — the report and its detail
+            // page carry the one contribution, so the zero counters are not a vacuous empty read.
+            val clean =
+                assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(
+                    adapter.readReportSnapshot(reportRequest(version, catalog)),
+                ).snapshot
+            assertEquals(1, clean.transactionCount)
+            assertEquals(1, clean.detailCount)
+            assertEquals(1, clean.firstPage.rows.size)
+            assertEquals(listOf(cny), clean.currencyCounts.map { it.currency })
             val emptyWindow =
                 P806Window(
                     Instant.parse("2027-01-01T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
@@ -222,6 +234,34 @@ class P806CoverageTest {
             assertEquals(0, empty.totalCount)
             assertTrue(empty.page.rows.isEmpty())
             assertNull(empty.page.nextCursor)
+            // V-11: a REQUESTED window with no rows is a successful empty report (the ledger has a
+            // span, so this is not NoPeriod): every amount, count and page is zero, never a failure.
+            val emptyReport =
+                assertIs<P806SnapshotResult.Success<P806ReportSnapshot>>(
+                    adapter.readReportSnapshot(
+                        com.unifiedledger.application.P806ReportRequest(
+                            ledgerId = ledgerId,
+                            catalog = catalog,
+                            period =
+                                P806Period(
+                                    P806PeriodKind.CUSTOM,
+                                    customStart = kotlinx.datetime.LocalDate(2027, 1, 1),
+                                    customEnd = kotlinx.datetime.LocalDate(2027, 1, 31),
+                                ),
+                            today = kotlinx.datetime.LocalDate(2026, 11, 17),
+                            futureFromEpochNanos = Instant.parse("2026-11-18T00:00:00+08:00").toEpochMilliseconds() * 1_000_000L,
+                            expectedCatalogVersion = version,
+                        ),
+                    ),
+                ).snapshot
+            assertNotNull(emptyReport.window, "a requested window stays a window, not NoPeriod")
+            assertEquals(0, emptyReport.transactionCount)
+            assertEquals(0, emptyReport.detailCount)
+            assertEquals(0, emptyReport.futureTransactionCount)
+            assertTrue(emptyReport.postingTotals.isEmpty())
+            assertTrue(emptyReport.currencyCounts.isEmpty())
+            assertTrue(emptyReport.firstPage.rows.isEmpty())
+            assertNull(emptyReport.firstPage.nextCursor)
 
             // The three counters are read directly (test-only queries; they do not change the
             // production C0): a clean window and an empty window must both answer 0, never NULL.
@@ -259,6 +299,133 @@ class P806CoverageTest {
             assertEquals(0L, occurredProbe.unresolved_account)
             assertEquals(0L, occurredProbe.cross_ledger_account)
             assertEquals(0L, occurredProbe.currency_mismatch)
+        }
+    }
+
+    @Test
+    fun topLevelCategorySumsIncludingUncategorizedReconcileWithTheMonthlyCard() {
+        withDatabase { driver, database, version ->
+            val catalog = seedCatalog(driver, allAccounts() + miscExpenseAccount(), version)
+            inFixtureTransaction(driver) {
+                // Categorized and uncategorized expense legs, each with a refund, plus categorized
+                // and unmapped income legs. All values are anonymous.
+                insertTransaction(driver, "tx-breakfast", "EXPENSE", null, "2026-11-02T00:00:00Z", "2026-11-02T00:00:00Z", listOf(breakfast to 100L, cash to -100L))
+                insertTransaction(driver, "tx-dinner", "EXPENSE", null, "2026-11-03T00:00:00Z", "2026-11-03T00:00:00Z", listOf(dinner to 200L, cash to -200L))
+                insertTransaction(driver, "tx-misc", "EXPENSE", null, "2026-11-04T00:00:00Z", "2026-11-04T00:00:00Z", listOf(miscExpense to 300L, cash to -300L))
+                insertTransaction(driver, "tx-dinner-refund", "EXPENSE", "REFUND_RECEIPT", "2026-11-05T00:00:00Z", "2026-11-05T00:00:00Z", listOf(dinner to -50L, cash to 50L))
+                insertTransaction(driver, "tx-misc-refund", "EXPENSE", "REFUND_RECEIPT", "2026-11-06T00:00:00Z", "2026-11-06T00:00:00Z", listOf(miscExpense to -25L, cash to 25L))
+                insertTransaction(driver, "tx-salary", "INCOME", null, "2026-11-07T00:00:00Z", "2026-11-07T00:00:00Z", listOf(salary to -5_000L, cash to 5_000L))
+                insertTransaction(driver, "tx-bonus-reversal", "INCOME", null, "2026-11-08T00:00:00Z", "2026-11-08T00:00:00Z", listOf(bonusAccount to 700L, cash to -700L))
+            }
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val clock = FixedClock("2026-11-17T00:00:00Z")
+            val view =
+                (
+                    P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), clock)
+                        .query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>
+                ).snapshot
+            val monthly =
+                assertIs<MonthlyActivityResult.Success>(
+                    QueryMonthlyActivity(adapter, ledgerId, catalog, clock)
+                        .query(kotlinx.datetime.YearMonth(2026, kotlinx.datetime.Month.NOVEMBER)),
+                ).activity
+            val card = monthly.currencies.first { it.currency == cny }
+
+            // V-5: the top-level category rows (each one already the checked sum of its children),
+            // plus the explicit uncategorized totals, must reconstruct the monthly card exactly.
+            val expensePositive =
+                view.expenseCategories.sumOf { it.totals.cnyValue { total -> total.positiveMinorUnits } } +
+                    view.uncategorizedExpenseTotals.cnyValue { it.positiveMinorUnits }
+            val expenseRefund =
+                view.expenseCategories.sumOf { it.totals.cnyValue { total -> total.refundMinorUnits } } +
+                    view.uncategorizedExpenseTotals.cnyValue { it.refundMinorUnits }
+            val incomePositive =
+                view.incomeCategories.sumOf { it.totals.cnyValue { total -> total.positiveMinorUnits } } +
+                    view.uncategorizedIncomeTotals.cnyValue { it.positiveMinorUnits }
+            val incomeRefund =
+                view.incomeCategories.sumOf { it.totals.cnyValue { total -> total.refundMinorUnits } } +
+                    view.uncategorizedIncomeTotals.cnyValue { it.refundMinorUnits }
+
+            assertEquals(card.positiveExpenseMinorUnits, expensePositive, "top-level + uncategorized gross expense")
+            assertEquals(card.refundMinorUnits, expenseRefund, "top-level + uncategorized expense refund")
+            assertEquals(card.netExpenseMinorUnits, expensePositive + expenseRefund, "top-level + uncategorized net expense")
+            assertEquals(card.ordinaryIncomeMinorUnits, incomePositive + incomeRefund, "top-level + uncategorized ordinary income")
+            // The same totals against the folded card of the same request.
+            val folded = view.currencies.first { it.currency == cny }
+            assertEquals(folded.positiveExpenseMinorUnits, expensePositive)
+            assertEquals(folded.refundMinorUnits, expenseRefund)
+            assertEquals(folded.ordinaryIncomeMinorUnits, incomePositive + incomeRefund)
+
+            // Explicit expected figures: 100 + 200 categorized + 300 uncategorized = 600 gross,
+            // refunds -50 and -25, income 5,000 with a -700 reversal.
+            assertEquals(600L, expensePositive)
+            assertEquals(-75L, expenseRefund)
+            assertEquals(525L, expensePositive + expenseRefund)
+            assertEquals(4_300L, incomePositive + incomeRefund)
+            assertEquals(5_000L, incomePositive)
+            assertEquals(-700L, incomeRefund)
+        }
+    }
+
+    @Test
+    fun anInactiveRenamedCategoryKeepsItsHistoryUnderTheCurrentNameAndThePredicatesStayDistinct() {
+        withDatabase { driver, database, version ->
+            seedCatalog(driver, allAccounts(), version)
+            inFixtureTransaction(driver) {
+                // Every seeded category gets a CURRENT name; cat-food-other is renamed (its old
+                // CURRENT row becomes SUPERSEDED) and then deactivated, the historical shape.
+                categories().forEach { category ->
+                    exec(
+                        driver,
+                        "INSERT INTO catalog_name_history (ledger_id, owner_kind, owner_id, version_number, name, status) " +
+                            "VALUES ('${ledgerId.value}', 'category', '${category.id.value}', 1, '${category.name}', 'CURRENT')",
+                    )
+                }
+                exec(driver, "UPDATE catalog_name_history SET status = 'SUPERSEDED' WHERE owner_id = '${foodOther.value}' AND version_number = 1")
+                exec(
+                    driver,
+                    "INSERT INTO catalog_name_history (ledger_id, owner_kind, owner_id, version_number, name, status) " +
+                        "VALUES ('${ledgerId.value}', 'category', '${foodOther.value}', 2, '晚餐（归档）', 'CURRENT')",
+                )
+                exec(driver, "UPDATE catalog_category SET active = 0 WHERE category_id = '${foodOther.value}'")
+                insertTransaction(driver, "tx-breakfast", "EXPENSE", null, "2026-11-02T00:00:00Z", "2026-11-02T00:00:00Z", listOf(breakfast to 100L, cash to -100L))
+                insertTransaction(driver, "tx-dinner", "EXPENSE", null, "2026-11-03T00:00:00Z", "2026-11-03T00:00:00Z", listOf(dinner to 200L, cash to -200L))
+            }
+            // V-10: the authority comes from the stored catalog, so the display name is the CURRENT
+            // name-history row even though the category row itself is inactive.
+            val authority = assertNotNull(SqlDelightCatalogStore(database, driver).load(ledgerId))
+            val renamed = authority.catalog.categories.first { it.id == foodOther }
+            assertEquals(false, renamed.active, "the category is historical")
+            assertEquals("晚餐（归档）", renamed.name, "the current name wins over the superseded one")
+
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val view =
+                (
+                    P806ReportQuery(adapter, ledgerId, authority, FixedClock("2026-11-17T00:00:00Z"))
+                        .query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>
+                ).snapshot
+            val parent = view.expenseCategories.first { it.categoryId == foodParent }
+            val child = parent.children.first { it.categoryId == foodOther }
+            assertEquals("晚餐（归档）", child.categoryName, "an inactive category still appears under its current name")
+            assertEquals(200L, child.totals.single().positiveMinorUnits)
+
+            // The drilldown predicates stay distinct: the parent covers both leaves, the leaf only
+            // its own row, and the whole period equals the parent here (both are categorized).
+            val parentPage = page(adapter, novemberWindow(), foodParent.value, version)
+            assertEquals(setOf("tx-breakfast", "tx-dinner"), parentPage.page.rows.map { it.transactionId.value }.toSet())
+            assertEquals(2, parentPage.totalCount)
+            val leafPage = page(adapter, novemberWindow(), foodOther.value, version)
+            assertEquals(listOf("tx-dinner"), leafPage.page.rows.map { it.transactionId.value })
+            assertEquals(1, leafPage.totalCount)
+            val wholePeriod = page(adapter, novemberWindow(), "", version)
+            assertEquals(2, wholePeriod.totalCount)
+            assertEquals(2, wholePeriod.page.rows.map { it.transactionId.value }.toSet().size)
+            val parentIds = parentPage.page.rows.map { it.transactionId.value }.toSet()
+            val leafIds = leafPage.page.rows.map { it.transactionId.value }.toSet()
+            assertTrue(
+                leafIds.isNotEmpty() && parentIds.containsAll(leafIds) && leafIds != parentIds,
+                "the leaf predicate is a strict non-empty subset of its parent",
+            )
         }
     }
 
@@ -485,6 +652,10 @@ class P806CoverageTest {
     }
     // ---------------------------------------------------------------- helpers
 
+    /** The CNY column of one category total list, or 0 when that currency is absent. */
+    private fun List<P806CategoryCurrencyTotal>.cnyValue(select: (P806CategoryCurrencyTotal) -> Long): Long =
+        firstOrNull { it.currency == cny }?.let(select) ?: 0L
+
     private fun page(
         adapter: SqlDelightLedgerCurrentStateReadAdapter,
         window: P806Window,
@@ -537,6 +708,9 @@ class P806CoverageTest {
             Account(bonusAccount, ledgerId, AccountKind.INCOME, cny, false, false, name = "无分类收入账户"),
             Account(usdExpense, ledgerId, AccountKind.EXPENSE, usd, false, false, name = "USD 支出"),
         )
+
+    /** An EXPENSE account no category maps to: its legs are the explicit 无分类 expense row. */
+    private fun miscExpenseAccount(): Account = Account(miscExpense, ledgerId, AccountKind.EXPENSE, cny, false, false, name = "其他支出")
 
     private fun categories(): List<Category> =
         listOf(
