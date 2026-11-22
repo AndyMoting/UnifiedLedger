@@ -412,16 +412,26 @@ class P806CoverageTest {
             // The drilldown predicates stay distinct: the parent covers both leaves, the leaf only
             // its own row, and the whole period equals the parent here (both are categorized).
             val parentPage = page(adapter, novemberWindow(), foodParent.value, version)
-            assertEquals(setOf("tx-breakfast", "tx-dinner"), parentPage.page.rows.map { it.transactionId.value }.toSet())
+            val parentIds =
+                parentPage.page.rows
+                    .map { it.transactionId.value }
+                    .toSet()
+            assertEquals(setOf("tx-breakfast", "tx-dinner"), parentIds)
             assertEquals(2, parentPage.totalCount)
             val leafPage = page(adapter, novemberWindow(), foodOther.value, version)
             assertEquals(listOf("tx-dinner"), leafPage.page.rows.map { it.transactionId.value })
             assertEquals(1, leafPage.totalCount)
             val wholePeriod = page(adapter, novemberWindow(), "", version)
             assertEquals(2, wholePeriod.totalCount)
-            assertEquals(2, wholePeriod.page.rows.map { it.transactionId.value }.toSet().size)
-            val parentIds = parentPage.page.rows.map { it.transactionId.value }.toSet()
-            val leafIds = leafPage.page.rows.map { it.transactionId.value }.toSet()
+            val wholePeriodIds =
+                wholePeriod.page.rows
+                    .map { it.transactionId.value }
+                    .toSet()
+            assertEquals(2, wholePeriodIds.size)
+            val leafIds =
+                leafPage.page.rows
+                    .map { it.transactionId.value }
+                    .toSet()
             assertTrue(
                 leafIds.isNotEmpty() && parentIds.containsAll(leafIds) && leafIds != parentIds,
                 "the leaf predicate is a strict non-empty subset of its parent",
@@ -653,8 +663,7 @@ class P806CoverageTest {
     // ---------------------------------------------------------------- helpers
 
     /** The CNY column of one category total list, or 0 when that currency is absent. */
-    private fun List<P806CategoryCurrencyTotal>.cnyValue(select: (P806CategoryCurrencyTotal) -> Long): Long =
-        firstOrNull { it.currency == cny }?.let(select) ?: 0L
+    private fun List<P806CategoryCurrencyTotal>.cnyValue(select: (P806CategoryCurrencyTotal) -> Long): Long = firstOrNull { it.currency == cny }?.let(select) ?: 0L
 
     private fun page(
         adapter: SqlDelightLedgerCurrentStateReadAdapter,

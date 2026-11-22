@@ -439,6 +439,7 @@ class P806SnapshotReadTest {
                 insertTransaction(driver, "tx-income-kind", "INCOME", null, "2026-11-08T00:00:00Z", "2026-11-08T00:00:00Z", listOf(salary to -5_000L, cash to 5_000L))
             }
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+
             fun snapshot(accountId: AccountId): P806AccountSnapshot =
                 assertIs<P806SnapshotResult.Success<P806AccountSnapshot>>(
                     adapter.readAccountPostingsSnapshot(P806AccountRequest(ledgerId, accountId, expectedCatalogVersion = version)),
@@ -532,11 +533,12 @@ class P806SnapshotReadTest {
                     // V-11: the probe row itself carries the non-zero counter for THIS class only;
                     // the other two counters stay at zero, in BOTH fixture scenarios.
                     val probe =
-                        database.ledgerQueries.p806StatisticsCatalogConsistencyProbe(
-                            ledger_id = ledgerId.value,
-                            window_start_nanos = novemberWindow().startEpochNanos,
-                            window_end_nanos = novemberWindow().endEpochNanos,
-                        ).executeAsOne()
+                        database.ledgerQueries
+                            .p806StatisticsCatalogConsistencyProbe(
+                                ledger_id = ledgerId.value,
+                                window_start_nanos = novemberWindow().startEpochNanos,
+                                window_end_nanos = novemberWindow().endEpochNanos,
+                            ).executeAsOne()
                     val (unresolved, cross, mismatch) = expectedCounters.getValue(label)
                     assertEquals(unresolved, probe.unresolved_account ?: 0L, "unresolved counter of $label ($variant)")
                     assertEquals(cross, probe.cross_ledger_account ?: 0L, "cross-ledger counter of $label ($variant)")
