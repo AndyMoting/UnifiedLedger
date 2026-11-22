@@ -19,12 +19,17 @@
 #   read landed) and `refund-confirmation.png` (original, arrival account, amount and occurred-at
 #   filled, then 继续, at 1.3x) — the human read V-14 asks for.
 # - `profile=p806` (P8-06 batch 6 V-12): an independent anonymous seed of two fixed expenses on
-#   one clock-relative day, capturing `report.png` (the ANALYSIS report region), `calendar.png`
-#   (the month grid with the seeded day cell) and `day-detail.png` (that day's drilldown rows) at
-#   1.3x. Month, day, count and exact signed amounts are re-derived from the seed database by both
-#   the driver and the gate. The same run records `talkback-capability.txt`: spoken output stays
-#   PENDING evidence (a semantic dump or focus callback is not TalkBack's own utterance log), and
-#   it never fails the screenshot limbs.
+#   one clock-relative day, capturing `report.png` (the ANALYSIS report region),
+#   `report-daily-average.png` (the same region scrolled until the natural-day statement reads in
+#   full), `calendar.png` (the month grid with the seeded day cell) and `day-detail.png` (that
+#   day's drilldown rows) at 1.3x. Month, day, count and exact signed amounts are re-derived from
+#   the seed database by both the driver and the gate. The run then drives REAL TalkBack on the
+#   image's own package (D-292): the androidTest focus probe moves accessibility focus to each
+#   screen's target, TalkBack's VERBOSE `SpeechControllerImpl` utterance log is captured inside
+#   that target's time window, and each screen is classified as not-obtained / fragments-missing /
+#   amount-wrong / success. The p806 gate fails unless every ordered speech target is success; the
+#   screenshot and accessibility-dump artifacts are captured before that leg and stay independent
+#   of it.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
@@ -33,7 +38,10 @@
 # its text node; a scrollable screen's off-screen children stay in the tree, so marker presence is
 # NOT a viewport-containment claim), no string the previous screen renders is still present (a
 # navigation that did not land is not evidence), and the seed digest host.json records is the seed
-# file's own (a gate can never be re-derived over a different database). "No visual overflow"
+# file's own (a gate can never be re-derived over a different database). For p806 it also re-parses
+# every ordered target's own raw TalkBack window, bound to its own command ID and the component the
+# run actually enabled, and requires 成功: 未取得, 片段缺失 and 金额错误 are named failures, and the
+# recorded APK hashes must match the files on disk. "No visual overflow"
 # stays a human judgement on the artifact.
 #
 # WHY CLOUD
@@ -53,7 +61,7 @@ on:
         required: true
         type: string
       profile:
-        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 日历日格 + 日明细（3 屏）'
+        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 报表自然日说明 + 日历日格 + 日明细（4 屏，含真实 TalkBack 朗读）'
         required: false
         default: 'empty'
         type: choice
@@ -113,6 +121,16 @@ jobs:
           set -euo pipefail
           mkdir -p fontscale-evidence
           sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
+      - name: Build the androidTest APK that hosts the focus probe (p806 only)
+        if: inputs.profile == 'p806'
+        # D-292's probe is an androidTest service, never part of the product build; the run installs
+        # this APK and enables the probe component for the speech leg.
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebugAndroidTest --warning-mode all
+          test -f android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+          sha256sum android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
+            | tee fontscale-evidence/host-test-apk.txt
       - name: Write the prepared ledger database (seeded, refund and p806 profiles only)
         if: inputs.profile == 'seeded' || inputs.profile == 'refund' || inputs.profile == 'p806'
         # Each writer is a jvmTest no-op unless its property names the output; the build script
@@ -156,13 +174,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -u
-            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --avd-name ul-fontscale
+            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --avd-name ul-fontscale --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
       - name: Re-derive the gate from the evidence on disk
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           FONT_SCALE: ${{ inputs.font_scale }}
-        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}"
+        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
       - name: Upload the sample evidence
         if: always()
         uses: actions/upload-artifact@v4
