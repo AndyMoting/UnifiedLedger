@@ -327,7 +327,7 @@ private fun P8AssetAccountLine(
             modifier = Modifier.padding(start = 8.dp),
         )
         Text(
-            "${row.currency.code} ${formatMinorUnits(row.minorUnits, row.currency.precision)}",
+            accountBalanceText(row.minorUnits, row.currency),
             style = MaterialTheme.typography.bodyLarge,
             color = palette.onSurface,
             modifier = Modifier.padding(start = 12.dp),
