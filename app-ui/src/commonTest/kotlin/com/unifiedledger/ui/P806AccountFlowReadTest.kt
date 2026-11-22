@@ -348,6 +348,48 @@ class P806AccountFlowReadTest {
     }
 
     @Test
+    fun theSharedBalanceTextKeepsTheExactAmountForBothV8Projections() {
+        // QueryLedgerCurrentState preserves an ASSET's Long.MIN_VALUE display balance. Both screens
+        // used the shared formatter, which substitutes Long.MAX_VALUE and shows ...58.07; the V-8
+        // pair (account-flow headline = asset-screen row) must instead show the exact ...58.08.
+        val account =
+            ManageableAccountView(
+                accountId = accountId,
+                name = "默认支付账户",
+                kind = AccountKind.ASSET,
+                currency = cny,
+                active = true,
+                balanceMinorUnits = null,
+            )
+        fun projections(displayMinorUnits: Long): Pair<P806AccountFlowHeader, P8AssetAccountRow> {
+            val balances =
+                listOf(
+                    AccountCurrencyBalance(
+                        accountId = accountId,
+                        currency = cny,
+                        ledgerSignedMinorUnits = displayMinorUnits,
+                        displayMinorUnits = displayMinorUnits,
+                    ),
+                )
+            val header = assertNotNull(p806AccountFlowHeader(accountId, emptyMap(), listOf(account), balances))
+            val assetRow = assetAccountGroups(listOf(account), balances.associateBy { balance -> balance.accountId }).assetRows.single()
+            return header to assetRow
+        }
+
+        val (extremeHeader, extremeAssetRow) = projections(Long.MIN_VALUE)
+        assertEquals("CNY -92233720368547758.08", accountBalanceText(extremeHeader.displayMinorUnits, extremeHeader.currency))
+        assertEquals("CNY -92233720368547758.08", accountBalanceText(extremeAssetRow.minorUnits, extremeAssetRow.currency))
+
+        // Ordinary and zero values are the control: both projections keep the currency-first output.
+        val (ordinaryHeader, ordinaryAssetRow) = projections(1_234L)
+        assertEquals("CNY 12.34", accountBalanceText(ordinaryHeader.displayMinorUnits, ordinaryHeader.currency))
+        assertEquals("CNY 12.34", accountBalanceText(ordinaryAssetRow.minorUnits, ordinaryAssetRow.currency))
+        val (zeroHeader, zeroAssetRow) = projections(0L)
+        assertEquals("CNY 0.00", accountBalanceText(zeroHeader.displayMinorUnits, zeroHeader.currency))
+        assertEquals("CNY 0.00", accountBalanceText(zeroAssetRow.minorUnits, zeroAssetRow.currency))
+    }
+
+    @Test
     fun theLandingDecisionAcceptsTheMatchingCaptureAndRejectsACatalogAdvance() {
         val setup = sessionSetup()
         val read = assertIs<P806AccountPageRead.Landed>(readP806AccountPage(Seam(generation = 3, facade = setup.facade), identity(token = 5)))
