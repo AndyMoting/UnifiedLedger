@@ -132,8 +132,7 @@ class P806ReportReducerTest {
         )
 
     /** The same two-currency payload with its axis ORDER swapped; every per-currency row is unchanged. */
-    private fun twoCurrencyViewAxisReordered(): P806ReportView =
-        twoCurrencyView().let { payload -> payload.copy(currencies = payload.currencies.reversed()) }
+    private fun twoCurrencyViewAxisReordered(): P806ReportView = twoCurrencyView().let { payload -> payload.copy(currencies = payload.currencies.reversed()) }
 
     /** The same two-currency payload with ONE exact USD amount changed; the axis order is unchanged. */
     private fun twoCurrencyViewWithChangedUsdRow(): P806ReportView =
@@ -1071,15 +1070,16 @@ class P806ReportReducerTest {
                 reducer.reduce(
                     reread,
                     P503UiEvent.ReportPeriodResult(
-                        read = P806ReportRead.Refused(
-                            P806ReportRequestIdentity(
-                                token = 6L,
-                                ledgerId = ledgerId,
-                                period = P806Period(P806PeriodKind.MONTH),
-                                currencyAxis = capturedMonthAxis(),
-                                currencyPayloads = capturedMonthPayloads(),
+                        read =
+                            P806ReportRead.Refused(
+                                P806ReportRequestIdentity(
+                                    token = 6L,
+                                    ledgerId = ledgerId,
+                                    period = P806Period(P806PeriodKind.MONTH),
+                                    currencyAxis = capturedMonthAxis(),
+                                    currencyPayloads = capturedMonthPayloads(),
+                                ),
                             ),
-                        ),
                         currentGeneration = 3,
                         currentCatalogVersion = 7L,
                     ),
