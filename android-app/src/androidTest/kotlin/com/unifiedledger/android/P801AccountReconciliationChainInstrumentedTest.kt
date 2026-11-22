@@ -286,8 +286,9 @@ class P801AccountReconciliationChainInstrumentedTest {
         check(auditAfter is P801ReconciledLegAuditResult.Success) { "the audit read must still answer, got $auditAfter" }
         assertEquals("the audit read-back must be identical after the rejection", auditBefore.audit, auditAfter.audit)
         assertEquals(1, auditAfter.audit.evidence.size)
-        assertEquals(seeded.evidenceId, auditAfter.audit.evidence.single().evidenceId)
-        assertEquals(P801ChainFacts.INPUT_REF, auditAfter.audit.evidence.single().source.importInputRef)
+        val linkedEvidence = auditAfter.audit.evidence.single()
+        assertEquals(seeded.evidenceId, linkedEvidence.evidenceId)
+        assertEquals(P801ChainFacts.INPUT_REF, linkedEvidence.source.importInputRef)
         assertEquals(P408ReconciliationStatus.CHECKED, checkNotNull(auditAfter.audit.reconciliation).status)
 
         // Q2-F03 control on its own redirected ledger: the IDENTICAL request shape — same valid
