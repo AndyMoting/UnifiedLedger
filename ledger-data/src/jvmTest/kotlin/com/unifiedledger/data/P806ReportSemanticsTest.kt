@@ -5,6 +5,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.unifiedledger.application.CatalogAuthority
 import com.unifiedledger.application.LedgerClock
 import com.unifiedledger.application.MonthlyActivityResult
+import com.unifiedledger.application.MonthlyBuckets
 import com.unifiedledger.application.P806CalendarQuery
 import com.unifiedledger.application.P806CalendarRequest
 import com.unifiedledger.application.P806CalendarSnapshot
@@ -31,6 +32,8 @@ import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
@@ -122,6 +125,8 @@ class P806ReportSemanticsTest {
             seedCatalog(driver, standardAccounts() + usdAccount() + usdAssetAccount(), version)
             insertTransaction(driver, "tx-cny", "EXPENSE", null, "2026-11-10T02:00:00Z", "2026-11-10T02:00:00Z", listOf(breakfast to 1_000L, cash to -1_000L))
             insertTransaction(driver, "tx-usd", "EXPENSE", null, "2026-11-10T03:00:00Z", "2026-11-10T03:00:00Z", listOf(usdExpense to 500L, usdCash to -500L), currency = usd)
+            // V-9: a future statistics date still has its own day cell.
+            insertTransaction(driver, "tx-future-nov", "EXPENSE", null, "2026-11-25T02:00:00Z", "2026-11-25T02:00:00Z", listOf(breakfast to 700L, cash to -700L))
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val catalog = catalogOf(standardAccounts() + usdAccount() + usdAssetAccount())
             val query = P806CalendarQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
@@ -138,6 +143,16 @@ class P806ReportSemanticsTest {
             assertTrue(zero.currencies.all { it.netExpenseMinorUnits == 0L && it.ordinaryIncomeMinorUnits == 0L })
             assertEquals(cny, view.axis.first())
             assertEquals(usd, view.axis.last())
+            // V-9: the future day grid cell and its day drilldown count agree.
+            val futureDay = view.days.first { it.date == kotlinx.datetime.LocalDate(2026, 11, 25) }
+            assertEquals(1, futureDay.transactionCount)
+            assertEquals(700L, futureDay.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+            val futureDrilldown =
+                assertIs<P806SnapshotResult.Success<P806DrilldownSnapshot>>(
+                    adapter.readDrilldownSnapshot(P806DrilldownRequest(ledgerId, futureDay.window, expectedCatalogVersion = version)),
+                ).snapshot
+            assertEquals(futureDay.transactionCount, futureDrilldown.totalCount)
+            assertEquals(listOf("tx-future-nov"), futureDrilldown.page.rows.map { it.transactionId.value })
             // The raw snapshot carries the same global count (one number per day).
             val raw =
                 (
@@ -209,9 +224,14 @@ class P806ReportSemanticsTest {
             insertTransaction(driver, "tx-future-expense", "EXPENSE", null, "2026-11-20T02:00:00Z", "2026-11-20T02:00:00Z", listOf(breakfast to 100L, cash to -100L))
             insertTransaction(driver, "tx-future-special", "EXPENSE", "STORED_VALUE_SPEND", "2026-11-21T02:00:00Z", "2026-11-21T02:00:00Z", listOf(breakfast to 100L, cash to -100L))
             insertTransaction(driver, "tx-future-transfer", "ACCOUNT_TRANSFER", null, "2026-11-22T02:00:00Z", "2026-11-22T02:00:00Z", listOf(savings to 100L, cash to -100L))
+            // V-18: 18:00 Shanghai on the clock's own local date is later but NOT a future date.
+            insertTransaction(driver, "tx-same-day-later", "EXPENSE", null, "2026-11-17T10:00:00Z", "2026-11-17T10:00:00Z", listOf(breakfast to 50L, cash to -50L))
             val view = (report.query(P806Period(P806PeriodKind.MONTH)) as P806SnapshotResult.Success<P806ReportView>).snapshot
             // Only the ordinary contribution counts; the special kind and the principal do not.
             assertEquals(1, view.futureTransactionCount)
+            // The same-day-later row is inside this month and counted, just not as a future date.
+            assertEquals(2, view.transactionCount)
+            assertEquals(2, view.detailCount)
         }
     }
 
@@ -403,6 +423,12 @@ class P806ReportSemanticsTest {
             insertTransaction(driver, "tx-transfer-fee", "ACCOUNT_TRANSFER", null, "2026-11-04T02:00:00Z", "2026-11-04T02:00:00Z", listOf(savings to -5_000L, cash to 4_900L, breakfast to 100L))
             // Collect with real interest: only the INCOME interest leg contributes; principal does not.
             insertTransaction(driver, "tx-collect-interest", "ACCOUNT_TRANSFER", "COLLECT", "2026-11-05T02:00:00Z", "2026-11-05T02:00:00Z", listOf(receivable to -10_000L, cash to 10_100L, salary to -100L))
+            // V-9: pure-principal LEND has no EXPENSE/INCOME leg, so it never contributes.
+            insertTransaction(driver, "tx-lend-principal", "LEND", null, "2026-11-06T02:00:00Z", "2026-11-06T02:00:00Z", listOf(savings to -20_000L, receivable to 20_000L))
+            // V-9: stored-value spend is a special canonical kind, so even its EXPENSE leg is excluded.
+            insertTransaction(driver, "tx-stored-value-spend", "EXPENSE", "STORED_VALUE_SPEND", "2026-11-07T02:00:00Z", "2026-11-07T02:00:00Z", listOf(wallet to -5_000L, breakfast to 5_000L))
+            // V-9: a real refund contributes its own negative part in the same window.
+            insertTransaction(driver, "tx-refund-ordinary", "EXPENSE", "REFUND_RECEIPT", "2026-11-08T02:00:00Z", "2026-11-08T02:00:00Z", listOf(breakfast to -400L, cash to 400L))
             val catalog = catalogOf(accounts)
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val report = P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
@@ -432,19 +458,52 @@ class P806ReportSemanticsTest {
             assertEquals(100L, interest.ordinaryIncomeMinorUnits, "only the real interest leg contributes")
             assertEquals(1, interest.transactionCount)
 
+            val lend = currencyOf(oneDay(6))
+            assertEquals(0L, lend.netExpenseMinorUnits, "a pure-principal LEND never enters ordinary totals")
+            assertEquals(0L, lend.ordinaryIncomeMinorUnits)
+            assertEquals(0, lend.transactionCount)
+
+            val storedValueSpend = currencyOf(oneDay(7))
+            assertEquals(0L, storedValueSpend.netExpenseMinorUnits, "a stored-value spend stays out even with an EXPENSE leg")
+            assertEquals(0L, storedValueSpend.ordinaryIncomeMinorUnits)
+            assertEquals(0, storedValueSpend.transactionCount)
+
+            // V-9: the refund is isolated on its own day: only the negative refund column moves.
+            val refund = currencyOf(oneDay(8))
+            assertEquals(0L, refund.positiveExpenseMinorUnits)
+            assertEquals(-400L, refund.refundMinorUnits, "a refund contributes only its negative part")
+            assertEquals(-400L, refund.netExpenseMinorUnits)
+            assertEquals(0L, refund.ordinaryIncomeMinorUnits)
+            assertEquals(1, refund.transactionCount)
+
             val month =
                 assertIs<P806SnapshotResult.Success<P806ReportView>>(report.query(P806Period(P806PeriodKind.MONTH))).snapshot
             val monthCny = month.currencies.first { it.currency == cny }
-            assertEquals(100L, monthCny.netExpenseMinorUnits)
+            assertEquals(100L, monthCny.positiveExpenseMinorUnits)
+            assertEquals(-400L, monthCny.refundMinorUnits)
+            assertEquals(-300L, monthCny.netExpenseMinorUnits)
             assertEquals(100L, monthCny.ordinaryIncomeMinorUnits)
-            assertEquals(0L, monthCny.balanceMinorUnits)
-            assertEquals(2, month.transactionCount)
+            assertEquals(400L, monthCny.balanceMinorUnits)
+            assertEquals(3, month.transactionCount)
+            assertEquals(3, monthCny.transactionCount)
+            assertEquals(3, month.detailCount)
+            assertEquals(setOf("tx-transfer-fee", "tx-collect-interest", "tx-refund-ordinary"), month.detailPage.rows.map { it.transactionId.value }.toSet())
+            // V-9: the no-category (full) drilldown count and page use the same contribution set.
+            val fullDrilldown =
+                assertIs<P806SnapshotResult.Success<P806DrilldownSnapshot>>(
+                    adapter.readDrilldownSnapshot(
+                        P806DrilldownRequest(ledgerId, assertNotNull(month.period).window, expectedCatalogVersion = version),
+                    ),
+                ).snapshot
+            assertEquals(3, fullDrilldown.totalCount)
+            assertEquals(setOf("tx-transfer-fee", "tx-collect-interest", "tx-refund-ordinary"), fullDrilldown.page.rows.map { it.transactionId.value }.toSet())
             val feeLeaf =
                 month.expenseCategories
                     .first { it.categoryId == foodParent }
                     .children
                     .first { it.categoryId == breakfastLeaf }
             assertEquals(100L, feeLeaf.totals.first().positiveMinorUnits)
+            assertEquals(-400L, feeLeaf.totals.first().refundMinorUnits, "the refund stays a separate negative column")
         }
     }
 
@@ -479,6 +538,224 @@ class P806ReportSemanticsTest {
             assertEquals(MonthlyActivityResult.InvalidState, monthlyWith(catalogWithoutUsd))
             assertEquals(P806SnapshotFailure.InvalidState, assertIs<P806SnapshotResult.Failed>(reportWith(catalogWithoutUsd)).failure)
             assertEquals(P806SnapshotFailure.InvalidState, assertIs<P806SnapshotResult.Failed>(calendarWith(catalogWithoutUsd)).failure)
+        }
+    }
+
+    /**
+     * V-1: the report defaults resolve in the Shanghai zone even while the fixed instant still sits
+     * on the previous UTC date. 2026-12-31T16:30Z is 2027-01-01 00:30 in Shanghai, so the default
+     * month/year are January/2027 and the 01:00 Shanghai row belongs to January 2027, not December.
+     * The JVM default is pinned to UTC in a `try`/`finally`, so an implementation that followed the
+     * ambient zone would resolve December/2026 and fail these assertions.
+     */
+    @Test
+    fun reportDefaultsResolveAtTheShanghaiYearAndMonthRolloverNotTheDeviceZone() {
+        // Same save/set/restore shape as MonthlyBucketsTimeZoneJvmTest: the previous default is
+        // restored for the rest of the JVM task even when an assertion fails.
+        val originalZone = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"))
+            assertEquals("UTC", java.util.TimeZone.getDefault().id)
+
+            withDatabase { driver, database, version ->
+                seedCatalog(driver, standardAccounts(), version)
+                insertTransaction(driver, "tx-dec-local", "EXPENSE", null, "2026-12-31T02:00:00Z", "2026-12-31T02:00:00Z", listOf(breakfast to 1_000L, cash to -1_000L))
+                insertTransaction(driver, "tx-jan-local", "EXPENSE", null, "2026-12-31T17:00:00Z", "2026-12-31T17:00:00Z", listOf(breakfast to 2_000L, cash to -2_000L))
+                val catalog = catalogOf(standardAccounts())
+                val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+                val report = P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-12-31T16:30:00Z"))
+
+                val instant = Instant.parse("2026-12-31T16:30:00Z")
+                // The ambient JVM zone is UTC, so an ambient lookup keeps the old local date while the
+                // frozen reporting zone is already on 2027-01-01.
+                assertEquals(kotlinx.datetime.LocalDate(2026, 12, 31), instant.toLocalDateTime(TimeZone.currentSystemDefault()).date)
+                assertEquals(kotlinx.datetime.LocalDate(2026, 12, 31), instant.toLocalDateTime(TimeZone.UTC).date)
+                assertEquals(kotlinx.datetime.LocalDate(2027, 1, 1), instant.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date)
+
+                val month = assertIs<P806SnapshotResult.Success<P806ReportView>>(report.query(P806Period(P806PeriodKind.MONTH))).snapshot
+                val resolvedMonth = assertNotNull(month.period)
+                assertEquals(kotlinx.datetime.LocalDate(2027, 1, 1), resolvedMonth.startDate)
+                assertEquals(kotlinx.datetime.LocalDate(2027, 1, 31), resolvedMonth.endDateInclusive)
+                assertEquals(31, resolvedMonth.dayCount)
+                assertEquals(epochNanos("2026-12-31T16:00:00Z"), resolvedMonth.window.startEpochNanos)
+                assertEquals(epochNanos("2027-01-31T16:00:00Z"), resolvedMonth.window.endEpochNanos)
+                assertEquals(2_000L, month.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+                assertEquals(1, month.transactionCount)
+                // 01:00 Shanghai on the same local date is later than the 00:30 clock but not a future date.
+                assertEquals(0, month.futureTransactionCount)
+
+                val year = assertIs<P806SnapshotResult.Success<P806ReportView>>(report.query(P806Period(P806PeriodKind.YEAR))).snapshot
+                val resolvedYear = assertNotNull(year.period)
+                assertEquals(kotlinx.datetime.LocalDate(2027, 1, 1), resolvedYear.startDate)
+                assertEquals(kotlinx.datetime.LocalDate(2027, 12, 31), resolvedYear.endDateInclusive)
+                assertEquals(365, resolvedYear.dayCount)
+                assertEquals(epochNanos("2026-12-31T16:00:00Z"), resolvedYear.window.startEpochNanos)
+                assertEquals(epochNanos("2027-12-31T16:00:00Z"), resolvedYear.window.endEpochNanos)
+                assertEquals(2_000L, year.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+                assertEquals(1, year.transactionCount)
+            }
+        } finally {
+            java.util.TimeZone.setDefault(originalZone)
+        }
+    }
+
+    /**
+     * V-3: the weekly numbers are summed by hand inside the Shanghai Monday-to-Monday half-open
+     * window. The exact lower bound is included; the row just before the lower bound and the row on
+     * the exact exclusive upper bound are excluded, and the result is never the month card minus a
+     * month.
+     */
+    @Test
+    fun aWeekSumsOnlyItsOwnShanghaiMondayToMondayWindow() {
+        withDatabase { driver, database, version ->
+            seedCatalog(driver, standardAccounts(), version)
+            // 2026-11-17 is a Tuesday, so the week is [2026-11-16 00:00, 2026-11-23 00:00) Shanghai.
+            insertTransaction(driver, "tx-week-start", "EXPENSE", null, "2026-11-15T16:00:00Z", "2026-11-15T16:00:00Z", listOf(breakfast to 1_000L, cash to -1_000L))
+            insertTransaction(driver, "tx-week-before", "EXPENSE", null, "2026-11-15T15:59:59Z", "2026-11-15T15:59:59Z", listOf(breakfast to 9_000L, cash to -9_000L))
+            insertTransaction(driver, "tx-week-expense", "EXPENSE", null, "2026-11-19T02:00:00Z", "2026-11-19T02:00:00Z", listOf(breakfast to 2_000L, cash to -2_000L))
+            insertTransaction(driver, "tx-week-refund", "EXPENSE", "REFUND_RECEIPT", "2026-11-19T03:00:00Z", "2026-11-19T03:00:00Z", listOf(breakfast to -300L, cash to 300L))
+            insertTransaction(driver, "tx-week-income", "INCOME", null, "2026-11-20T02:00:00Z", "2026-11-20T02:00:00Z", listOf(salary to -5_000L, cash to 5_000L))
+            insertTransaction(driver, "tx-week-end", "EXPENSE", null, "2026-11-22T16:00:00Z", "2026-11-22T16:00:00Z", listOf(breakfast to 8_000L, cash to -8_000L))
+            val catalog = catalogOf(standardAccounts())
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val report = P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
+
+            val week = assertIs<P806SnapshotResult.Success<P806ReportView>>(report.query(P806Period(P806PeriodKind.WEEK))).snapshot
+            val resolved = assertNotNull(week.period)
+            assertEquals(kotlinx.datetime.LocalDate(2026, 11, 16), resolved.startDate)
+            assertEquals(kotlinx.datetime.LocalDate(2026, 11, 22), resolved.endDateInclusive)
+            assertEquals(7, resolved.dayCount)
+            assertEquals(epochNanos("2026-11-15T16:00:00Z"), resolved.window.startEpochNanos)
+            assertEquals(epochNanos("2026-11-22T16:00:00Z"), resolved.window.endEpochNanos)
+            val cnyWeek = week.currencies.first { it.currency == cny }
+            // Hand sum inside the week: 1000 + 2000 - 300 = 2700 net, 3000 gross, -300 refund.
+            assertEquals(3_000L, cnyWeek.positiveExpenseMinorUnits)
+            assertEquals(-300L, cnyWeek.refundMinorUnits)
+            assertEquals(2_700L, cnyWeek.netExpenseMinorUnits)
+            assertEquals(5_000L, cnyWeek.ordinaryIncomeMinorUnits)
+            assertEquals(2_300L, cnyWeek.balanceMinorUnits)
+            assertEquals(386L, cnyWeek.dailyAverageMinorUnits) // nearest(2700 / 7)
+            assertEquals(4, week.transactionCount)
+        }
+    }
+
+    /** V-18: only a future special kind or a future pure-principal row leaves the marker absent. */
+    @Test
+    fun onlyFutureSpecialOrPrincipalRowsLeaveTheFutureMarkerAbsent() {
+        withDatabase { driver, database, version ->
+            seedCatalog(driver, standardAccounts(), version)
+            insertTransaction(driver, "tx-future-special-only", "EXPENSE", "STORED_VALUE_SPEND", "2026-11-21T02:00:00Z", "2026-11-21T02:00:00Z", listOf(breakfast to 100L, cash to -100L))
+            insertTransaction(driver, "tx-future-transfer-only", "ACCOUNT_TRANSFER", null, "2026-11-22T02:00:00Z", "2026-11-22T02:00:00Z", listOf(savings to 100L, cash to -100L))
+            insertTransaction(driver, "tx-future-lend-only", "LEND", null, "2026-11-23T02:00:00Z", "2026-11-23T02:00:00Z", listOf(savings to -100L, cash to 100L))
+            val catalog = catalogOf(standardAccounts())
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val report = P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
+
+            val month = assertIs<P806SnapshotResult.Success<P806ReportView>>(report.query(P806Period(P806PeriodKind.MONTH))).snapshot
+            assertEquals(0, month.futureTransactionCount)
+            assertEquals(0, month.transactionCount)
+            assertEquals(0, month.detailCount)
+            // The pure-principal control is zero per currency too, not only in the global count.
+            assertEquals(0, month.currencies.first { it.currency == cny }.transactionCount)
+            assertEquals(0L, month.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+        }
+    }
+
+    /**
+     * V-18: a future cross-month ordinary transaction is counted in its own period, and the ALL
+     * envelope ends on its future local date instead of stopping at today.
+     */
+    @Test
+    fun aFutureCrossMonthOrdinaryTransactionCountsInItsPeriodAndExtendsTheAllEnvelope() {
+        withDatabase { driver, database, version ->
+            seedCatalog(driver, standardAccounts(), version)
+            insertTransaction(driver, "tx-nov-ordinary", "EXPENSE", null, "2026-11-05T02:00:00Z", "2026-11-05T02:00:00Z", listOf(breakfast to 400L, cash to -400L))
+            insertTransaction(driver, "tx-dec-future", "EXPENSE", null, "2026-12-05T02:00:00Z", "2026-12-05T02:00:00Z", listOf(breakfast to 600L, cash to -600L))
+            val catalog = catalogOf(standardAccounts())
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val report = P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
+
+            val december =
+                assertIs<P806SnapshotResult.Success<P806ReportView>>(
+                    report.query(
+                        P806Period(P806PeriodKind.MONTH, month = kotlinx.datetime.YearMonth(2026, kotlinx.datetime.Month.DECEMBER)),
+                    ),
+                ).snapshot
+            assertEquals(1, december.transactionCount)
+            assertEquals(1, december.futureTransactionCount)
+            assertEquals(600L, december.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+
+            val all = assertIs<P806SnapshotResult.Success<P806ReportView>>(report.query(P806Period(P806PeriodKind.ALL))).snapshot
+            val resolved = assertNotNull(all.period)
+            assertEquals(kotlinx.datetime.LocalDate(2026, 11, 5), resolved.startDate)
+            assertEquals(kotlinx.datetime.LocalDate(2026, 12, 5), resolved.endDateInclusive)
+            assertEquals(epochNanos("2026-12-05T16:00:00Z"), resolved.window.endEpochNanos)
+            assertEquals(2, all.transactionCount)
+            assertEquals(1, all.futureTransactionCount)
+            assertEquals(1_000L, all.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+        }
+    }
+
+    /**
+     * V-15: the real SQLite day grid uses the zone's historical zero points. Both 1986-05-04T15:15Z
+     * and 15:45Z are after Shanghai local midnight (00:15 / 00:45 on May 5, either side of local
+     * 00:30); a fixed +08:00 reading would keep them on May 4. The day cell, its drilldown count and
+     * its exact sum agree.
+     */
+    @Test
+    fun theHistoricalDstDayGridAndDayDrilldownAgreeOnBothSidesOfLocal0030() {
+        withDatabase { driver, database, version ->
+            seedCatalog(driver, standardAccounts(), version)
+            insertTransaction(driver, "tx-dst-a", "EXPENSE", null, "1986-05-04T15:15:00Z", "1986-05-04T15:15:00Z", listOf(breakfast to 111L, cash to -111L))
+            insertTransaction(driver, "tx-dst-b", "EXPENSE", null, "1986-05-04T15:45:00Z", "1986-05-04T15:45:00Z", listOf(breakfast to 222L, cash to -222L))
+            val catalog = catalogOf(standardAccounts())
+            val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
+            val may1986 = kotlinx.datetime.YearMonth(1986, kotlinx.datetime.Month.MAY)
+            val calendar = P806CalendarQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
+            val view = assertIs<P806SnapshotResult.Success<P806CalendarView>>(calendar.query(may1986)).snapshot
+
+            assertEquals(31, view.days.size)
+            // 31 day windows are separated by 32 distinct local midnights.
+            val boundaries = view.days.map { it.window.startEpochNanos } + view.days.last().window.endEpochNanos
+            assertEquals(32, boundaries.size)
+            assertEquals(32, boundaries.toSet().size)
+            assertTrue(boundaries.zipWithNext().all { (earlier, later) -> earlier < later })
+            // Adjacent day windows meet exactly: each day ends where the next day begins.
+            assertTrue(view.days.zipWithNext().all { (day, next) -> day.window.endEpochNanos == next.window.startEpochNanos })
+
+            val may4 = view.days.first { it.date == kotlinx.datetime.LocalDate(1986, 5, 4) }
+            val may5 = view.days.first { it.date == kotlinx.datetime.LocalDate(1986, 5, 5) }
+            // The DST day is 23 hours; the next day starts at its end, not at a fixed +08:00 16:00Z.
+            assertEquals(23L * 60L * 60L * 1_000_000_000L, may4.window.endEpochNanos - may4.window.startEpochNanos)
+            assertEquals(epochNanos("1986-05-03T16:00:00Z"), may4.window.startEpochNanos)
+            assertEquals(epochNanos("1986-05-04T15:00:00Z"), may4.window.endEpochNanos)
+            assertEquals(may4.window.endEpochNanos, may5.window.startEpochNanos)
+            assertEquals(24L * 60L * 60L * 1_000_000_000L, may5.window.endEpochNanos - may5.window.startEpochNanos)
+
+            // Both instants are after Shanghai local midnight (00:15 and 00:45 on May 5) and
+            // straddle local 00:30; a fixed +08:00 reading would still place them on May 4.
+            val dstA = Instant.parse("1986-05-04T15:15:00Z")
+            val dstB = Instant.parse("1986-05-04T15:45:00Z")
+            val fixedPlus8 = TimeZone.of("UTC+08:00")
+            assertEquals(kotlinx.datetime.LocalDate(1986, 5, 4), dstA.toLocalDateTime(fixedPlus8).date)
+            assertEquals(kotlinx.datetime.LocalDate(1986, 5, 4), dstB.toLocalDateTime(fixedPlus8).date)
+            assertEquals(kotlinx.datetime.LocalDate(1986, 5, 5), dstA.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date)
+            assertEquals(kotlinx.datetime.LocalDate(1986, 5, 5), dstB.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date)
+            assertTrue(dstA.toEpochMilliseconds() * 1_000_000L >= may5.window.startEpochNanos)
+            assertTrue(dstB.toEpochMilliseconds() * 1_000_000L < may5.window.endEpochNanos)
+            assertEquals(0, may4.transactionCount)
+            assertEquals(2, may5.transactionCount)
+            assertEquals(333L, may5.currencies.first { it.currency == cny }.netExpenseMinorUnits)
+
+            // The real SQLite day drilldown matches the day grid and sums the same amount.
+            val day =
+                assertIs<P806SnapshotResult.Success<P806DrilldownSnapshot>>(
+                    adapter.readDrilldownSnapshot(P806DrilldownRequest(ledgerId, may5.window, expectedCatalogVersion = version)),
+                ).snapshot
+            assertEquals(may5.transactionCount, day.totalCount)
+            assertEquals(setOf("tx-dst-a", "tx-dst-b"), day.page.rows.map { it.transactionId.value }.toSet())
+            val breakfastSum = day.page.rows.flatMap { it.postings }.filter { it.accountId == breakfast }.sumOf { it.amount.minorUnits }
+            assertEquals(333L, breakfastSum)
         }
     }
 
@@ -592,6 +869,8 @@ class P806ReportSemanticsTest {
     ) {
         driver.execute(null, sql, 0)
     }
+
+    private fun epochNanos(text: String): Long = Instant.parse(text).toEpochMilliseconds() * 1_000_000L
 
     private class FixedClock(
         private val value: String,

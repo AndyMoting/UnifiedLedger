@@ -45,9 +45,18 @@ class P806PeriodsTest {
         val leapYear = (P806Periods.resolve(P806Period(P806PeriodKind.YEAR, year = 2028), today, null) as P806PeriodResolution.Resolved).period
         assertEquals(366, leapYear.dayCount)
 
+        // V-1: exact half-open endpoints, not only the day count.
+        assertEquals(LocalDate(2026, 1, 1), year.startDate)
+        assertEquals(LocalDate(2026, 12, 31), year.endDateInclusive)
+        assertEquals(Instant.parse("2025-12-31T16:00:00Z"), instantOf(year.window.startEpochNanos))
+        assertEquals(Instant.parse("2026-12-31T16:00:00Z"), instantOf(year.window.endEpochNanos))
+
         val custom = (P806Periods.resolve(P806Period(P806PeriodKind.CUSTOM, customStart = LocalDate(2026, 3, 1), customEnd = LocalDate(2026, 3, 3)), today, null) as P806PeriodResolution.Resolved).period
         assertEquals(3, custom.dayCount)
+        assertEquals(LocalDate(2026, 3, 1), custom.startDate)
         assertEquals(LocalDate(2026, 3, 3), custom.endDateInclusive)
+        assertEquals(Instant.parse("2026-02-28T16:00:00Z"), instantOf(custom.window.startEpochNanos))
+        assertEquals(Instant.parse("2026-03-03T16:00:00Z"), instantOf(custom.window.endEpochNanos))
     }
 
     @Test
@@ -75,6 +84,10 @@ class P806PeriodsTest {
         // 2026-12-31T16:00Z is 2027-01-01 local, so the inclusive end date is 2027-01-01.
         assertEquals(LocalDate(2027, 1, 1), period.endDateInclusive)
         assertEquals(352, period.dayCount)
+        // V-1: the window is [start of the earliest local day, start of the day after the inclusive
+        // end date); 2027-01-01T16:00Z is 2027-01-02 00:00 Shanghai.
+        assertEquals(Instant.parse("2026-01-14T16:00:00Z"), instantOf(period.window.startEpochNanos))
+        assertEquals(Instant.parse("2027-01-01T16:00:00Z"), instantOf(period.window.endEpochNanos))
     }
 
     @Test
