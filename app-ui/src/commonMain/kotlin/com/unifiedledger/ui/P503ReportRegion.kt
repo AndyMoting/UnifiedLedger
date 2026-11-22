@@ -112,6 +112,13 @@ data class P806ReportRegionState(
      * period may be treated as current (no READY, no re-seed).
      */
     val writeStale: Boolean = false,
+    /**
+     * True only after the authoritative post-write re-read has LANDED a matching Success: the region
+     * shows the 「账目已更新，已回到第一页」 notice (D-343 section 3.7.4). A failed, refused, stale or
+     * ordinary (non-post-write) read never sets it, and starting a new request clears it, so the
+     * notice can never survive a later failure or masquerade as a normal read's result.
+     */
+    val writeRefreshed: Boolean = false,
 )
 
 /** The six distinguishable payload states of the region (D-343 section 3.7.7), plus "no surface". */
@@ -156,6 +163,20 @@ internal fun p806ReportSlotIsEligible(slot: P806ReportRegionState): Boolean = sl
 
 /** The write-invalidation notice shown over the old payload while the authoritative re-read is owed. */
 internal fun p806ReportWriteStaleNotice(): String = "账目已更新：正在刷新报表，以下为更新前的旧数据。"
+
+/**
+ * The post-write AUTHORITATIVE-REFRESH notice (D-343 section 3.7.4): shown only once a matching
+ * post-write re-read has landed successfully, so the user knows the region returned to the first,
+ * authoritative payload. The in-progress copy above is a different state and never impersonates it.
+ */
+internal fun p806ReportWriteRefreshedNotice(): String = "账目已更新，已回到第一页"
+
+/**
+ * The refresh notice to render, or `null` when this slot did not just conclude a post-write refresh.
+ * Gating on the explicit [P806ReportRegionState.writeRefreshed] mark (never on `fenceToken` or a
+ * landed payload) is what keeps an ordinary read — before or after a write — from showing it.
+ */
+internal fun p806ReportWriteRefreshedNoticeText(state: P806ReportRegionState): String? = if (state.writeRefreshed) p806ReportWriteRefreshedNotice() else null
 
 /**
  * Exact minor-unit text at [precision], including the `Long.MIN_VALUE` end.
@@ -777,6 +798,11 @@ internal fun P503ReportRegion(
             P806PeriodKind.ALL -> Unit
         }
         Text(p806ReportPeriodLabel(state), style = MaterialTheme.typography.bodyMedium)
+        // D-343 section 3.7.4: only a successful post-write authoritative refresh sets this; the
+        // in-progress write-stale copy inside the LOADING face is a different state.
+        p806ReportWriteRefreshedNoticeText(state)?.let { notice ->
+            Text(notice, style = MaterialTheme.typography.bodyMedium)
+        }
         when (face) {
             P806ReportRegionFace.NOT_LOADED ->
                 Text("报表尚未加载。", style = MaterialTheme.typography.bodyMedium)
