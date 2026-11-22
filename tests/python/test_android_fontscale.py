@@ -10,12 +10,14 @@ from android_fontscale.sampler import (
     BackStep,
     DismissImeStep,
     InputTextStep,
+    P806SeedFacts,
     RadioStep,
     SampleError,
     Sampler,
     ScrollStep,
     TapStep,
     adb_input_text,
+    derive_p806_seed_facts,
     describe_step,
     dismiss_ime,
     dump_contains,
@@ -28,8 +30,13 @@ from android_fontscale.sampler import (
     ime_is_shown,
     input_text,
     marker_problems,
+    p806_gate_problems,
+    p806_rollover_problem,
+    p806_screens,
     parse_font_scale,
     profile_by_name,
+    profile_screens,
+    required_problems,
     screen_center,
     scroll_until,
     scroll_swipe_points,
@@ -578,6 +585,180 @@ class GateSeedIdentity(unittest.TestCase):
         problems = gate_seed_problems({"seed": {"sha256": "a" * 64}}, None)
         self.assertEqual(1, len(problems))
         self.assertIn("cannot be read", problems[0])
+
+
+class P806Profile(unittest.TestCase):
+    """P8-06 batch 6 V-12: the dynamic p806 profile and its seed re-derivation."""
+
+    FACTS = P806SeedFacts(
+        month_label="2026年11月",
+        day_date="2026-11-22",
+        day_count=2,
+        currency="CNY",
+        precision=2,
+        net_expense_minor=1_734,
+        income_minor=0,
+        payment_texts=("-12.34 CNY", "-5.00 CNY"),
+    )
+
+    def test_the_three_screens_carry_the_seeds_exact_amounts(self) -> None:
+        screens = p806_screens(self.FACTS)
+        self.assertEqual(["report", "calendar", "day-detail"], [screen.stem for screen in screens])
+        self.assertEqual(
+            ["报表期间", "收支日历", "共 2 笔明细"], [screen.marker for screen in screens]
+        )
+        report, calendar, detail = screens
+        self.assertEqual(
+            (TapStep("分析"), ScrollStep("净支出（含退款） 17.34 CNY")), report.steps
+        )
+        self.assertIn("月：2026-11-01 至 2026-11-30（30 天）", report.required)
+        self.assertIn("净支出（含退款） 17.34 CNY", report.required)
+        self.assertIn("普通收入 0.00 CNY", report.required)
+        self.assertIn("普通收支笔数：2", report.required)
+        self.assertIn("以下为最近一次成功载荷（旧数据）：", report.absent)
+        self.assertEqual(
+            (TapStep("首页"), TapStep("收支日历"), ScrollStep(self.FACTS.day_cell_text())), calendar.steps
+        )
+        self.assertEqual(
+            ("2026-11-22，CNY 支出 17.34、收入 0.00；共 2 笔",), calendar.required
+        )
+        self.assertEqual((TapStep(self.FACTS.day_cell_text()),), detail.steps)
+        self.assertEqual(
+            ("报表明细", "2026-11-22 明细", "共 2 笔明细", "-12.34 CNY", "-5.00 CNY"), detail.required
+        )
+
+    def test_the_period_line_follows_the_seed_month(self) -> None:
+        february = P806SeedFacts("2028年2月", "2028-02-29", 2, "CNY", 2, 1_734, 0, ())
+        self.assertEqual("月：2028-02-01 至 2028-02-29（29 天）", february.report_period_text())
+
+    def test_a_seed_month_that_is_not_the_current_reporting_month_is_an_explicit_failure(self) -> None:
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime(2026, 12, 1, 0, 30, tzinfo=timezone(timedelta(hours=8)))
+        problem = p806_rollover_problem(self.FACTS, now)
+        self.assertIsNotNone(problem)
+        self.assertIn("2026-12", problem)
+        self.assertIsNone(p806_rollover_problem(
+            self.FACTS, datetime(2026, 11, 30, 23, 59, tzinfo=timezone(timedelta(hours=8)))))
+
+    def test_the_p806_profile_is_seeded_and_dynamic(self) -> None:
+        profile = profile_by_name("p806")
+        self.assertTrue(profile.seeded)
+        self.assertEqual("流水 · 共 2 笔", profile.launch_marker)
+        self.assertEqual(["report", "calendar", "day-detail"], [screen.stem for screen in profile.screens])
+        with self.assertRaises(SampleError):
+            profile_screens(profile, "")
+
+    def _write_seed(self, root: Path, *, mismatched: bool = False) -> Path:
+        import sqlite3
+        from datetime import datetime, timedelta, timezone
+
+        seed = root / "ledger.db"
+        noon = int(datetime(2026, 11, 22, 12, tzinfo=timezone(timedelta(hours=8))).timestamp()) * 1_000_000_000
+        connection = sqlite3.connect(seed)
+        try:
+            connection.executescript(
+                "CREATE TABLE ledger_transaction(transaction_id TEXT, ledger_id TEXT, kind TEXT);"
+                "CREATE TABLE posting_set(posting_set_id TEXT, ledger_id TEXT);"
+                "CREATE TABLE transaction_version(version_id TEXT, transaction_id TEXT, ledger_id TEXT, "
+                "posting_set_id TEXT, statistics_at_epoch_nanos INTEGER);"
+                "CREATE TABLE ledger_transaction_current_version(transaction_id TEXT, ledger_id TEXT, "
+                "current_version_id TEXT);"
+                "CREATE TABLE posting(posting_id TEXT, posting_set_id TEXT, ledger_id TEXT, account_id TEXT, "
+                "amount_minor INTEGER, currency_code TEXT, currency_precision INTEGER);"
+            )
+            rows = [("0001", 1_234), ("0002", 500)]
+            for row_index, (index, amount) in enumerate(rows):
+                tx = f"tx-{index}"
+                # The mismatched seed moves ONLY the second row one day earlier: the two rows then
+                # span two local days, which is the shape `derive_p806_seed_facts` must reject.
+                instant = noon
+                if mismatched and row_index == 1:
+                    instant = noon - 24 * 3_600_000_000_000
+                connection.execute("INSERT INTO ledger_transaction VALUES (?, 'ledger-local-test', 'EXPENSE')", (tx,))
+                connection.execute("INSERT INTO posting_set VALUES (?, 'ledger-local-test')", (f"{tx}-set",))
+                connection.execute(
+                    "INSERT INTO transaction_version VALUES (?, ?, 'ledger-local-test', ?, ?)",
+                    (f"{tx}-version", tx, f"{tx}-set", instant),
+                )
+                connection.execute(
+                    "INSERT INTO ledger_transaction_current_version VALUES (?, 'ledger-local-test', ?)",
+                    (tx, f"{tx}-version"),
+                )
+                connection.execute(
+                    "INSERT INTO posting VALUES (?, ?, 'ledger-local-test', 'expense-account-local', ?, 'CNY', 2)",
+                    (f"{tx}-expense", f"{tx}-set", amount),
+                )
+                connection.execute(
+                    "INSERT INTO posting VALUES (?, ?, 'ledger-local-test', 'asset-payment-local', ?, 'CNY', 2)",
+                    (f"{tx}-payment", f"{tx}-set", -amount),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+        return seed
+
+    def test_the_seed_facts_are_re_derived_from_the_database(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            facts = derive_p806_seed_facts(self._write_seed(Path(temp)))
+        self.assertEqual(self.FACTS, facts)
+
+    def test_a_seed_spanning_two_days_is_rejected(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            seed = self._write_seed(Path(temp), mismatched=True)
+            with self.assertRaises(SampleError):
+                derive_p806_seed_facts(seed)
+
+    def test_the_gate_accepts_pending_speech_and_re_derived_facts(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            (evidence / "talkback-capability.txt").write_text("status: pending\n", encoding="utf-8")
+            host = {
+                "p806": {
+                    "seed_facts": self.FACTS.as_dict(),
+                    "talkback": {
+                        "status": "package-absent-on-image",
+                        "speech": "pending-not-recorded",
+                        "log_signal": "talkback: SpeechControllerImpl: Speaking fragment text=",
+                    },
+                },
+            }
+            self.assertEqual([], p806_gate_problems(host, self.FACTS, evidence))
+
+    def test_the_gate_rejects_a_fabricated_speech_claim_or_stale_facts(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            (evidence / "talkback-capability.txt").write_text("status: pending\n", encoding="utf-8")
+            talkback = {
+                "status": "recorded",
+                "speech": "spoken-17.34-cny",
+                "log_signal": "wrong",
+            }
+            host = {"p806": {"seed_facts": self.FACTS.as_dict(), "talkback": talkback}}
+            self.assertTrue(p806_gate_problems(host, self.FACTS, evidence))
+            stale = {"p806": {"seed_facts": P806SeedFacts("2026年10月", "2026-10-22", 2, "CNY", 2, 1, 0).as_dict(),
+                              "talkback": talkback}}
+            self.assertTrue(any("seed derives" in problem for problem in p806_gate_problems(stale, self.FACTS, evidence)))
+
+    def test_the_gate_treats_a_missing_capability_record_as_informational(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            host = {"p806": {"seed_facts": self.FACTS.as_dict()}}
+            self.assertEqual([], p806_gate_problems(host, self.FACTS, Path(temp)))
+
+    def test_required_strings_are_checked_on_the_captured_frame(self) -> None:
+        tree = '<hierarchy><node text="净支出（含退款） 17.34 CNY" content-desc="" /></hierarchy>'
+        self.assertEqual([], required_problems(tree, ("净支出（含退款） 17.34 CNY",)))
+        self.assertEqual(1, len(required_problems(tree, ("普通收入 0.00 CNY",))))
 
 
 if __name__ == "__main__":

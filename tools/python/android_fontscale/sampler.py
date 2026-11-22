@@ -18,7 +18,15 @@ sample; the device legs run here against a hosted AVD at the requested `system f
   seed sha256 — differ per dispatch; the database itself is never uploaded;
 - `profile=refund` (the P8-03 V-14 leg): the same seeded database, whose confirmed manual expense
   is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
-  its confirmation page at the requested scale.
+  its confirmation page at the requested scale;
+- `profile=p806` (the P8-06 batch 6 V-12 leg): an independent anonymous seed of two fixed expenses
+  on one clock-relative day, driving the ANALYSIS report region, the calendar day cell and that
+  day's drilldown rows at the requested scale. Its month/day/amount markers are re-derived from
+  the seed database by both the driver and the gate, never trusted from host.json alone; the
+  report's resolved month line and the absence of the previous-payload caption are required, and
+  a seed from another reporting month fails before any capture. The same run records the image's
+  TalkBack capability for information only; spoken output stays PENDING evidence, because a
+  semantic dump or a focus callback is not a recording of TalkBack's speech.
 
 This rig is NOT a PR gate and never runs on a pull request: dispatch it against a commit that is
 already on a branch, and read the artifact.
@@ -43,11 +51,13 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar
 
@@ -132,6 +142,35 @@ SEARCH_RESULTS_MARKER = "搜索结果 ·"
 # screens must not show, so "the captured screen left the home tab" is one literal with one source.
 # The seeded ledger holds the transfer and the refund-leg manual expense, hence 2.
 SEEDED_HOME_COUNT = "流水 · 共 2 笔"
+
+# P8-06 batch 6 (V-12): the independent `p806` seed is written by
+# `ledger-data/src/jvmTest/.../P806FontscaleSeedWriterTest.kt` through the real manual-expense
+# commit port. Its two fixed amounts and its default-catalog accounts are the only constants the
+# sampler needs; the month, day, count and exact displayed amounts are DERIVED from the pushed
+# database (see `derive_p806_seed_facts`), so a change to the seed or to the reporting zone shows
+# up as a gate disagreement rather than as a silently stale literal.
+P806_LEDGER_ID = "ledger-local-test"
+P806_DAY_ACCOUNT_ID = "expense-account-local"
+# The default payment account: its negative legs are the SIGNED amounts a detail row renders
+# (`-12.34 CNY`), so the day-detail screen's required strings are derived, never typed.
+P806_PAYMENT_ACCOUNT_ID = "asset-payment-local"
+P806_SEED_TRANSACTION_COUNT = 2
+# The report/calendar/drilldown strings a SUCCESSFUL read renders. The values are filled per run
+# by `p806_screens`; the labels are the product's own frozen text.
+P806_REPORT_TITLE = "报表期间"
+P806_REPORT_NET_LABEL = "净支出（含退款）"
+P806_REPORT_INCOME_LABEL = "普通收入"
+P806_REPORT_COUNT_LABEL = "普通收支笔数："
+# The explicit "this block is the previous success" caption. A capture that shows it is not the
+# current period's report, so the report frame must not carry it.
+P806_REPORT_LAST_SUCCESS_CAPTION = "以下为最近一次成功载荷（旧数据）："
+P806_CALENDAR_TITLE = "收支日历"
+P806_DRILLDOWN_TITLE = "报表明细"
+# The D-292 behavioural evidence: real TalkBack emits this VERBOSE log line with the spoken
+# fragment text. This rig records it, never asserts it; only TalkBack's own line can satisfy the
+# speech limb.
+P806_TALKBACK_LOG_SIGNAL = "talkback: SpeechControllerImpl: Speaking fragment text="
+P806_TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
 
 MIN_SCREENSHOT_BYTES = 20_000
 DEFAULT_TIMEOUT = 60
@@ -419,6 +458,11 @@ def marker_problems(xml_text: str, marker: str, absent: tuple[str, ...] = ()) ->
     return problems
 
 
+def required_problems(xml_text: str, required: tuple[str, ...]) -> list[str]:
+    """The dynamic markers a screen must carry (the seed's exact signed amounts and currency)."""
+    return [f"required string {needle!r} is absent" for needle in required if not dump_contains(xml_text, needle)]
+
+
 def sha256_file(path: Path) -> str:
     """The exact digest of a file's bytes (the seed a run pushed, re-read by a gate)."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -537,6 +581,10 @@ class Screen:
     steps: tuple[Step, ...]
     marker: str
     absent: tuple[str, ...] = ()
+    # Additional strings a SUCCESSFUL read must render on the same frame (the dynamic markers
+    # whose exact values only the seed can tell). The driver checks them before the capture and
+    # the gate re-derives the same tuple from the seed, so neither trusts the other's word.
+    required: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -637,11 +685,268 @@ REFUND_SCREENS: tuple[Screen, ...] = (
     ),
 )
 
+@dataclass(frozen=True)
+class P806SeedFacts:
+    """The exact facts the `p806` profile's seed carries, derived from the seed database.
+
+    Both the driver and the gate derive this from the pushed file, so the screen strings are a
+    re-derivation of the evidence rather than a literal copied into host.json.
+    """
+
+    month_label: str
+    day_date: str
+    day_count: int
+    currency: str
+    precision: int
+    net_expense_minor: int
+    income_minor: int
+    # The signed amounts a day-detail row renders (the negative payment legs), in transaction-id
+    # order: exact minor-unit rendering plus the currency code, e.g. "-12.34 CNY".
+    payment_texts: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "month_label": self.month_label,
+            "day_date": self.day_date,
+            "day_count": self.day_count,
+            "currency": self.currency,
+            "precision": self.precision,
+            "net_expense_minor": self.net_expense_minor,
+            "income_minor": self.income_minor,
+            "payment_texts": list(self.payment_texts),
+        }
+
+    def net_expense_text(self) -> str:
+        return f"{P806_REPORT_NET_LABEL} {minor_text(self.net_expense_minor, self.precision)} {self.currency}"
+
+    def income_text(self) -> str:
+        return f"{P806_REPORT_INCOME_LABEL} {minor_text(self.income_minor, self.precision)} {self.currency}"
+
+    def report_period_text(self) -> str:
+        """The product's resolved MONTH period line (`月：<start> 至 <end>（<n> 天）`).
+
+        The start/end and day count are computed from the seed's own local day, so a report frame
+        that landed on another month cannot carry this line.
+        """
+        year, month, _ = (int(part) for part in self.day_date.split("-"))
+        first = date(year, month, 1)
+        next_first = date(year + (month == 12), month % 12 + 1, 1)
+        last = next_first - timedelta(days=1)
+        return f"月：{first.isoformat()} 至 {last.isoformat()}（{(last - first).days + 1} 天）"
+
+    def day_cell_text(self) -> str:
+        return (
+            f"{self.day_date}，{self.currency} 支出 "
+            f"{minor_text(self.net_expense_minor, self.precision)}、收入 "
+            f"{minor_text(self.income_minor, self.precision)}；共 {self.day_count} 笔"
+        )
+
+
+def minor_text(minor_units: int, precision: int) -> str:
+    """The product's fixed two-place rendering (`formatMinorUnits`) for a non-negative magnitude."""
+    if precision <= 0:
+        return str(minor_units)
+    digits = str(abs(minor_units)).rjust(precision + 1, "0")
+    return ("-" if minor_units < 0 else "") + digits[:-precision] + "." + digits[-precision:]
+
+
+# The Asia/Shanghai offset: the reporting zone has had no DST since 1991, and the seed writer and
+# the product both use `Asia/Shanghai`, so a fixed UTC+8 wall clock is exact for these instants.
+P806_REPORT_OFFSET = timezone(timedelta(hours=8))
+
+
+def derive_p806_seed_facts(seed: Path) -> P806SeedFacts:
+    """Re-derive the `p806` sample's month, day, count and exact amounts from the seed file.
+
+    Reads with a read-only connection; an unexpected shape is a loud `SampleError`, never a guess.
+    """
+    if not seed.is_file():
+        raise SampleError(f"seed database {str(seed)!r} does not exist")
+    uri = f"file:{seed.as_posix()}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as error:
+        raise SampleError(f"cannot open the seed database for derivation: {error}") from error
+    try:
+        ledgers = [row[0] for row in connection.execute("SELECT DISTINCT ledger_id FROM ledger_transaction")]
+        if ledgers != [P806_LEDGER_ID]:
+            raise SampleError(f"the p806 seed must hold exactly {P806_LEDGER_ID!r}, found {ledgers!r}")
+        kinds = sorted(row[0] for row in connection.execute("SELECT DISTINCT kind FROM ledger_transaction"))
+        if kinds != ["EXPENSE"]:
+            raise SampleError(f"the p806 seed must hold only EXPENSE rows, found {kinds!r}")
+        bounds = connection.execute(
+            "SELECT MIN(statistics_at_epoch_nanos), MAX(statistics_at_epoch_nanos), COUNT(*) "
+            "FROM transaction_version WHERE ledger_id = ?",
+            (P806_LEDGER_ID,),
+        ).fetchone()
+        if bounds is None or bounds[2] != P806_SEED_TRANSACTION_COUNT:
+            raise SampleError(f"the p806 seed must hold {P806_SEED_TRANSACTION_COUNT} versions, found {bounds!r}")
+        earliest, latest, _ = bounds
+        first = datetime.fromtimestamp(earliest // 1_000_000_000, tz=P806_REPORT_OFFSET)
+        last = datetime.fromtimestamp(latest // 1_000_000_000, tz=P806_REPORT_OFFSET)
+        if first.date() != last.date():
+            raise SampleError(f"the p806 seed's rows must share one local day, found {first.date()} and {last.date()}")
+        day = first.date()
+        day_start = int(datetime(day.year, day.month, day.day, tzinfo=P806_REPORT_OFFSET).timestamp()) * 1_000_000_000
+        next_day = day + timedelta(days=1)
+        day_end = int(datetime(next_day.year, next_day.month, next_day.day, tzinfo=P806_REPORT_OFFSET).timestamp()) * 1_000_000_000
+        count = connection.execute(
+            "SELECT count(DISTINCT transaction_id) FROM transaction_version "
+            "WHERE ledger_id = ? AND statistics_at_epoch_nanos >= ? AND statistics_at_epoch_nanos < ?",
+            (P806_LEDGER_ID, day_start, day_end),
+        ).fetchone()[0]
+        if count != P806_SEED_TRANSACTION_COUNT:
+            raise SampleError(f"the p806 seed's day must hold {P806_SEED_TRANSACTION_COUNT} transactions, found {count}")
+        amounts = connection.execute(
+            "SELECT p.currency_code, p.currency_precision, "
+            "COALESCE(SUM(CASE WHEN p.amount_minor > 0 THEN p.amount_minor ELSE 0 END), 0), "
+            "COALESCE(SUM(CASE WHEN p.amount_minor < 0 THEN -p.amount_minor ELSE 0 END), 0) "
+            "FROM posting p "
+            "JOIN transaction_version v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id "
+            "JOIN ledger_transaction_current_version c "
+            "ON c.transaction_id = v.transaction_id AND c.current_version_id = v.version_id "
+            "WHERE p.ledger_id = ? AND p.account_id = ? "
+            "AND v.statistics_at_epoch_nanos >= ? AND v.statistics_at_epoch_nanos < ? "
+            "GROUP BY p.currency_code, p.currency_precision",
+            (P806_LEDGER_ID, P806_DAY_ACCOUNT_ID, day_start, day_end),
+        ).fetchall()
+        if len(amounts) != 1:
+            raise SampleError(f"the p806 seed's day must hold one currency, found {amounts!r}")
+        currency, precision, positive, refund = amounts[0]
+        payments = connection.execute(
+            "SELECT p.amount_minor, p.currency_code, p.currency_precision "
+            "FROM posting p "
+            "JOIN transaction_version v ON v.posting_set_id = p.posting_set_id AND v.ledger_id = p.ledger_id "
+            "JOIN ledger_transaction_current_version c "
+            "ON c.transaction_id = v.transaction_id AND c.current_version_id = v.version_id "
+            "WHERE p.ledger_id = ? AND p.account_id = ? AND p.amount_minor < 0 "
+            "AND v.statistics_at_epoch_nanos >= ? AND v.statistics_at_epoch_nanos < ? "
+            "ORDER BY v.transaction_id",
+            (P806_LEDGER_ID, P806_PAYMENT_ACCOUNT_ID, day_start, day_end),
+        ).fetchall()
+        if len(payments) != P806_SEED_TRANSACTION_COUNT:
+            raise SampleError(
+                f"the p806 seed's day must hold {P806_SEED_TRANSACTION_COUNT} signed payment rows, "
+                f"found {payments!r}"
+            )
+        payment_texts = tuple(
+            f"{minor_text(amount_minor, row_precision)} {row_currency}"
+            for amount_minor, row_currency, row_precision in payments
+        )
+        return P806SeedFacts(
+            month_label=f"{day.year}年{day.month}月",
+            day_date=day.isoformat(),
+            day_count=count,
+            currency=currency,
+            precision=precision,
+            net_expense_minor=positive - refund,
+            # The seed holds only EXPENSE rows (checked above), so ordinary income is exactly zero.
+            income_minor=0,
+            payment_texts=payment_texts,
+        )
+    finally:
+        connection.close()
+
+
+def p806_rollover_problem(facts: P806SeedFacts, now: datetime | None = None) -> str | None:
+    """A refusal when the seed's month is no longer the reporting zone's current month.
+
+    The report region opens on the CURRENT month, so a seed prepared before a Shanghai month
+    rollover would photograph an empty current month while its marker strings describe the
+    previous one. That is an explicit failure with the fix (regenerate and repush the seed), not a
+    capture that is quietly read as evidence for the wrong month.
+    """
+    current = (now or datetime.now(P806_REPORT_OFFSET)).astimezone(P806_REPORT_OFFSET)
+    current_label = f"{current.year:04d}-{current.month:02d}"
+    seed_label = facts.day_date[:7]
+    if current_label == seed_label:
+        return None
+    return (
+        f"the p806 seed's month {seed_label} is not the current reporting month {current_label}; "
+        "regenerate the seed before dispatching this profile"
+    )
+
+
+def p806_screens(facts: P806SeedFacts) -> tuple[Screen, ...]:
+    """The `p806` profile's three V-12 screens, parameterized by the facts re-derived from the seed.
+
+    Navigation is the production one: the ANALYSIS tab renders the report region; the HOME month
+    row's 收支日历 button opens the calendar; tapping the seeded day's own cell opens the shared
+    day drilldown. Each screen's `required` tuple is the exact signed amount and currency of the
+    seed, so a zero, a failure face or a different day cannot pass.
+    """
+    report_required = (
+        facts.report_period_text(),
+        facts.net_expense_text(),
+        facts.income_text(),
+        f"{P806_REPORT_COUNT_LABEL}{facts.day_count}",
+    )
+    day_required = (facts.day_cell_text(),)
+    drilldown_count_text = f"共 {facts.day_count} 笔明细"
+    drilldown_required = (
+        P806_DRILLDOWN_TITLE,
+        f"{facts.day_date} 明细",
+        drilldown_count_text,
+        *facts.payment_texts,
+    )
+    return (
+        Screen(
+            "report",
+            # The analysis page stacks the budget region above the report region, so the capture
+            # scrolls the exact net-expense line into view before the frame is recorded (a scroll
+            # that stopped at the section title could photograph an empty fold and still pass a
+            # tree-only check).
+            (TapStep("分析"), ScrollStep(facts.net_expense_text())),
+            P806_REPORT_TITLE,
+            absent=("账本为空", P806_REPORT_LAST_SUCCESS_CAPTION),
+            required=report_required,
+        ),
+        Screen(
+            "calendar",
+            # The day cell may sit in a lower week row at 1.3x; scroll it onto the screen so the
+            # screenshot shows the seeded cell, not just a tree node.
+            (TapStep("首页"), TapStep(P806_CALENDAR_TITLE), ScrollStep(facts.day_cell_text())),
+            P806_CALENDAR_TITLE,
+            absent=(P806_REPORT_TITLE, SEEDED_HOME_COUNT),
+            required=day_required,
+        ),
+        Screen(
+            "day-detail",
+            (TapStep(facts.day_cell_text()),),
+            # The loaded count, not the screen title: 报表明细 renders before the first page and
+            # count land, so waiting on the count proves the rows the capture is for are present.
+            drilldown_count_text,
+            absent=(P806_CALENDAR_TITLE,),
+            required=drilldown_required,
+        ),
+    )
+
+
+P806_SCREENS: tuple[Screen, ...] = p806_screens(
+    # A well-formed placeholder month, so the derived period line is computable at import time; run
+    # and gate replace these with the screens built from the pushed seed.
+    P806SeedFacts("0001年1月", "0001-01-01", 0, "CNY", 2, 0, 0)
+)
+
 PROFILES: dict[str, Profile] = {
     "empty": Profile("empty", "账本为空", EMPTY_SCREENS),
     "seeded": Profile("seeded", SEEDED_HOME_COUNT, SEEDED_SCREENS, seeded=True),
     "refund": Profile("refund", SEEDED_HOME_COUNT, REFUND_SCREENS, seeded=True),
+    # The screens are placeholders here: run/gate replace them with `p806_screens` built from the
+    # pushed seed, so a static literal can never drift out of the evidence.
+    "p806": Profile("p806", SEEDED_HOME_COUNT, P806_SCREENS, seeded=True),
 }
+
+DYNAMIC_PROFILES = frozenset({"p806"})
+
+
+def profile_screens(profile: Profile, seed: str) -> tuple[Screen, ...]:
+    """The profile's screens; dynamic profiles build them from the seed they will push."""
+    if profile.name not in DYNAMIC_PROFILES:
+        return profile.screens
+    if not seed:
+        raise SampleError(f"profile {profile.name!r} needs --seed <path to the prepared ledger database>")
+    return p806_screens(derive_p806_seed_facts(Path(seed)))
 
 
 def profile_by_name(name: str) -> Profile:
@@ -724,6 +1029,46 @@ class Sampler:
             raise SampleError(
                 f"device answers emu avd name {name!r}; this rig only drives {self.avd_name!r}"
             )
+
+    def p806_talkback_capability(self) -> dict[str, object]:
+        """Record the image's TalkBack capability WITHOUT enabling or driving it.
+
+        A semantic dump or a focus callback proves reachability, never speech (the D-292 matrix's
+        own correction). This probe therefore only records what the image ships and what a future
+        run would have to drive; the spoken output stays PENDING evidence, and the screenshot limbs
+        above it are already captured and unaffected. Enabling TalkBack here would also change the
+        touch semantics the screenshot navigation just used.
+        """
+        flavor = self.adb("shell", "getprop", "ro.build.flavor", best_effort=True).strip()
+        product = self.adb("shell", "getprop", "ro.product.name", best_effort=True).strip()
+        packages = self.adb("shell", "pm", "list", "packages", P806_TALKBACK_PACKAGE, best_effort=True)
+        enabled = self.adb(
+            "shell", "settings", "get", "secure", "enabled_accessibility_services", best_effort=True
+        ).strip()
+        package_present = P806_TALKBACK_PACKAGE in packages
+        status = "package-present-not-driven" if package_present else "package-absent-on-image"
+        capability: dict[str, object] = {
+            "status": status,
+            "speech": "pending-not-recorded",
+            "package_present": package_present,
+            "package_listing": packages.strip(),
+            "enabled_accessibility_services": enabled,
+            "build_flavor": flavor,
+            "product_name": product,
+            "log_signal": P806_TALKBACK_LOG_SIGNAL,
+            # The route a cloud dispatch would need: a real TalkBack install, its developer log
+            # output at VERBOSE, an accessibility-focus driver in the androidTest APK, and this
+            # exact log line per focused node. None of that is claimed by this run.
+            "reason": (
+                "informational only: the package listing says whether this image ships TalkBack, "
+                "but no speech was recorded. A semantic dump or focus callback proves reachability, "
+                "not spoken output; recording speech needs TalkBack enabled and its own "
+                "SpeechControllerImpl log line"
+            ),
+        }
+        lines = [f"{key}: {value}" for key, value in capability.items()]
+        (self.evidence / "talkback-capability.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return capability
 
     def apply_font_scale(self) -> float:
         self.adb("shell", "settings", "put", "system", "font_scale", f"{self.font_scale:g}")
@@ -958,6 +1303,12 @@ def run(args: argparse.Namespace) -> int:
     profile = profile_by_name(args.profile)
     if profile.seeded and not args.seed:
         raise SampleError(f"profile {profile.name!r} needs --seed <path to the prepared ledger database>")
+    facts = derive_p806_seed_facts(Path(args.seed)) if profile.name in DYNAMIC_PROFILES else None
+    if facts is not None:
+        rollover = p806_rollover_problem(facts)
+        if rollover is not None:
+            raise SampleError(rollover)
+    screens = p806_screens(facts) if facts is not None else profile.screens
     evidence = Path(args.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
     sampler = Sampler(
@@ -973,13 +1324,16 @@ def run(args: argparse.Namespace) -> int:
     seed_sha256 = ""
     if profile.seeded:
         seed_sha256 = sampler.seed(args.seed)
+    # The capability probe only reads image properties, so it runs BEFORE the launch and survives a
+    # navigation failure; the screenshots themselves never depend on it.
+    talkback = sampler.p806_talkback_capability() if profile.name in DYNAMIC_PROFILES else None
     sampler.launch()
     # The launch frame is the change-detection baseline for the first tap, and its marker proves
     # the expected ledger state (empty, or the seeded transaction) before any step runs.
     previous = sampler.wait_for(profile.launch_marker)
 
     observations: dict[str, dict[str, object]] = {}
-    for screen in profile.screens:
+    for screen in screens:
         for index, step in enumerate(screen.steps):
             try:
                 previous = sampler.apply_step(step, previous)
@@ -1001,8 +1355,10 @@ def run(args: argparse.Namespace) -> int:
             "marker": screen.marker,
             "marker_present": dump_contains(tree, screen.marker),
             "absent": list(screen.absent),
+            "required": list(screen.required),
         }
         problems = marker_problems(tree, screen.marker, screen.absent)
+        problems += required_problems(tree, screen.required)
         if problems:
             raise SampleError(
                 f"screen {screen.stem}: {'; '.join(problems)} at font_scale {applied:g}"
@@ -1013,12 +1369,12 @@ def run(args: argparse.Namespace) -> int:
         "profile": profile.name,
         "avd_name": args.avd_name,
         "font_scale": applied,
-        "screens": [screen.stem for screen in profile.screens],
+        "screens": [screen.stem for screen in screens],
         "screenshots": sampler.screenshots,
         "dumps": sampler.dumps,
         "observations": observations,
     }
-    if profile.seeded:
+    if profile.seeded and facts is None:
         # The seed contract this evidence was produced against (the ledger id must be the app's
         # PRODUCT_LEDGER_ID; a mismatch would have failed the launch marker above). The digest is
         # of the bytes actually pushed, so a gate can prove it re-derived against the same seed.
@@ -1028,6 +1384,11 @@ def run(args: argparse.Namespace) -> int:
             "note": SEEDED_TRANSFER_NOTE,
             "sha256": seed_sha256,
         }
+    if facts is not None:
+        # The p806 seed carries none of the P8-01/P8-03 literals; its identity is the pushed
+        # digest plus the facts re-derived from that file.
+        host["seed"] = {"ledger_id": P806_LEDGER_ID, "sha256": seed_sha256}
+        host["p806"] = {"seed_facts": facts.as_dict(), "talkback": talkback}
     (evidence / "host.json").write_text(json.dumps(host, indent=2), encoding="utf-8")
     return 0
 
@@ -1050,9 +1411,40 @@ def gate_seed_problems(host: dict[str, object], seed_sha256: str | None) -> list
     return []
 
 
+def p806_gate_problems(
+    host: dict[str, object], facts: P806SeedFacts, evidence: Path
+) -> list[str]:
+    """Re-derive the p806 hand-off: host.json's facts must be THIS seed's facts.
+
+    The marker strings the gate checks are built from [facts], so host.json only has to agree
+    that it recorded the same sample; a stale or foreign host cannot pass even with matching
+    screenshot names. The TalkBack limb is informational: a missing or incomplete capability
+    record never fails the screenshot evidence, and a claim that speech WAS captured fails unless
+    it is the explicit pending state this rig can produce.
+    """
+    problems: list[str] = []
+    recorded = host.get("p806")
+    if not isinstance(recorded, dict):
+        return ["host.json records no p806 seed facts"]
+    if recorded.get("seed_facts") != facts.as_dict():
+        problems.append(
+            f"host.json records p806 facts {recorded.get('seed_facts')!r}, the seed derives {facts.as_dict()!r}"
+        )
+    talkback = recorded.get("talkback")
+    if isinstance(talkback, dict):
+        speech = talkback.get("speech")
+        if speech is not None and (not isinstance(speech, str) or not speech.startswith("pending-")):
+            problems.append(
+                f"TalkBack speech {speech!r} claims recorded output; this rig can only record PENDING speech"
+            )
+    return problems
+
+
 def gate(args: argparse.Namespace) -> int:
     """Re-derive the verdict from the evidence on disk; never trust the driver's own word."""
     profile = profile_by_name(args.profile)
+    facts = derive_p806_seed_facts(Path(args.seed)) if profile.name in DYNAMIC_PROFILES else None
+    screens = p806_screens(facts) if facts is not None else profile.screens
     evidence = Path(args.evidence)
     host_path = evidence / "host.json"
     if not host_path.exists():
@@ -1065,7 +1457,7 @@ def gate(args: argparse.Namespace) -> int:
     applied = host.get("font_scale")
     if not isinstance(applied, (int, float)) or abs(float(applied) - args.font_scale) > 0.001:
         problems.append(f"font_scale {applied!r} is not the requested {args.font_scale:g}")
-    for screen in profile.screens:
+    for screen in screens:
         shot = evidence / f"{screen.stem}.png"
         tree = evidence / f"{screen.stem}.xml"
         if not shot.exists() or shot.stat().st_size < MIN_SCREENSHOT_BYTES:
@@ -1077,10 +1469,14 @@ def gate(args: argparse.Namespace) -> int:
             tree.read_text(encoding="utf-8"), screen.marker, screen.absent
         ):
             problems.append(f"{screen.stem}: {problem}")
+        for problem in required_problems(tree.read_text(encoding="utf-8"), screen.required):
+            problems.append(f"{screen.stem}: {problem}")
     if profile.seeded:
         seed_file = Path(args.seed) if args.seed else None
         actual = sha256_file(seed_file) if seed_file is not None and seed_file.is_file() else None
         problems.extend(gate_seed_problems(host, actual))
+    if facts is not None:
+        problems.extend(p806_gate_problems(host, facts, evidence))
     if problems:
         for problem in problems:
             print(f"gate: {problem}", file=sys.stderr)

@@ -72,6 +72,9 @@ def main() -> int:
     validate.add_argument("--inventory", type=Path, required=True)
     validate.add_argument("--shards", type=Path, required=True)
     validate.add_argument("--sha")
+    validate.add_argument("--extra-arg", action="append", default=[], metavar="KEY=VALUE",
+                          help="the dispatch's instrumentation argument (repeatable); the gate "
+                               "recomputes the host-shard routing and requires the host's reading")
 
     fork = actions.add_parser("run-fork", help="run the whole inventory on one owned emulator (fork pull requests)")
     fork.add_argument("--avd", default=instrumented.FORK_AVD)
@@ -101,7 +104,8 @@ def main() -> int:
                                         extra_args=tuple(args.extra_arg))
         if args.action == "validate":
             instrumented.validate(shard=args.shard, evidence=args.evidence, inventory=args.inventory,
-                                  shards=args.shards, sha=args.sha)
+                                  shards=args.shards, sha=args.sha,
+                                  extra_args=tuple(args.extra_arg))
             return 0
         if args.action == "run-fork":
             return instrumented.execute_fork(evidence=args.evidence, inventory=args.inventory,

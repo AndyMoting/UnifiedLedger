@@ -87,6 +87,8 @@ sqldelight {
 
 // P8-01a i3b: the font-scale seed writer (jvmTest) takes its output path from a system property.
 // Gradle does not forward command-line -D values to the test JVM, so forward this one explicitly.
+// P8-06 batch 6 adds a second, independent writer and property for the `p806` profile.
 tasks.withType<Test>().configureEach {
     System.getProperty("ul.fontscale.seed")?.let { systemProperty("ul.fontscale.seed", it) }
+    System.getProperty("ul.p806.fontscale.seed")?.let { systemProperty("ul.p806.fontscale.seed", it) }
 }

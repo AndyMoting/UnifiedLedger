@@ -18,6 +18,13 @@
 #   selectable original, capturing `refund-entry.png` (the refund type selected and the candidate
 #   read landed) and `refund-confirmation.png` (original, arrival account, amount and occurred-at
 #   filled, then 继续, at 1.3x) — the human read V-14 asks for.
+# - `profile=p806` (P8-06 batch 6 V-12): an independent anonymous seed of two fixed expenses on
+#   one clock-relative day, capturing `report.png` (the ANALYSIS report region), `calendar.png`
+#   (the month grid with the seeded day cell) and `day-detail.png` (that day's drilldown rows) at
+#   1.3x. Month, day, count and exact signed amounts are re-derived from the seed database by both
+#   the driver and the gate. The same run records `talkback-capability.txt`: spoken output stays
+#   PENDING evidence (a semantic dump or focus callback is not TalkBack's own utterance log), and
+#   it never fails the screenshot limbs.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
@@ -46,7 +53,7 @@ on:
         required: true
         type: string
       profile:
-        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）'
+        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 日历日格 + 日明细（3 屏）'
         required: false
         default: 'empty'
         type: choice
@@ -54,6 +61,7 @@ on:
           - empty
           - seeded
           - refund
+          - p806
       font_scale:
         description: Font scale to apply (V-8 asks for 1.3)
         required: false
@@ -105,16 +113,24 @@ jobs:
           set -euo pipefail
           mkdir -p fontscale-evidence
           sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
-      - name: Write the seeded ledger database (seeded and refund profiles only)
-        if: inputs.profile == 'seeded' || inputs.profile == 'refund'
-        # The writer is a jvmTest no-op unless this property names its output; the build script
-        # forwards the property to the test JVM (Gradle does not pass -D through by itself).
+      - name: Write the prepared ledger database (seeded, refund and p806 profiles only)
+        if: inputs.profile == 'seeded' || inputs.profile == 'refund' || inputs.profile == 'p806'
+        # Each writer is a jvmTest no-op unless its property names the output; the build script
+        # forwards both properties to the test JVM (Gradle does not pass -D through by itself).
+        # p806 uses its own writer and property so its sample stays independent of the P8-01/P8-03
+        # ledger shape both other seeded profiles share.
         run: |
           set -euo pipefail
           mkdir -p fontscale-evidence fontscale-seed
-          ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest \
-            --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' \
-            "-Dul.fontscale.seed=${PWD}/${SEED_DB}"
+          if [ "${PROFILE}" = 'p806' ]; then
+            ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest \
+              --tests 'com.unifiedledger.data.P806FontscaleSeedWriterTest' \
+              "-Dul.p806.fontscale.seed=${PWD}/${SEED_DB}"
+          else
+            ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest \
+              --tests 'com.unifiedledger.data.P801FontscaleSeedWriterTest' \
+              "-Dul.fontscale.seed=${PWD}/${SEED_DB}"
+          fi
           sha256sum "${SEED_DB}" | tee fontscale-evidence/host-seed.txt
       - name: Enable KVM group perms
         run: |

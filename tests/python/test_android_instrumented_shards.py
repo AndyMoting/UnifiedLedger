@@ -71,12 +71,12 @@ class ShardManifest(unittest.TestCase):
     def test_repository_split_partitions_the_ordinary_inventory(self):
         cases = instrumented.read_cases(INVENTORY)
         plan = instrumented.check_partition(INVENTORY, SHARDS)
-        self.assertEqual(len(cases), 58)
+        self.assertEqual(len(cases), 59)
         self.assertEqual(sorted(plan), [1, 2])
-        self.assertEqual(sum(len(entries) for entries in plan.values()), 58)
-        self.assertEqual(len({case for entries in plan.values() for case in entries}), 58)
+        self.assertEqual(sum(len(entries) for entries in plan.values()), 59)
+        self.assertEqual(len({case for entries in plan.values() for case in entries}), 59)
         self.assertEqual(sorted(case for entries in plan.values() for case in entries), sorted(cases))
-        self.assertEqual(len({case.split("#")[0] for case in cases}), 15)
+        self.assertEqual(len({case.split("#")[0] for case in cases}), 16)
         self.assertTrue(all(plan[shard] for shard in plan))
 
     def test_fixture_split_resolves_each_shard_subset(self):
@@ -499,7 +499,7 @@ class OnDemandInstrumentationArguments(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("--extra-arg", result.stdout)
 
-    def test_the_workflow_dispatch_input_is_threaded_into_both_shard_commands(self):
+    def test_the_workflow_dispatch_input_reaches_both_runs_and_the_validator(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         dispatch = text.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
         self.assertIn("instrumentation_extra_args:", dispatch)
@@ -508,12 +508,161 @@ class OnDemandInstrumentationArguments(unittest.TestCase):
         # the script through an env var and an expansion, so a padded or quoted value
         # cannot word-split into the argument list or leave a dangling quote.
         env_line = "EXTRA_INSTRUMENTATION_ARGS: ${{ github.event.inputs.instrumentation_extra_args }}"
-        self.assertEqual(3, text.count(env_line))  # two emulator steps and the reading guard
-        self.assertEqual(2, text.count("${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}"))
+        # The two emulator steps and the single post-run validator: the input reaches every
+        # consumer of the argument and nothing else.
+        self.assertEqual(3, text.count(env_line))
+        self.assertEqual(3, text.count("${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}"))
+        self.assertIn("--shards tools/ci/android-instrumented-shards.txt --evidence "
+                      "instrumented-evidence/shard-${{ matrix.shard }} --sha \"${{ github.sha }}\" "
+                      "${EXTRA_INSTRUMENTATION_ARGS:+--extra-arg $EXTRA_INSTRUMENTATION_ARGS}", text)
         self.assertNotIn("format('--extra-arg", text)
-        # A dispatch that asks for a reading must leave one or the shard goes red.
-        self.assertIn("Require the on-demand reading when one was requested", text)
-        self.assertIn("P802-V8DEV fixture=", text)
+        # One gate, not two: the validator owns the routing and the reading, so a `KEY=0` or an
+        # unrelated key that merely contains a timing key cannot demand a reading from a shell
+        # substring match.
+        self.assertNotIn("Require the on-demand reading when one was requested", text)
+        self.assertNotIn("require_reading", text)
+        self.assertIn("on-demand gate (D7-13)", text)
+
+
+class OnDemandHostRouting(unittest.TestCase):
+    """A dispatch argument reaches only the shard that owns its timing case."""
+
+    HOST = "com.unifiedledger.android.P806ReportDeviceTimingInstrumentedTest"
+    OTHER = "com.example.A"
+    HOST_CASES = (HOST + "#timing",)
+    OTHER_CASES = (OTHER + "#one",)
+    ARG = ("ul.p806.timing=1",)
+    READINGS = (
+        "I/UnifiedLedger: P806-V14DEV reading=periodAmountMs ms=12.345 statements=1\n"
+        "I/UnifiedLedger: P806-V14DEV reading=calendarBucketsMs ms=8.001 statements=64\n"
+        "I/UnifiedLedger: P806-V14DEV reading=firstPageMs ms=3.210 statements=1\n"
+        "I/UnifiedLedger: P806-V14DEV reading=countMs ms=0.900 statements=1\n"
+        "I/UnifiedLedger: P806-V14DEV summary fixture=50000 month=2026-11 pageRows=50 days=30 schema=38\n"
+    )
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.inventory = self.root / "inventory.txt"
+        self.inventory.write_text("\n".join(self.HOST_CASES + self.OTHER_CASES) + "\n", encoding="utf-8")
+        self.shards = self.root / "shards.txt"
+        self.shards.write_text(f"1\t{self.OTHER}\n2\t{self.HOST}\n", encoding="utf-8")
+
+    def _evidence(self, shard: int, *, requested: tuple[str, ...], routed: tuple[str, ...],
+                  logcat: str) -> Path:
+        cases = self.OTHER_CASES if shard == 1 else self.HOST_CASES
+        evidence = self.root / f"evidence-{shard}"
+        evidence.mkdir()
+        report = {
+            "schema": 2, "mode": "shard", "shard": shard, "sha": SHA, "avd": instrumented.avd_name(shard),
+            "runner": instrumented.RUNNER, "package": instrumented.PACKAGE,
+            "classes": [case.split("#")[0] for case in cases], "expected": sorted(cases),
+            "device": {"serial": "emulator-5554", "sdk": "36", "abi": "x86_64",
+                       "size": "1080x2400", "density": "420", "cores": 2, "mem_total_kb": 2_000_000},
+            "apk_sha256": {"app": "a" * 64, "test": "b" * 64},
+            "instrumentation_exit": 0, "instrumentation": {"started": len(cases), "passed": len(cases), "failed": 0},
+            "extra_args": list(routed), "requested_extra_args": list(requested),
+            "status": "PASS", "error": None,
+        }
+        (evidence / "shard.json").write_text(json.dumps(report), encoding="utf-8")
+        (evidence / "instrumentation-raw.txt").write_text(ok_log(cases), encoding="utf-8")
+        instrumented.write_junit(evidence / f"junit-shard-{shard}.xml", f"AndroidInstrumentedShard{shard}",
+                                 cases, instrumented.parse_instrumentation(ok_log(cases)))
+        (evidence / "logcat.txt").write_text(logcat or "01-01 00:00:00.000 I/Test: ok\n", encoding="utf-8")
+        return evidence
+
+    def validate(self, shard: int, evidence: Path, requested: tuple[str, ...] | None = None):
+        return instrumented.validate(shard=shard, evidence=evidence, inventory=self.inventory,
+                                     shards=self.shards, sha=SHA,
+                                     extra_args=self.ARG if requested is None else requested)
+
+    def test_the_host_shard_forwards_the_argument_and_requires_its_reading(self):
+        evidence = self._evidence(2, requested=self.ARG, routed=self.ARG, logcat=self.READINGS)
+        self.assertEqual(self.validate(2, evidence), 1)
+
+    def test_the_host_shard_goes_red_when_its_reading_is_absent(self):
+        evidence = self._evidence(2, requested=self.ARG, routed=self.ARG, logcat="")
+        with self.assertRaises(ValueError):
+            self.validate(2, evidence)
+
+    def test_the_non_host_shard_drops_the_argument_and_requires_no_marker(self):
+        evidence = self._evidence(1, requested=self.ARG, routed=(), logcat="")
+        self.assertEqual(self.validate(1, evidence), 1)
+
+    def test_a_host_run_that_silently_dropped_the_opt_in_is_rejected(self):
+        evidence = self._evidence(2, requested=(), routed=(), logcat=self.READINGS)
+        with self.assertRaises(ValueError):
+            self.validate(2, evidence)
+
+    def test_a_non_host_run_that_received_the_argument_is_rejected(self):
+        evidence = self._evidence(1, requested=self.ARG, routed=self.ARG, logcat="")
+        with self.assertRaises(ValueError):
+            self.validate(1, evidence)
+
+    def test_a_zero_value_is_forwarded_to_the_host_but_demands_no_reading(self):
+        arg = ("ul.p806.timing=0",)
+        evidence = self._evidence(2, requested=arg, routed=arg, logcat="")
+        self.assertEqual(1, self.validate(2, evidence, requested=arg))
+
+    def test_an_unrelated_key_that_contains_a_timing_key_demands_nothing(self):
+        arg = ("ul.example.note=ul.p806.timing=1",)
+        evidence = self._evidence(1, requested=arg, routed=arg, logcat="")
+        self.assertEqual(1, self.validate(1, evidence, requested=arg))
+
+    def test_routing_keeps_an_unowned_extra_and_rejects_an_unknown_host(self):
+        extra = tuple(instrumented.read_extra_args(("ul.example.note=hello",)))
+        self.assertEqual(extra, instrumented.route_extra_args(extra, self.OTHER_CASES,
+                                                              self.OTHER_CASES + self.HOST_CASES))
+        with self.assertRaises(ValueError):
+            instrumented.route_extra_args(self.ARG, self.OTHER_CASES, self.OTHER_CASES)
+
+
+class OnDemandReadings(unittest.TestCase):
+    """The dispatch gate: each requested reading must be present exactly once and parseable."""
+
+    P806_LOGCAT = (
+        "I/UnifiedLedger: P806-V14DEV reading=periodAmountMs ms=12.345 statements=7\n"
+        "I/UnifiedLedger: P806-V14DEV reading=calendarBucketsMs ms=8.001 statements=5\n"
+        "I/UnifiedLedger: P806-V14DEV reading=firstPageMs ms=3.210 statements=1\n"
+        "I/UnifiedLedger: P806-V14DEV reading=countMs ms=0.900 statements=1\n"
+        "I/UnifiedLedger: P806-V14DEV summary fixture=50000 month=2026-11 pageRows=50 days=30 schema=38\n"
+    )
+
+    def test_an_ordinary_run_requires_nothing(self):
+        self.assertEqual([], instrumented._reading_problems("", []))
+
+    def test_the_complete_p802_reading_passes(self):
+        line = "I/UnifiedLedger: P802-V8DEV fixture=61000 firstPageMs=12.345\n"
+        self.assertEqual([], instrumented._reading_problems(line, ["ul.p802.timing=1"]))
+        self.assertTrue(instrumented._reading_problems(line + line, ["ul.p802.timing=1"]))
+        self.assertTrue(instrumented._reading_problems("", ["ul.p802.timing=1"]))
+
+    def test_the_complete_p806_reading_passes(self):
+        self.assertEqual([], instrumented._reading_problems(self.P806_LOGCAT, ["ul.p806.timing=1"]))
+
+    def test_a_duplicated_reading_is_rejected(self):
+        duplicated = self.P806_LOGCAT + "I/UnifiedLedger: P806-V14DEV reading=countMs ms=0.900 statements=1\n"
+        problems = instrumented._reading_problems(duplicated, ["ul.p806.timing=1"])
+        self.assertTrue(any("exactly once" in problem for problem in problems))
+
+    def test_a_missing_or_unparsable_metric_is_rejected(self):
+        for broken in (
+            self.P806_LOGCAT.replace("reading=countMs ms=0.900 statements=1\n", ""),
+            self.P806_LOGCAT.replace("statements=1\n", "statements=0\n"),
+            self.P806_LOGCAT.replace("ms=0.900", "ms=900"),
+        ):
+            with self.subTest(line=broken[-80:]):
+                self.assertTrue(instrumented._reading_problems(broken, ["ul.p806.timing=1"]))
+
+    def test_an_argument_with_another_value_or_key_requires_nothing(self):
+        for args in (
+            ["ul.p806.timing=0"],
+            ["ul.p802.timing=0"],
+            ["ul.example.note=ul.p806.timing=1"],
+        ):
+            with self.subTest(args=args):
+                self.assertEqual([], instrumented._reading_problems("", args))
 
 
 if __name__ == "__main__":
