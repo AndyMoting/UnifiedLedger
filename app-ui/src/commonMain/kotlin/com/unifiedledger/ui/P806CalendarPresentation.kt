@@ -129,10 +129,16 @@ internal fun p806CalendarCellContentDescription(day: P806CalendarDayView): Strin
     return "${day.date}，$amounts；共 ${day.transactionCount} 笔"
 }
 
-/** One currency's exact signed expense/income pair for display and accessibility text. */
+/**
+ * One currency's exact signed expense/income pair for display and accessibility text.
+ *
+ * Uses the report surface's [p806MinorUnitsText], not [formatMinorUnits]: the shared formatter
+ * substitutes `Long.MAX_VALUE` for `|Long.MIN_VALUE|` and is therefore off by one minor unit at that
+ * end, while a legitimate day's net expense can reach it. Every other value formats identically.
+ */
 internal fun p806CalendarCurrencyText(row: P806CalendarCurrencyView): String =
-    "${row.currency.code} 支出 ${formatMinorUnits(row.netExpenseMinorUnits, row.currency.precision)}" +
-        "、收入 ${formatMinorUnits(row.ordinaryIncomeMinorUnits, row.currency.precision)}"
+    "${row.currency.code} 支出 ${p806MinorUnitsText(row.netExpenseMinorUnits, row.currency.precision)}" +
+        "、收入 ${p806MinorUnitsText(row.ordinaryIncomeMinorUnits, row.currency.precision)}"
 
 /**
  * The deterministic, pure intensity level (0..4) of one day's net expense against the month's
