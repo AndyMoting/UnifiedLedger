@@ -183,6 +183,22 @@ class P8B3SecondaryNavPresentationTest {
     }
 
     @Test
+    fun theRowAmountKeepsTheExactSignedPostingAmountAtTheLongMinEnd() {
+        // CNY precision 2: |Long.MIN_VALUE| is one minor unit past Long.MAX_VALUE, which the shared
+        // formatMinorUnits substitutes and would show as ...58.07. The row must carry the exact
+        // posting amount ...58.08 in the visible line's text and in its contentDescription (V-8:
+        // the shown amount equals the account posting amount).
+        val extreme = flowRow(amountMinor = Long.MIN_VALUE)
+        assertEquals("默认支付账户 -92233720368547758.08 CNY", accountFlowRowAmountText(extreme, "默认支付账户"))
+        assertEquals(
+            "EXPENSE，资金发生日期 2026-11-06，备注 工作午餐；默认支付账户 -92233720368547758.08 CNY",
+            accountFlowRowContentDescription(extreme, "默认支付账户"),
+        )
+        // Ordinary output is the control: every other value is unchanged.
+        assertEquals("默认支付账户 -32.00 CNY", accountFlowRowAmountText(flowRow(), "默认支付账户"))
+    }
+
+    @Test
     fun theCountUsesTheAccountMovementWordingAndOnlyASuccessRendersIt() {
         assertEquals("3 条账户变动", accountFlowCountText(3))
         // The count is the snapshot's exact posting count — the rows on screen may be fewer only

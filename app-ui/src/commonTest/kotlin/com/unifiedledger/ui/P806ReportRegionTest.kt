@@ -169,6 +169,22 @@ class P806ReportRegionTest {
         assertTrue(!p806ReportSlotIsEligible(loaded().copy(loading = true)))
     }
 
+    /**
+     * V-6 (D-343 section 3.7.4): the 「账目已更新，已回到第一页」 copy is the completed-refresh notice,
+     * distinct from the in-progress write-stale copy. It renders only when the slot's explicit
+     * post-write success mark is set, so a normal read (and any other slot) shows nothing.
+     */
+    @Test
+    fun thePostWriteRefreshNoticeIsDistinctFromTheInProgressCopyAndAbsentOnANormalRead() {
+        assertEquals("账目已更新，已回到第一页", p806ReportWriteRefreshedNotice())
+        assertTrue(p806ReportWriteRefreshedNotice() != p806ReportWriteStaleNotice())
+        // A normal READY slot (no determinate write concluded) shows no refresh notice.
+        assertNull(p806ReportWriteRefreshedNoticeText(loaded()))
+        // Only the explicit mark raises it.
+        assertEquals("账目已更新，已回到第一页", p806ReportWriteRefreshedNoticeText(loaded().copy(writeRefreshed = true)))
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(loaded().copy(writeRefreshed = true)))
+    }
+
     @Test
     fun anEmptySuccessSaysWhichEmptyItIsAndNeverInventsAPeriod() {
         val noPeriod = p806ReportEmptyText(loaded(reportView(period = null)))
