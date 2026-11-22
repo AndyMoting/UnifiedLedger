@@ -1167,10 +1167,17 @@ class P806ReportReducerTest {
         assertTrue(openedSlot.writeStale)
         assertTrue(openedSlot.loading)
         assertNull(p806ReportWriteRefreshedNoticeText(openedSlot))
-        // The matching success (same token, the history's landed [cny] axis) concludes the refresh.
+        // The owed re-read re-issues the HISTORY's ANCHORED period (the landed November window),
+        // not the bare default month: the live host captures exactly this slot.period when it mints
+        // the request, and the landing decision compares the read identity against it. The synthetic
+        // result therefore must carry openedSlot.period, or P806ReportRead.kt:346 drops it as
+        // STALE_REQUEST (which is what a default P806Period(MONTH) did).
+        assertEquals(P806Period(P806PeriodKind.MONTH, month = YearMonth(2026, 11)), openedSlot.period)
+        // The matching success (same token, the issued anchored period and the history's landed
+        // [cny] axis) concludes the refresh.
         val seamRefreshed =
             assertIs<P503AppState.OverviewEmpty>(
-                reducer.reduce(opened, P503UiEvent.ReportPeriodResult(successRead(token = seamToken, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
+                reducer.reduce(opened, P503UiEvent.ReportPeriodResult(successRead(token = seamToken, period = openedSlot.period, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
             )
         val seamSlot = assertNotNull(seamRefreshed.reportRegion)
         assertTrue(seamSlot.writeRefreshed)
