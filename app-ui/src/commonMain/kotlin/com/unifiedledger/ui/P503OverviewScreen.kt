@@ -283,6 +283,10 @@ internal fun LedgerEntryFlowRow(
     onSelectTransaction: (TransactionId) -> Unit,
     interactionsEnabled: Boolean,
     onSampleScroll: (() -> ListScrollPosition?)? = null,
+    // The exact-amount formatter for BOTH the visible posting lines and the TalkBack label. The
+    // default is the legacy [formatMinorUnits] (callers outside the P806 drilldown render exactly
+    // as before); the drilldown passes [p806MinorUnitsText], which is exact at Long.MIN_VALUE.
+    amountText: (Long, Int) -> String = ::formatMinorUnits,
 ) {
     Column(
         modifier =
@@ -297,7 +301,7 @@ internal fun LedgerEntryFlowRow(
                 // C04 (spec 6.4): the flow row announces as one node carrying the effective
                 // kind, the statistics time and every exact posting value with sign, account
                 // name and currency code — the ordered list's values stay TalkBack-reachable.
-                .semantics { contentDescription = flowRowContentDescription(row, accountNames) }
+                .semantics { contentDescription = flowRowContentDescription(row, accountNames, amountText) }
                 .padding(vertical = 4.dp),
     ) {
         Text(
@@ -306,9 +310,15 @@ internal fun LedgerEntryFlowRow(
         )
         row.postings.forEach { posting ->
             Text(
-                "${accountNames[posting.accountId] ?: posting.accountId.value} " +
-                    formatMinorUnits(posting.amount.minorUnits, posting.amount.currency.precision) +
-                    " ${posting.amount.currency.code}",
+                // The same line builder the TalkBack label uses, so the visible value and the
+                // announced value can never diverge.
+                flowRowPostingLineText(
+                    accountNames[posting.accountId] ?: posting.accountId.value,
+                    posting.amount.minorUnits,
+                    posting.amount.currency.precision,
+                    posting.amount.currency.code,
+                    amountText,
+                ),
                 style = MaterialTheme.typography.bodySmall,
             )
         }

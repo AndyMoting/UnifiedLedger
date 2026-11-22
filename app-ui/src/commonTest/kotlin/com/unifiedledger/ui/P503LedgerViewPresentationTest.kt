@@ -419,6 +419,45 @@ class P503LedgerViewPresentationTest {
     }
 
     @Test
+    fun theDrilldownRowFormatterRendersTheLongMinimumEndExactlyInVisibleAndSemanticText() {
+        // V-12: a balanced posting set may carry Long.MIN_VALUE. The legacy formatter is off by one
+        // there; the P806 drilldown routes BOTH its visible line and its TalkBack label through
+        // p806MinorUnitsText, while every other caller keeps the legacy digits.
+        val extreme = AccountId("account-extreme")
+        val ordinary = AccountId("account-ordinary")
+        val row =
+            LedgerEntryRow(
+                transactionId = TransactionId("tx-extreme"),
+                currentVersionId = TransactionVersionId("version-extreme-1"),
+                kind = TransactionKind.EXPENSE,
+                occurredAt = kotlin.time.Instant.parse("2026-03-01T02:00:00Z"),
+                statisticsAt = kotlin.time.Instant.parse("2026-03-05T02:00:00Z"),
+                note = null,
+                postings =
+                    listOf(
+                        Posting(PostingId("posting-extreme"), extreme, Money.ofMinor(Long.MIN_VALUE, cny)),
+                        Posting(PostingId("posting-ordinary"), ordinary, Money.ofMinor(-10_000L, cny)),
+                    ),
+            )
+        val names = mapOf(extreme to "极端", ordinary to "普通")
+        // The visible-format helper is the exact one: the true signed minimum, not the legacy
+        // MAX_VALUE substitution (-92233720368547758.07).
+        assertEquals("-92233720368547758.08", p806MinorUnitsText(Long.MIN_VALUE, 2))
+        assertEquals("极端 -92233720368547758.08 CNY", flowRowPostingLineText("极端", Long.MIN_VALUE, 2, "CNY", ::p806MinorUnitsText))
+        assertEquals("普通 -100.00 CNY", flowRowPostingLineText("普通", -10_000L, 2, "CNY", ::p806MinorUnitsText))
+        // The full TalkBack semantics uses the same formatter for every posting.
+        val label = flowRowContentDescription(row, names, amountText = ::p806MinorUnitsText)
+        assertTrue(label.contains("极端 -92233720368547758.08 CNY"))
+        assertTrue(label.contains("普通 -100.00 CNY"))
+        // An ordinary signed amount is identical through either formatter, so the injected path only
+        // changes the extreme end.
+        assertTrue(flowRowContentDescription(row, names).contains("普通 -100.00 CNY"))
+        // The default path stays behaviour-identical for callers outside the drilldown row: the
+        // legacy formatter still substitutes Long.MAX_VALUE at the extreme end.
+        assertTrue(flowRowContentDescription(row, names).contains("极端 -92233720368547758.07 CNY"))
+    }
+
+    @Test
     fun categoryRowLabelCarriesTheCurrentNameAndExactTotals() {
         assertEquals(
             "餐饮：CNY 正向 35.80，退款 -30.00",
