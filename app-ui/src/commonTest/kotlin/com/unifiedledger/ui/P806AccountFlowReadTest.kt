@@ -361,6 +361,7 @@ class P806AccountFlowReadTest {
                 active = true,
                 balanceMinorUnits = null,
             )
+
         fun projections(displayMinorUnits: Long): Pair<P806AccountFlowHeader, P8AssetAccountRow> {
             val balances =
                 listOf(
