@@ -1,9 +1,9 @@
 """Two-shard execution of the ordinary Android device regression.
 
-Case authority is ``tools/ci/android-instrumented-inventory.txt`` (58
-``class#method`` entries over 15 classes). Shard authority is
-``tools/ci/android-instrumented-shards.txt`` (one ``shard<TAB>class`` line per
-test class).
+Case authority is ``tools/ci/android-instrumented-inventory.txt``. Shard
+authority is ``tools/ci/android-instrumented-shards.txt`` (one
+``shard<TAB>class`` line per test class). The two manifests own the case and
+class counts; no prose here restates them.
 
 Each shard boots its own CI-owned AVD, installs both APKs directly, and runs
 ``am instrument -w -r -e class <class#method,...>`` for exactly its own cases,
@@ -56,6 +56,29 @@ MEM_TOTAL_BAND_KB = (1_500_000, 2_600_000)
 
 CASE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*#[A-Za-z_$][\w$]*")
 SHARD_LINE = re.compile(r"([0-9]+)\t([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)")
+
+# D7-13 on-demand readings: a dispatch that passes one of these `KEY=1` arguments must leave its
+# reading in the logcat of the shard that HOSTS the named case. Each key is routed to exactly one
+# class below: the other shard never receives the argument and never requires its markers. A key
+# whose host class is absent from the inventory fails before a device is claimed, so an argument
+# can never be silently dropped. An ordinary run passes no argument and is unaffected.
+ON_DEMAND_HOSTS: dict[str, str] = {
+    "ul.p802.timing": "com.unifiedledger.android.P802SearchDeviceTimingInstrumentedTest",
+    "ul.p806.timing": "com.unifiedledger.android.P806ReportDeviceTimingInstrumentedTest",
+}
+ON_DEMAND_READINGS: dict[str, tuple[str, ...]] = {
+    "ul.p802.timing": ("P802-V8DEV fixture=",),
+    "ul.p806.timing": (
+        "P806-V14DEV reading=periodAmountMs ",
+        "P806-V14DEV reading=calendarBucketsMs ",
+        "P806-V14DEV reading=firstPageMs ",
+        "P806-V14DEV reading=countMs ",
+        "P806-V14DEV summary fixture=",
+    ),
+}
+P806_METRIC_LINE = re.compile(
+    r"P806-V14DEV reading=(\w+) ms=([0-9]+\.[0-9]{3}) statements=([1-9][0-9]*)"
+)
 # An on-demand instrumentation argument arrives as one `KEY=VALUE` word (the workflow
 # input), and the key half must be safe to hand to `am instrument` as its own token.
 EXTRA_ARG = re.compile(r"[A-Za-z0-9_.]+")
@@ -412,6 +435,34 @@ def read_extra_args(values: tuple[str, ...] | list[str]) -> tuple[tuple[str, str
     return tuple(pairs)
 
 
+def route_extra_args(
+    extra: tuple[tuple[str, str], ...],
+    expected: tuple[str, ...],
+    all_cases: tuple[str, ...],
+) -> tuple[tuple[str, str], ...]:
+    """Keep only the on-demand arguments whose host case this shard executes.
+
+    Every key in [ON_DEMAND_HOSTS] names the one class that reads it. The host
+    must exist in the inventory (else the argument would vanish on every shard,
+    which is a dispatch error, not an ordinary run), and the argument is forwarded
+    only to the shard whose expected cases include that class. Arguments without a
+    declared host are user-supplied extras and pass through unchanged.
+    """
+    all_classes = {case.split("#", 1)[0] for case in all_cases}
+    expected_classes = {case.split("#", 1)[0] for case in expected}
+    routed: list[tuple[str, str]] = []
+    for key, value in extra:
+        host = ON_DEMAND_HOSTS.get(key)
+        if host is None:
+            routed.append((key, value))
+            continue
+        if host not in all_classes:
+            raise ValueError(f"on-demand argument {key!r} names {host}, which is not in the inventory")
+        if host in expected_classes:
+            routed.append((key, value))
+    return tuple(routed)
+
+
 def instrument_command(expected: tuple[str, ...], extra: tuple[tuple[str, str], ...] = ()) -> str:
     """The one ``am instrument`` command line this driver runs.
 
@@ -455,7 +506,8 @@ def _dump_logcat(serial: str, path: Path) -> None:
 
 def _execute(*, mode: str, shard: int | None, expected: tuple[str, ...], evidence: Path, app: Path,
              test: Path, sha: str, avd: str, timeout: float,
-             extra: tuple[tuple[str, str], ...] = ()) -> int:
+             extra: tuple[tuple[str, str], ...] = (),
+             requested: tuple[tuple[str, str], ...] = ()) -> int:
     """Run `expected` on one owned emulator and write its evidence."""
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("full lowercase SHA required")
@@ -468,6 +520,8 @@ def _execute(*, mode: str, shard: int | None, expected: tuple[str, ...], evidenc
     report = {"schema": SCHEMA, "mode": mode, "shard": shard, "sha": sha, "avd": avd, "runner": RUNNER,
               "package": PACKAGE, "classes": sorted(set(classes)), "expected": sorted(expected),
               "device": {}, "apk_sha256": {}, "instrumentation_exit": None,
+              "extra_args": [f"{key}={value}" for key, value in extra],
+              "requested_extra_args": [f"{key}={value}" for key, value in requested],
               "instrumentation": {"started": 0, "passed": 0, "failed": 0},
               "status": "ERROR", "error": None}
     serial = None
@@ -520,15 +574,18 @@ def execute(*, shard: int, evidence: Path, inventory: Path, shards: Path, app: P
     """Run one shard's cases on one owned emulator and write its evidence.
 
     ``extra_args`` is the on-demand channel (D7-13): each ``KEY=VALUE`` word becomes
-    one ``-e KEY VALUE`` pair on the command line, and an empty tuple leaves the
+    one ``-e KEY VALUE`` pair, but only on the shard whose expected cases include
+    the key's declared host class ([ON_DEMAND_HOSTS]); an empty tuple leaves the
     command exactly as the fixed call always was.
     """
     extra = read_extra_args(extra_args)
     expected = check_partition(inventory, shards)[shard]
     if avd != avd_name(shard):
         raise ValueError("AVD name does not match the shard")
+    routed = route_extra_args(extra, expected, read_cases(inventory))
     return _execute(mode=MODE_SHARD, shard=shard, expected=expected, evidence=evidence,
-                    app=app, test=test, sha=sha, avd=avd, timeout=timeout, extra=extra)
+                    app=app, test=test, sha=sha, avd=avd, timeout=timeout, extra=routed,
+                    requested=extra)
 
 
 def execute_fork(*, evidence: Path, inventory: Path, app: Path, test: Path, sha: str,
@@ -540,8 +597,42 @@ def execute_fork(*, evidence: Path, inventory: Path, app: Path, test: Path, sha:
                     app=app, test=test, sha=sha, avd=avd, timeout=timeout)
 
 
+def _reading_problems(logcat_text: str, extra_args: list[str]) -> list[str]:
+    """The on-demand reading each argument ROUTED to this shard must have left in logcat.
+
+    A fragment must appear EXACTLY once: a duplicated line (two runs merged into one export) or a
+    truncated one is not evidence. For `ul.p806.timing` the four metric lines must each parse with
+    a three-place millisecond value and a positive real statement count, so a green dispatch can
+    never be read as "four readings were asked for" without the four readings being there.
+    """
+    problems: list[str] = []
+    requested: set[str] = set()
+    for word in extra_args:
+        key, _, value = word.partition("=")
+        fragments = ON_DEMAND_READINGS.get(key)
+        if fragments is None or value != "1":
+            continue
+        requested.add(key)
+        for fragment in fragments:
+            count = logcat_text.count(fragment)
+            if count != 1:
+                problems.append(
+                    f"{key}: logcat carries {fragment!r} {count} times, expected exactly once"
+                )
+    if "ul.p806.timing" in requested:
+        matches = P806_METRIC_LINE.findall(logcat_text)
+        labels = sorted(match[0] for match in matches)
+        expected = ["calendarBucketsMs", "countMs", "firstPageMs", "periodAmountMs"]
+        if labels != expected:
+            problems.append(
+                f"ul.p806.timing: parsable metric lines {labels!r}, expected exactly {expected!r}"
+            )
+    return problems
+
+
 def _validate(*, mode: str, shard: int | None, expected: tuple[str, ...], evidence: Path, avd: str,
-              sha: str | None) -> int:
+              sha: str | None, all_cases: tuple[str, ...],
+              requested_args: tuple[str, ...] = ()) -> int:
     """Evidence, transcript, JUnit and logcat must agree with the manifest subset."""
     label = "fork" if mode == MODE_FORK else f"shard {shard}"
     report = strict_json(evidence / "shard.json")
@@ -557,6 +648,21 @@ def _validate(*, mode: str, shard: int | None, expected: tuple[str, ...], eviden
         raise ValueError(f"{label} evidence expected set differs from the manifest")
     if report.get("status") != "PASS":
         raise ValueError(f"{label} run did not pass: " + str(report.get("error")))
+    # The validator recomputes the routing from the dispatch's own request, so a run that silently
+    # dropped the host's opt-in (or forwarded it to the wrong shard) cannot pass by recording only
+    # what it actually passed. The host shard must then leave the requested reading in logcat.
+    requested = read_extra_args(requested_args)
+    routed = route_extra_args(requested, expected, all_cases)
+    recorded_requested = tuple(report.get("requested_extra_args", []))
+    requested_words = tuple(f"{key}={value}" for key, value in requested)
+    routed_words = tuple(f"{key}={value}" for key, value in routed)
+    if recorded_requested != requested_words:
+        raise ValueError(f"{label} evidence requested arguments {recorded_requested!r} "
+                         f"differ from the dispatch {requested_words!r}")
+    recorded_routed = tuple(report.get("extra_args", []))
+    if recorded_routed != routed_words:
+        raise ValueError(f"{label} evidence forwarded arguments {recorded_routed!r} "
+                         f"differ from the routed set {routed_words!r}")
     device = report.get("device", {})
     if (device.get("sdk") != EXPECTED_SDK or device.get("abi") != EXPECTED_ABI
             or device.get("size") != EXPECTED_SIZE or device.get("cores") != EXPECTED_CORES):
@@ -573,17 +679,23 @@ def _validate(*, mode: str, shard: int | None, expected: tuple[str, ...], eviden
     logcat = evidence / "logcat.txt"
     if not logcat.is_file() or logcat.stat().st_size == 0:
         raise ValueError("missing logcat evidence")
+    problems = _reading_problems(logcat.read_text(encoding="utf-8", errors="replace"),
+                                 list(recorded_routed))
+    if problems:
+        raise ValueError(f"{label} on-demand reading incomplete: " + "; ".join(problems))
     print(f"PASS {label}: {len(expected)} cases match the manifest", flush=True)
     return len(expected)
 
 
-def validate(*, shard: int, evidence: Path, inventory: Path, shards: Path, sha: str | None = None) -> int:
+def validate(*, shard: int, evidence: Path, inventory: Path, shards: Path, sha: str | None = None,
+             extra_args: tuple[str, ...] = ()) -> int:
     """Independent post-run gate for one shard."""
     return _validate(mode=MODE_SHARD, shard=shard, expected=check_partition(inventory, shards)[shard],
-                     evidence=evidence, avd=avd_name(shard), sha=sha)
+                     evidence=evidence, avd=avd_name(shard), sha=sha,
+                     all_cases=read_cases(inventory), requested_args=extra_args)
 
 
 def validate_fork(*, evidence: Path, inventory: Path, sha: str | None = None) -> int:
     """Independent post-run gate for the fork fallback (whole inventory)."""
     return _validate(mode=MODE_FORK, shard=None, expected=read_cases(inventory),
-                     evidence=evidence, avd=FORK_AVD, sha=sha)
+                     evidence=evidence, avd=FORK_AVD, sha=sha, all_cases=read_cases(inventory))

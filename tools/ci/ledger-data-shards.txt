@@ -61,6 +61,7 @@
 2	com.unifiedledger.data.P806SnapshotReadTest
 2	com.unifiedledger.data.P806ReportSemanticsTest
 2	com.unifiedledger.data.P806CoverageTest
+2	com.unifiedledger.data.P806FontscaleSeedWriterTest
 3	com.unifiedledger.data.AndroidSnapshotOpenCorruptionPolicyTest
 3	com.unifiedledger.data.BackupSnapshotDriverTest
 3	com.unifiedledger.data.ImportEvidenceProbeIndexTest
