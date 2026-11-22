@@ -202,6 +202,21 @@ class P806CalendarPresentationTest {
     }
 
     @Test
+    fun aDayAtTheLongMinNetExpenseEndKeepsTheExactPairAndAccessibilityText() {
+        // CNY precision 2: |Long.MIN_VALUE| is exactly one minor unit past Long.MAX_VALUE, which the
+        // shared formatMinorUnits substitutes; the calendar must show ...58.08, not ...58.07.
+        val extreme = day(dayOfMonth = 7, count = 1, expense = Long.MIN_VALUE)
+        assertEquals(
+            "CNY 支出 -92233720368547758.08、收入 0.00",
+            p806CalendarCurrencyText(extreme.currencies.single()),
+        )
+        assertEquals(
+            "2026-11-07，CNY 支出 -92233720368547758.08、收入 0.00；共 1 笔",
+            p806CalendarCellContentDescription(extreme),
+        )
+    }
+
+    @Test
     fun theIntensityIsAuxiliaryDeterministicAndZeroForNonPositiveOrZeroMax() {
         assertEquals(0, p806CalendarIntensityLevel(0L, 1_000L))
         assertEquals(0, p806CalendarIntensityLevel(-500L, 1_000L))
