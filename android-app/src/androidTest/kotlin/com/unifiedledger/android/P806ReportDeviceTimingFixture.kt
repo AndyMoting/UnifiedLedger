@@ -19,21 +19,20 @@ import com.unifiedledger.application.P806PeriodKind
 import com.unifiedledger.application.P806PeriodResolution
 import com.unifiedledger.application.P806Periods
 import com.unifiedledger.application.P806ResolvedPeriod
-import com.unifiedledger.data.SqlDelightCatalogStore
 import com.unifiedledger.data.SqlDelightLedgerCurrentStateReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.data.db.LedgerDatabase
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.ui.ImportFilePickResultChannel
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.YearMonth
+import kotlinx.datetime.toLocalDateTime
 import java.io.File
 import java.util.Locale
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.YearMonth
-import kotlinx.datetime.toLocalDateTime
 
 /**
  * P8-06 batch 6 V-14 device fixture (spec section 4 V-14): the anonymous 50,000-transaction,
@@ -278,7 +277,8 @@ internal class P806ReportDeviceTimingFixture(
 
     /**
      * D7-11's build shape: open the product composition root, close it, write the synthetic rows on
-     * this fixture's own connection, then reopen the SAME file through a measured driver.
+     * this fixture's own connection, then read the catalog back through the product handle and open
+     * the SAME file through a measured driver.
      */
     fun build(transactionCount: Int = P806ReportDeviceTimingFacts.TIER_50K) {
         check(driverName.isEmpty()) { "the fixture builds exactly once" }
@@ -329,7 +329,11 @@ internal class P806ReportDeviceTimingFixture(
      * the file through these captured values.
      */
     private fun captureSampleShape(count: Int) {
-        today = Clock.System.now().toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date
+        today =
+            Clock.System
+                .now()
+                .toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE)
+                .date
         month = YearMonth(today.year, today.month)
         period =
             checkNotNull(
@@ -356,16 +360,23 @@ internal class P806ReportDeviceTimingFixture(
     }
 
     private fun openMeasuredGraph() {
+        // The catalog load runs on the platform-configured product handle BEFORE the measured
+        // connection exists: the store's `LedgerDatabase + SqlDriver` constructor issues the
+        // JDBC-only `PRAGMA busy_timeout`, which Android's `execute` rejects
+        // (`AndroidLedgerDatabaseHandle`'s `ForeignKeysCallback` note). This read is initialization
+        // outside the timing window; the measured driver below serves only the four readings.
+        val authority =
+            createAndroidLedgerDatabase(context, driverName).use { handle ->
+                checkNotNull(handle.catalogStore.load(P806ReportDeviceTimingFacts.ledgerId)) {
+                    "the reopened file must carry the product's default catalog"
+                }
+            }
+        catalog = authority.catalog
+        catalogVersion = authority.catalogVersion
         val real = AndroidSqliteDriver(LedgerDatabase.Schema, context, driverName)
         timingDriver = P806TimingSqlDriver(real)
         val database = LedgerDatabase(timingDriver)
         adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
-        val authority =
-            checkNotNull(SqlDelightCatalogStore(database, timingDriver).load(P806ReportDeviceTimingFacts.ledgerId)) {
-                "the reopened file must carry the product's default catalog"
-            }
-        catalog = authority.catalog
-        catalogVersion = authority.catalogVersion
     }
 
     // ------------------------------------------------------------------ the raw write

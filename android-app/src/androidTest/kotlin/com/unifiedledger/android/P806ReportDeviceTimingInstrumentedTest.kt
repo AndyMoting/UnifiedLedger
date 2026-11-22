@@ -90,7 +90,9 @@ class P806ReportDeviceTimingInstrumentedTest {
         assertEquals(
             "the report read runs its fixed statement set",
             P806ReportDeviceTimingFacts.REPORT_STATEMENT_COUNT,
-            seeded.timingDriver.total.snapshot().statements,
+            seeded.timingDriver.total
+                .snapshot()
+                .statements,
         )
         assertEquals("the period amount is one statement", 1, periodAmount.statements)
         assertEquals("the report period must cover the whole sample", TIER, report.transactionCount)
@@ -129,8 +131,20 @@ class P806ReportDeviceTimingInstrumentedTest {
         )
         assertEquals("one bucket per natural day of the month", seeded.period.dayCount, calendar.days.size)
         assertTrue("the month has at most 31 natural day buckets", calendar.days.size in 28..31)
-        assertEquals("the month starts on the resolved window start", seeded.period.window.startEpochNanos, calendar.days.first().window.startEpochNanos)
-        assertEquals("the month ends on the resolved window end", seeded.period.window.endEpochNanos, calendar.days.last().window.endEpochNanos)
+        assertEquals(
+            "the month starts on the resolved window start",
+            seeded.period.window.startEpochNanos,
+            calendar.days
+                .first()
+                .window.startEpochNanos,
+        )
+        assertEquals(
+            "the month ends on the resolved window end",
+            seeded.period.window.endEpochNanos,
+            calendar.days
+                .last()
+                .window.endEpochNanos,
+        )
         assertEquals("the month's contributions are the whole sample", TIER, calendar.days.sumOf { it.transactionCount })
         assertEquals(
             "the writer's captured day buckets are the read's buckets",
@@ -176,7 +190,9 @@ class P806ReportDeviceTimingInstrumentedTest {
         assertEquals(
             "the drilldown read runs its fixed statement set",
             P806ReportDeviceTimingFacts.DRILLDOWN_STATEMENT_COUNT,
-            seeded.timingDriver.total.snapshot().statements,
+            seeded.timingDriver.total
+                .snapshot()
+                .statements,
         )
         assertEquals("the drilldown total is the sample", TIER, drilldown.totalCount)
         assertEquals("the frozen first page size", PAGE_SIZE, drilldown.page.rows.size)
