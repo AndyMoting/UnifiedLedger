@@ -405,16 +405,36 @@ internal fun monthCardCurrencyLineText(row: MonthlyCurrencyActivity): String =
 internal fun flowRowContentDescription(
     row: LedgerEntryRow,
     accountNames: Map<AccountId, String>,
+    amountText: (Long, Int) -> String = ::formatMinorUnits,
 ): String {
     val head = "${row.kind}，统计时间 ${row.statisticsAt}" + (row.note?.let { "，备注 $it" } ?: "")
     val legs =
         row.postings.joinToString("；") { posting ->
-            "${accountNames[posting.accountId] ?: posting.accountId.value} " +
-                formatMinorUnits(posting.amount.minorUnits, posting.amount.currency.precision) +
-                " ${posting.amount.currency.code}"
+            flowRowPostingLineText(
+                accountNames[posting.accountId] ?: posting.accountId.value,
+                posting.amount.minorUnits,
+                posting.amount.currency.precision,
+                posting.amount.currency.code,
+                amountText,
+            )
         }
     return if (legs.isEmpty()) head else "$head；$legs"
 }
+
+/**
+ * One flow-row posting line, shared by the row's VISIBLE text and its TalkBack label so the two can
+ * never format a value differently. [amountText] defaults to the legacy [formatMinorUnits]; the
+ * P806 drilldown passes [p806MinorUnitsText] so a legitimate `Long.MIN_VALUE` posting renders its
+ * exact signed value instead of the legacy off-by-one at that end. Every other caller keeps the
+ * previous behaviour bit-for-bit.
+ */
+internal fun flowRowPostingLineText(
+    accountName: String,
+    minorUnits: Long,
+    precision: Int,
+    currencyCode: String,
+    amountText: (Long, Int) -> String = ::formatMinorUnits,
+): String = "$accountName ${amountText(minorUnits, precision)} $currencyCode"
 
 /**
  * The category-row accessibility label (C04): the category's current name plus its exact

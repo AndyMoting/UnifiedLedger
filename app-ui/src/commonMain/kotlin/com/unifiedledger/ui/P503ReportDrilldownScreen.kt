@@ -194,6 +194,10 @@ private fun P806DrilldownRows(
                 // The row samples THIS page's scroll synchronously at click time (no async hop).
                 onSelectTransaction = { transactionId -> onSelectTransaction?.invoke(transactionId, sampleScroll()) },
                 interactionsEnabled = enabled,
+                // V-12: a balanced posting set may legitimately carry Long.MIN_VALUE, which the
+                // legacy formatMinorUnits renders off by one. Both the visible lines and the
+                // TalkBack label go through the report surface's exact formatter.
+                amountText = ::p806MinorUnitsText,
             )
             HorizontalDivider(color = palette.divider)
         }
