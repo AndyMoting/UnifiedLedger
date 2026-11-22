@@ -1053,6 +1053,133 @@ class P806ReportReducerTest {
     }
 
     /**
+     * V-6 (D-343 section 3.7.4): the 「账目已更新，已回到第一页」 notice belongs to the matching SUCCESS
+     * that concludes a post-write refresh, and to nothing else. The positive proof is driven twice:
+     * (a) the live fence path and (b) the production opening seam ([openAndStartReportRead]) over a
+     * rebuilt overview carrying the same graph's MARKED HISTORY. Stale and failed controls sit beside
+     * both, and a normal read must never raise the notice.
+     *
+     * Every read identity below is the one actually issued from its pre-request slot (empty axis for
+     * a slot with no payload; the landed [cny] axis for a re-read over the old payload), so the
+     * landing decisions reach ACCEPTED rather than STALE_CONTEXT.
+     *
+     * ABLATION (承重): set `writeRefreshed = true` unconditionally in the ACCEPTED success branch and
+     * the normal-read case goes RED; leave it set on the failure branch and the failed-refresh case
+     * goes RED; drop the field and both matching-success cases go RED.
+     */
+    @Test
+    fun thePostWriteRefreshNoticeAppearsOnlyOnAMatchingSuccessAndNeverOnAFailureOrANormalRead() {
+        // A normal FIRST read: the pre-request slot has no landed payload, so the issued identity
+        // carries the empty axis/payloads (P806ReportRead.kt:351-352 compares against that slot).
+        // It lands ACCEPTED and READY, but there was no determinate write, so no refresh notice.
+        val normal =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(
+                    overview(requestingSlot(token = 5L)),
+                    P503UiEvent.ReportPeriodResult(successRead(token = 5L), currentGeneration = 3, currentCatalogVersion = 7L),
+                ),
+            )
+        val normalSlot = assertNotNull(normal.reportRegion)
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(normalSlot))
+        assertTrue(!normalSlot.writeRefreshed)
+        assertNull(p806ReportWriteRefreshedNoticeText(normalSlot))
+
+        // (a) LIVE FENCE PATH ----------------------------------------------------------------
+        // The determinate write fences the in-flight token (5) and marks the payload old.
+        val fenced = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(normal, P503UiEvent.InvalidateReportRegion))
+        assertEquals(5L, assertNotNull(fenced.reportRegion).fenceToken)
+        assertTrue(assertNotNull(fenced.reportRegion).writeStale)
+        assertTrue(!assertNotNull(fenced.reportRegion).writeRefreshed)
+        // The owed re-read is issued above the fence from a slot that still holds the [cny] payload,
+        // so its identity carries that landed axis/payloads.
+        val reread = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(fenced, P503UiEvent.RetryReportPeriod(requestToken = 6L, period = P806Period(P806PeriodKind.MONTH))))
+        assertNull(p806ReportWriteRefreshedNoticeText(assertNotNull(reread.reportRegion)))
+        // CONTROL: the pre-write result (token 5, at the fence) is STALE — the slot is untouched and
+        // still shows no notice.
+        assertSame(reread, reducer.reduce(reread, P503UiEvent.ReportPeriodResult(successRead(token = 5L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)))
+        assertNull(p806ReportWriteRefreshedNoticeText(assertNotNull(reread.reportRegion)))
+        // The matching post-write SUCCESS concludes the refresh and raises the exact frozen notice.
+        val refreshed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(reread, P503UiEvent.ReportPeriodResult(successRead(token = 6L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
+            )
+        val refreshedSlot = assertNotNull(refreshed.reportRegion)
+        assertTrue(refreshedSlot.writeRefreshed)
+        assertTrue(!refreshedSlot.writeStale)
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(refreshedSlot))
+        assertEquals("账目已更新，已回到第一页", p806ReportWriteRefreshedNoticeText(refreshedSlot))
+        // Starting the next read retires the notice so it cannot wear a newer request's result.
+        val next =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(refreshed, P503UiEvent.SelectReportPeriod(P806Period(P806PeriodKind.YEAR, year = 2025), requestToken = 7L)),
+            )
+        assertNull(p806ReportWriteRefreshedNoticeText(assertNotNull(next.reportRegion)))
+
+        // CONTROL: a FAILED post-write re-read is a failure face, never a success notice.
+        val failedFenced = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(normal, P503UiEvent.InvalidateReportRegion))
+        val failedReread = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(failedFenced, P503UiEvent.RetryReportPeriod(requestToken = 6L, period = P806Period(P806PeriodKind.MONTH))))
+        val failed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(failedReread, P503UiEvent.ReportPeriodResult(failedRead(token = 6L, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
+            )
+        val failedSlot = assertNotNull(failed.reportRegion)
+        assertEquals(P806ReportRegionFace.FAILED, p806ReportRegionFace(failedSlot))
+        assertTrue(!failedSlot.writeRefreshed)
+        assertNull(p806ReportWriteRefreshedNoticeText(failedSlot))
+
+        // (b) PRODUCTION OPENING SEAM OVER A REBUILT OVERVIEW --------------------------------
+        // Remember the READY slot, demote it to HISTORY at the write, then rebuild the page exactly
+        // as the host does (the rebuilt page starts with NO slot). openAndStartReportRead must re-seed
+        // the labelled history and issue the explicit post-write re-read as one accepted request.
+        val memory = P806ReportSlotMemory()
+        memory.record(normal)
+        memory.markWriteStale()
+        assertTrue(assertNotNull(memory.previousFor(3, 7L)).writeStale)
+        val rebuilt = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(P503AppState.Created, P503UiEvent.RefreshResult(currentState = ledger())))
+        assertNull(rebuilt.reportRegion)
+        var seamState: P503AppState = rebuilt
+        var launched: Long? = null
+        val enqueued =
+            openAndStartReportRead(
+                current = seamState,
+                wired = true,
+                period = null,
+                explicit = true,
+                memory = memory,
+                sequence = P806ReportRequestSequence(),
+                coordinator = null,
+                currentGeneration = 3,
+                currentCatalogVersion = 7L,
+                dispatch = { event ->
+                    seamState = reducer.reduce(seamState, event)
+                    seamState
+                },
+                launchRead = { token -> launched = token },
+            )
+        assertTrue(enqueued)
+        val seamToken = assertNotNull(launched)
+        val opened = assertIs<P503AppState.OverviewEmpty>(seamState)
+        val openedSlot = assertNotNull(opened.reportRegion)
+        // The re-seeded history stays labelled old while the owed re-read is in flight; the issued
+        // token is the one the sequence minted, above the fresh slot's zero request/fence tokens.
+        assertEquals(seamToken, openedSlot.requestToken)
+        assertTrue(openedSlot.requestToken > openedSlot.fenceToken)
+        assertTrue(openedSlot.writeStale)
+        assertTrue(openedSlot.loading)
+        assertNull(p806ReportWriteRefreshedNoticeText(openedSlot))
+        // The matching success (same token, the history's landed [cny] axis) concludes the refresh.
+        val seamRefreshed =
+            assertIs<P503AppState.OverviewEmpty>(
+                reducer.reduce(opened, P503UiEvent.ReportPeriodResult(successRead(token = seamToken, currencyAxis = capturedMonthAxis(), currencyPayloads = capturedMonthPayloads()), currentGeneration = 3, currentCatalogVersion = 7L)),
+            )
+        val seamSlot = assertNotNull(seamRefreshed.reportRegion)
+        assertTrue(seamSlot.writeRefreshed)
+        assertTrue(!seamSlot.writeStale)
+        assertEquals(P806ReportRegionFace.READY, p806ReportRegionFace(seamSlot))
+        assertEquals("账目已更新，已回到第一页", p806ReportWriteRefreshedNoticeText(seamSlot))
+    }
+
+    /**
      * ① negative sample (承重): the SAME order with a REFUSED lease (the runtime refused before any
      * read ran). The refusal ends only the matching request: it becomes a typed failure with the old
      * amount beside it, no generation is claimed and nothing becomes READY.

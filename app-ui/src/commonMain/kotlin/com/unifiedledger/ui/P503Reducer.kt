@@ -540,19 +540,19 @@ class P503ReducerImpl(
             // (the failure or the success now explains it); a stale request that matches nothing
             // keeps the stale mark, so old data can never read as current meanwhile.
             P806ReportLandingDecision.STALE_GENERATION ->
-                overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable, writeStale = false))
+                overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable, writeStale = false, writeRefreshed = false))
             P806ReportLandingDecision.CATALOG_ADVANCED ->
                 overview.copy(
-                    reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch, writeStale = false),
+                    reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.CatalogVersionMismatch, writeStale = false, writeRefreshed = false),
                 )
             P806ReportLandingDecision.PAYLOAD_REJECTED ->
-                overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.InvalidState, writeStale = false))
+                overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.InvalidState, writeStale = false, writeRefreshed = false))
             P806ReportLandingDecision.ACCEPTED ->
                 when (read) {
                     is P806ReportRead.Refused ->
-                        overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable, writeStale = false))
+                        overview.copy(reportRegion = slot.copy(loading = false, failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable, writeStale = false, writeRefreshed = false))
                     is P806ReportRead.Unwired ->
-                        overview.copy(reportRegion = slot.copy(loading = false, unwired = true, writeStale = false))
+                        overview.copy(reportRegion = slot.copy(loading = false, unwired = true, writeStale = false, writeRefreshed = false))
                     is P806ReportRead.Landed ->
                         when (val result = read.result) {
                             is com.unifiedledger.application.P806SnapshotResult.Success ->
@@ -568,10 +568,13 @@ class P503ReducerImpl(
                                             landedGeneration = read.capture.generation,
                                             landedCatalogVersion = read.capture.catalogVersion,
                                             writeStale = false,
+                                            // D-343 section 3.7.4: a matching success that concludes a
+                                            // write-stale slot IS the authoritative post-write refresh.
+                                            writeRefreshed = slot.writeStale,
                                         ),
                                 )
                             is com.unifiedledger.application.P806SnapshotResult.Failed ->
-                                overview.copy(reportRegion = slot.copy(loading = false, failure = result.failure, writeStale = false))
+                                overview.copy(reportRegion = slot.copy(loading = false, failure = result.failure, writeStale = false, writeRefreshed = false))
                         }
                 }
         }
@@ -612,6 +615,8 @@ class P503ReducerImpl(
                     loading = protectsPayload,
                     failure = null,
                     writeStale = protectsPayload,
+                    // A new determinate write supersedes any prior refresh notice.
+                    writeRefreshed = false,
                 ),
         )
     }
@@ -636,6 +641,7 @@ class P503ReducerImpl(
                         loading = false,
                         writeStale = false,
                         failure = com.unifiedledger.application.P806SnapshotFailure.Unavailable,
+                        writeRefreshed = false,
                     ),
             )
         } ?: this
@@ -741,6 +747,8 @@ class P503ReducerImpl(
                     requestToken = event.requestToken,
                     loading = true,
                     failure = null,
+                    // Starting any new read retires the previous post-write refresh notice.
+                    writeRefreshed = false,
                 ),
         )
     }
@@ -774,6 +782,8 @@ class P503ReducerImpl(
                     requestToken = event.requestToken,
                     loading = true,
                     failure = null,
+                    // Starting any new read retires the previous post-write refresh notice.
+                    writeRefreshed = false,
                 ),
         )
     }
