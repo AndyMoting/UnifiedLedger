@@ -424,7 +424,7 @@ class P806ReportSemanticsTest {
             // Collect with real interest: only the INCOME interest leg contributes; principal does not.
             insertTransaction(driver, "tx-collect-interest", "ACCOUNT_TRANSFER", "COLLECT", "2026-11-05T02:00:00Z", "2026-11-05T02:00:00Z", listOf(receivable to -10_000L, cash to 10_100L, salary to -100L))
             // V-9: pure-principal LEND has no EXPENSE/INCOME leg, so it never contributes.
-            insertTransaction(driver, "tx-lend-principal", "LEND", null, "2026-11-06T02:00:00Z", "2026-11-06T02:00:00Z", listOf(savings to -20_000L, receivable to 20_000L))
+            insertTransaction(driver, "tx-lend-principal", "EXPENSE", "LEND", "2026-11-06T02:00:00Z", "2026-11-06T02:00:00Z", listOf(savings to -20_000L, receivable to 20_000L))
             // V-9: stored-value spend is a special canonical kind, so even its EXPENSE leg is excluded.
             insertTransaction(driver, "tx-stored-value-spend", "EXPENSE", "STORED_VALUE_SPEND", "2026-11-07T02:00:00Z", "2026-11-07T02:00:00Z", listOf(wallet to -5_000L, breakfast to 5_000L))
             // V-9: a real refund contributes its own negative part in the same window.
@@ -487,7 +487,8 @@ class P806ReportSemanticsTest {
             assertEquals(3, month.transactionCount)
             assertEquals(3, monthCny.transactionCount)
             assertEquals(3, month.detailCount)
-            assertEquals(setOf("tx-transfer-fee", "tx-collect-interest", "tx-refund-ordinary"), month.detailPage.rows.map { it.transactionId.value }.toSet())
+            val monthDetailIds = month.detailPage.rows.map { it.transactionId.value }
+            assertEquals(setOf("tx-transfer-fee", "tx-collect-interest", "tx-refund-ordinary"), monthDetailIds.toSet())
             // V-9: the no-category (full) drilldown count and page use the same contribution set.
             val fullDrilldown =
                 assertIs<P806SnapshotResult.Success<P806DrilldownSnapshot>>(
@@ -496,7 +497,8 @@ class P806ReportSemanticsTest {
                     ),
                 ).snapshot
             assertEquals(3, fullDrilldown.totalCount)
-            assertEquals(setOf("tx-transfer-fee", "tx-collect-interest", "tx-refund-ordinary"), fullDrilldown.page.rows.map { it.transactionId.value }.toSet())
+            val fullDrilldownIds = fullDrilldown.page.rows.map { it.transactionId.value }
+            assertEquals(setOf("tx-transfer-fee", "tx-collect-interest", "tx-refund-ordinary"), fullDrilldownIds.toSet())
             val feeLeaf =
                 month.expenseCategories
                     .first { it.categoryId == foodParent }
@@ -555,7 +557,8 @@ class P806ReportSemanticsTest {
         val originalZone = java.util.TimeZone.getDefault()
         try {
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"))
-            assertEquals("UTC", java.util.TimeZone.getDefault().id)
+            val jvmTimeZone = java.util.TimeZone.getDefault()
+            assertEquals("UTC", jvmTimeZone.id)
 
             withDatabase { driver, database, version ->
                 seedCatalog(driver, standardAccounts(), version)
@@ -646,7 +649,7 @@ class P806ReportSemanticsTest {
             seedCatalog(driver, standardAccounts(), version)
             insertTransaction(driver, "tx-future-special-only", "EXPENSE", "STORED_VALUE_SPEND", "2026-11-21T02:00:00Z", "2026-11-21T02:00:00Z", listOf(breakfast to 100L, cash to -100L))
             insertTransaction(driver, "tx-future-transfer-only", "ACCOUNT_TRANSFER", null, "2026-11-22T02:00:00Z", "2026-11-22T02:00:00Z", listOf(savings to 100L, cash to -100L))
-            insertTransaction(driver, "tx-future-lend-only", "LEND", null, "2026-11-23T02:00:00Z", "2026-11-23T02:00:00Z", listOf(savings to -100L, cash to 100L))
+            insertTransaction(driver, "tx-future-lend-only", "EXPENSE", "LEND", "2026-11-23T02:00:00Z", "2026-11-23T02:00:00Z", listOf(savings to -100L, cash to 100L))
             val catalog = catalogOf(standardAccounts())
             val adapter = SqlDelightLedgerCurrentStateReadAdapter(database)
             val report = P806ReportQuery(adapter, ledgerId, CatalogAuthority(ledgerId, catalog, version), FixedClock("2026-11-17T00:00:00Z"))
@@ -716,7 +719,8 @@ class P806ReportSemanticsTest {
 
             assertEquals(31, view.days.size)
             // 31 day windows are separated by 32 distinct local midnights.
-            val boundaries = view.days.map { it.window.startEpochNanos } + view.days.last().window.endEpochNanos
+            val lastDay = view.days.last()
+            val boundaries = view.days.map { it.window.startEpochNanos } + lastDay.window.endEpochNanos
             assertEquals(32, boundaries.size)
             assertEquals(32, boundaries.toSet().size)
             assertTrue(boundaries.zipWithNext().all { (earlier, later) -> earlier < later })
@@ -753,8 +757,10 @@ class P806ReportSemanticsTest {
                     adapter.readDrilldownSnapshot(P806DrilldownRequest(ledgerId, may5.window, expectedCatalogVersion = version)),
                 ).snapshot
             assertEquals(may5.transactionCount, day.totalCount)
-            assertEquals(setOf("tx-dst-a", "tx-dst-b"), day.page.rows.map { it.transactionId.value }.toSet())
-            val breakfastSum = day.page.rows.flatMap { it.postings }.filter { it.accountId == breakfast }.sumOf { it.amount.minorUnits }
+            val dayRowIds = day.page.rows.map { it.transactionId.value }
+            assertEquals(setOf("tx-dst-a", "tx-dst-b"), dayRowIds.toSet())
+            val dayPostings = day.page.rows.flatMap { it.postings }
+            val breakfastSum = dayPostings.filter { it.accountId == breakfast }.sumOf { it.amount.minorUnits }
             assertEquals(333L, breakfastSum)
         }
     }
