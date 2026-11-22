@@ -556,9 +556,10 @@ class P807SharedAcceptanceSeedWriterTest {
                     postings = postingFacts,
                 )
             assertEquals(P408MatchDisposition.PROPOSED_MATCH, match.disposition)
-            val matchedLeg = match.candidates.single().posting
+            val matchedCandidate = match.candidates.single()
+            val matchedLeg = matchedCandidate.posting
             assertEquals(PostingId(SEED_TRANSFER_DESTINATION_POSTING_ID), PostingId(matchedLeg.postingId))
-            assertEquals(0L, match.candidates.single().basis.naturalDayDistance)
+            assertEquals(0L, matchedCandidate.basis.naturalDayDistance)
 
             // The refundable original the manual-refund flow selects: exactly the seeded expense,
             // inheriting 早餐, with its full structural cap and remaining amount still available.
