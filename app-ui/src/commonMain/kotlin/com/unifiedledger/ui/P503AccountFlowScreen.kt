@@ -35,7 +35,8 @@ import com.unifiedledger.ui.theme.LocalP8Palette
  * postings from one P806 account snapshot per request (page 100, the read's own order and cursor,
  * full history), each carrying 「资金发生日期」 (the occurred-at Shanghai local day, the same axis
  * as the read's sort) + note/kind + that account's exact signed leg amount through
- * [formatMinorUnits] (Long minor units, never floating point). The success count is the
+ * [p806MinorUnitsText] (Long minor units, never floating point; the shared formatter's
+ * `Long.MIN_VALUE` end is off by one minor unit). The success count is the
  * snapshot's exact posting count rendered as 「N 条账户变动」.
  *
  * 显式六态 (D-343 sections 3.7/3.8): an unwired graph, the not-loaded window, an in-flight read, a typed
@@ -317,14 +318,26 @@ private fun P8AccountFlowRow(
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            "$accountName " +
-                formatMinorUnits(row.amount.minorUnits, row.amount.currency.precision) +
-                " ${row.amount.currency.code}",
+            accountFlowRowAmountText(row, accountName),
             style = MaterialTheme.typography.bodySmall,
             color = if (row.amount.minorUnits < 0L) palette.expense else palette.onSurface,
         )
     }
 }
+
+/**
+ * The one source of the posting row's account-and-amount text: the account name, the exact signed
+ * posting amount at the posting's own precision ([p806MinorUnitsText] keeps the `Long.MIN_VALUE`
+ * end exact) and the currency code. The visible line and [accountFlowRowContentDescription] both
+ * read this, so what is shown and what TalkBack announces cannot drift (V-8: shown amount = the
+ * account posting amount).
+ */
+internal fun accountFlowRowAmountText(
+    row: P806AccountPostingRow,
+    accountName: String,
+): String =
+    "$accountName ${p806MinorUnitsText(row.amount.minorUnits, row.amount.currency.precision)} " +
+        row.amount.currency.code
 
 /** The visible headline of one posting row: 「资金发生日期」 + the Shanghai local day + the note/kind. */
 internal fun accountFlowRowHeadlineText(row: P806AccountPostingRow): String = "资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + " · " + (row.note ?: row.kind.name)
@@ -339,10 +352,7 @@ internal fun accountFlowRowContentDescription(
     accountName: String,
 ): String {
     val head = "${row.kind}，资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + (row.note?.let { "，备注 $it" } ?: "")
-    val leg =
-        "$accountName " +
-            formatMinorUnits(row.amount.minorUnits, row.amount.currency.precision) +
-            " ${row.amount.currency.code}"
+    val leg = accountFlowRowAmountText(row, accountName)
     return "$head；$leg"
 }
 
