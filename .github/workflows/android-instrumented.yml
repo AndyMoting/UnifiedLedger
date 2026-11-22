@@ -81,16 +81,13 @@ on:
       - 'tests/python/test_android_ci_repair.py'
       - 'tests/python/test_android_instrumented_shards.py'
   workflow_dispatch:
-    # D7-13 on-demand device reading: an ordinary manual run passes nothing and is
-    # byte-identical to a pull-request run. The timing cases accept `ul.p802.timing=1`
-    # (P8-02 V-8) and `ul.p806.timing=1` (P8-06 V-14); the Python driver forwards each
-    # `KEY=VALUE` as one `-e KEY VALUE` pair only to the shard that owns the named
-    # timing class (see tools/python/android_scale/instrumented.py), and the validator
-    # receives the same dispatch argument, recomputes that routing and requires the
-    # host's reading.
+    # D7-13 on-demand device readings. The driver forwards each `KEY=VALUE` only
+    # to its host shard (tools/python/android_scale/instrumented.py). The validator
+    # recomputes that routing and checks the host's readings. `ul.p804.v7=1` enables
+    # the P8-04 V-7 boundary samples at 10,000 and 10,001 rows.
     inputs:
       instrumentation_extra_args:
-        description: 'One KEY=VALUE instrumentation argument, e.g. ul.p802.timing=1 or ul.p806.timing=1 (leave empty for an ordinary run)'
+        description: 'One KEY=VALUE instrumentation argument: ul.p802.timing=1, ul.p804.v7=1, or ul.p806.timing=1 (leave empty for an ordinary run)'
         required: false
         default: ''
         type: string

@@ -525,13 +525,30 @@ class OnDemandInstrumentationArguments(unittest.TestCase):
 
 
 class OnDemandHostRouting(unittest.TestCase):
-    """A dispatch argument reaches only the shard that owns its timing case."""
+    """A dispatch argument reaches only the shard that owns its on-demand case."""
 
     HOST = "com.unifiedledger.android.P806ReportDeviceTimingInstrumentedTest"
+    V7_HOST = "com.unifiedledger.android.SelfEntryAndroidInstrumentedTest"
     OTHER = "com.example.A"
-    HOST_CASES = (HOST + "#timing",)
+    HOST_CASES = (
+        HOST + "#timing",
+        V7_HOST + "#aThousandRowSyntheticIntakeLandsOnTheDeviceLedgerWithARecordedReading",
+    )
     OTHER_CASES = (OTHER + "#one",)
     ARG = ("ul.p806.timing=1",)
+    V7_ARG = ("ul.p804.v7=1",)
+    V7_ORDINARY = (
+        "11-22 08:30:19.000  1234  1235 I UnifiedLedger: P804-V7DEV rows=1000 "
+        "intakeMs=900.0 candidates=1000 pageSize=10\n"
+    )
+    V7_AT_LIMIT = (
+        "11-22 08:30:20.000  1234  1235 I UnifiedLedger: P804-V7DEV rows=10000 fixture=at-limit "
+        "intakeMs=10000.1 outcome=Accepted candidates=10000 sources=10000 evidence=10000 pageSize=10 formalLedgerRows=0\n"
+    )
+    V7_OVER_LIMIT = (
+        "11-22 08:30:21.000  1234  1235 I UnifiedLedger: P804-V7DEV rows=10001 fixture=over-limit "
+        "intakeMs=10.2 outcome=BatchExceedsLimit actualAcceptedRecords=10001 persistedRows=0 formalLedgerRows=0\n"
+    )
     READINGS = (
         "I/UnifiedLedger: P806-V14DEV reading=periodAmountMs ms=12.345 statements=1\n"
         "I/UnifiedLedger: P806-V14DEV reading=calendarBucketsMs ms=8.001 statements=64\n"
@@ -547,7 +564,7 @@ class OnDemandHostRouting(unittest.TestCase):
         self.inventory = self.root / "inventory.txt"
         self.inventory.write_text("\n".join(self.HOST_CASES + self.OTHER_CASES) + "\n", encoding="utf-8")
         self.shards = self.root / "shards.txt"
-        self.shards.write_text(f"1\t{self.OTHER}\n2\t{self.HOST}\n", encoding="utf-8")
+        self.shards.write_text(f"1\t{self.OTHER}\n2\t{self.HOST}\n2\t{self.V7_HOST}\n", encoding="utf-8")
 
     def _evidence(self, shard: int, *, requested: tuple[str, ...], routed: tuple[str, ...],
                   logcat: str) -> Path:
@@ -579,7 +596,7 @@ class OnDemandHostRouting(unittest.TestCase):
 
     def test_the_host_shard_forwards_the_argument_and_requires_its_reading(self):
         evidence = self._evidence(2, requested=self.ARG, routed=self.ARG, logcat=self.READINGS)
-        self.assertEqual(self.validate(2, evidence), 1)
+        self.assertEqual(self.validate(2, evidence), len(self.HOST_CASES))
 
     def test_the_host_shard_goes_red_when_its_reading_is_absent(self):
         evidence = self._evidence(2, requested=self.ARG, routed=self.ARG, logcat="")
@@ -603,7 +620,51 @@ class OnDemandHostRouting(unittest.TestCase):
     def test_a_zero_value_is_forwarded_to_the_host_but_demands_no_reading(self):
         arg = ("ul.p806.timing=0",)
         evidence = self._evidence(2, requested=arg, routed=arg, logcat="")
-        self.assertEqual(1, self.validate(2, evidence, requested=arg))
+        self.assertEqual(len(self.HOST_CASES), self.validate(2, evidence, requested=arg))
+
+    def test_v7_host_requires_both_boundary_readings(self):
+        evidence = self._evidence(2, requested=self.V7_ARG, routed=self.V7_ARG,
+                                  logcat=self.V7_ORDINARY + self.V7_AT_LIMIT + self.V7_OVER_LIMIT)
+        self.assertEqual(self.validate(2, evidence, requested=self.V7_ARG), len(self.HOST_CASES))
+
+    def test_v7_non_host_drops_the_argument_and_requires_no_boundary_readings(self):
+        evidence = self._evidence(1, requested=self.V7_ARG, routed=(), logcat="")
+        self.assertEqual(self.validate(1, evidence, requested=self.V7_ARG), 1)
+
+    def test_v7_ordinary_run_passes_with_only_the_thousand_row_reading(self):
+        evidence = self._evidence(2, requested=(), routed=(), logcat=self.V7_ORDINARY)
+        self.assertEqual(self.validate(2, evidence, requested=()), len(self.HOST_CASES))
+
+    def test_v7_zero_value_passes_with_only_the_thousand_row_reading(self):
+        arg = ("ul.p804.v7=0",)
+        evidence = self._evidence(2, requested=arg, routed=arg, logcat=self.V7_ORDINARY)
+        self.assertEqual(self.validate(2, evidence, requested=arg), len(self.HOST_CASES))
+
+    def test_v7_host_rejects_missing_duplicate_or_incorrect_boundary_evidence(self):
+        evidence = self._evidence(2, requested=self.V7_ARG, routed=self.V7_ARG, logcat=self.V7_ORDINARY)
+        for at_limit, over_limit in (
+            ("", self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT, ""),
+            (self.V7_AT_LIMIT * 2, self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT * 2),
+            (self.V7_AT_LIMIT.replace(" fixture=at-limit", ""), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT.replace("fixture=over-limit", "fixture=at-limit")),
+            (self.V7_AT_LIMIT.replace("formalLedgerRows=0", "formalLedgerRows=1"), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT.replace(" formalLedgerRows=0", "")),
+            (self.V7_AT_LIMIT.replace("outcome=Accepted", "outcome=Rejected"), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT.replace("candidates=10000", "candidates=9999"), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT.replace("sources=10000", "sources=9999"), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT.replace("evidence=10000", "evidence=9999"), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT.replace("pageSize=10", "pageSize=100"), self.V7_OVER_LIMIT),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT.replace("outcome=BatchExceedsLimit", "outcome=Rejected")),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT.replace("actualAcceptedRecords=10001", "actualAcceptedRecords=10000")),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT.replace("persistedRows=0", "persistedRows=1")),
+            (self.V7_AT_LIMIT, self.V7_OVER_LIMIT.replace("intakeMs=10.2", "intakeMs=missing")),
+        ):
+            with self.subTest(at_limit=at_limit, over_limit=over_limit):
+                (evidence / "logcat.txt").write_text(self.V7_ORDINARY + at_limit + over_limit, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "ul.p804.v7"):
+                    self.validate(2, evidence, requested=self.V7_ARG)
 
     def test_an_unrelated_key_that_contains_a_timing_key_demands_nothing(self):
         arg = ("ul.example.note=ul.p806.timing=1",)

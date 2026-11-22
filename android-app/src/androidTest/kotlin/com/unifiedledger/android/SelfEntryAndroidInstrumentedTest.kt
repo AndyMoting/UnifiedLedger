@@ -3,6 +3,7 @@ package com.unifiedledger.android
 import android.net.Uri
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.ImportFileIntakeInput
 import com.unifiedledger.application.ImportFileIntakeOutcome
@@ -59,20 +60,12 @@ import java.util.zip.ZipOutputStream
  *    composition-root catalog supplier supplies the authoritative snapshot, and the template's
  *    3 example rows land as candidates whose summaries carry the D-19 match basis — the i3a/i3b
  *    capability is alive on the device.
- * 5. DEVICE LARGE-SAMPLE READING (V-7 设备大样本读数, i4b): one RECORDED device reading of a
- *    synthetic self-entry intake at the 1,000-row tier — the timed `intake` lands every row as
- *    a candidate on the device's real ledger, the candidate count is asserted structurally,
- *    and the reading goes into ONE grep-able logcat line. NO DURATION IS ASSERTED (the P8-02
- *    V-8 device-timing discipline): a green run is never read as "fast enough". The 10,000
- *    tier is the jvmTest real-ledger legs' burden (`DesktopImportSpineReplayAndL2Boundary
- *    CompositionRootTest`); the maximum tier's device reading belongs to the Rig/D-7 reading
- *    legs and is NOT registered here.
+ * 5. DEVICE SCALE (V-7): every run exercises the 1,000-row regression. `ul.p804.v7=1` also
+ *    runs both L2 boundary samples on separate device ledgers: 10,000 rows land and read back,
+ *    and 10,001 rows are rejected with zero persisted rows. Logcat records elapsed times.
  *
- * Test data is fully synthetic (the generator's own frozen example rows; the seeded fixture
- * account plus one created 现金 account). Amounts ride the parser's BigDecimal-text contract.
- * Run manually on the managed emulator as the flip's run evidence; CI keeps zero
- * connectedAndroidTest. The Rig line (`AndroidScaleLongInstrumentedTest`, budgets, markers) is
- * untouched by this batch.
+ * Test data is fully synthetic (the generator's frozen example rows and scale workbooks, plus
+ * fixture accounts). Amounts ride the parser's BigDecimal-text contract.
  */
 @RunWith(AndroidJUnit4::class)
 class SelfEntryAndroidInstrumentedTest {
@@ -242,21 +235,8 @@ class SelfEntryAndroidInstrumentedTest {
         }
     }
 
-    // ------------------------------------------------------------------ 5: the V-7 device large-sample reading (i4b)
+    // ------------------------------------------------------------------ 5: the V-7 device scale readings
 
-    /**
-     * V-7 设备大样本读数 (i4b): a 1,000-row synthetic self-entry intake on the device's real
-     * production ledger. The timed call is the production `intake` dispatch end-to-end (parse
-     * + spine transactions); the only asserted numbers are STRUCTURAL (the row and candidate
-     * counts, one frozen page read). The wall-clock reading rides one logcat line
-     * (`P804-V7DEV`) and is never asserted: a green run means "correct", never "fast enough"
-     * (the P8-02 V-8 device-timing discipline).
-     *
-     * Scale rationale: 1,000 rows keeps the case safely inside the ordinary device regression
-     * wall clock while exercising the same parse/spine chain the JVM's 10,000-row real-ledger
-     * legs pin; the 10,000 tier on a device belongs to the Rig/D-7 reading legs, not this
-     * batch.
-     */
     @Test
     fun aThousandRowSyntheticIntakeLandsOnTheDeviceLedgerWithARecordedReading() {
         P801ChainFixture("v7dev").use { fixture ->
@@ -303,14 +283,119 @@ class SelfEntryAndroidInstrumentedTest {
                 Log.i(TAG, chunk)
             }
         }
+
+        if (InstrumentationRegistry.getArguments().getString(V7_BOUNDARY_ARGUMENT) == "1") {
+            acceptAndReadBackTenThousandRows()
+            rejectTenThousandAndOneRowsWithoutWrites()
+        }
+    }
+
+    private fun acceptAndReadBackTenThousandRows() {
+        val fixtureName = "at-limit"
+        P801ChainFixture("v7-$fixtureName").use { fixture ->
+            fixture.open()
+            val facade = fixture.graph.facade
+            val session = facade.importIntakeSessionFactory()!!
+            val bytes = largeSyntheticSelfEntryWorkbook(AT_LIMIT_ROWS)
+            val start = System.nanoTime()
+            val outcome =
+                facade.importFileIntake!!.intake(
+                    ImportFileIntakeInput(
+                        format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                        platform = ImportPlatformKind.ANDROID,
+                        session = session,
+                        bytes = bytes,
+                    ),
+                )
+            val intakeMs = (System.nanoTime() - start) / 1_000_000.0
+
+            val accepted = present("10,000 rows must be accepted", outcome as? ImportFileIntakeOutcome.Accepted)
+            assertEquals(AT_LIMIT_ROWS, accepted.records.size)
+            assertTrue(accepted.records.all { it.disposition == ImportIntakeRecordDisposition.INTAKE_ACCEPTED })
+            assertEquals(AT_LIMIT_ROWS, accepted.newCandidateIds.size)
+            val candidateIds = accepted.newCandidateIds.toHashSet()
+            assertEquals(AT_LIMIT_ROWS, candidateIds.size)
+
+            val queries = fixture.handle.database.ledgerQueries
+            val candidates = queries.countImportCandidates().executeAsOne()
+            val sources = queries.countImportSourceRecords().executeAsOne()
+            val evidence = queries.countImportEvidence().executeAsOne()
+            assertEquals("persisted candidates", AT_LIMIT_ROWS.toLong(), candidates)
+            assertEquals("persisted sources", AT_LIMIT_ROWS.toLong(), sources)
+            assertEquals("persisted evidence", AT_LIMIT_ROWS.toLong(), evidence)
+
+            val rows = facade.queryImportReviewRows!!.queryPage(facade.ledgerId, 10L, null)
+            val page = present("the at-limit review page", rows as? ImportReviewRowsPageResult.Page)
+            assertEquals(10, page.rows.size)
+            assertTrue(page.rows.all { it.candidateId in candidateIds && it.sourceInputRef == session.inputRef })
+            val formalLedgerRows = assertEmptyFormalLedger("after at-limit intake", fixture)
+
+            Log.i(
+                TAG,
+                "$PREFIX rows=$AT_LIMIT_ROWS fixture=$fixtureName intakeMs=${String.format(Locale.ROOT, "%.1f", intakeMs)} " +
+                    "outcome=Accepted candidates=$candidates sources=$sources evidence=$evidence " +
+                    "pageSize=${page.rows.size} formalLedgerRows=$formalLedgerRows",
+            )
+        }
+    }
+
+    private fun rejectTenThousandAndOneRowsWithoutWrites() {
+        val fixtureName = "over-limit"
+        P801ChainFixture("v7-$fixtureName").use { fixture ->
+            fixture.open()
+            val facade = fixture.graph.facade
+            val input =
+                ImportFileIntakeInput(
+                    format = ImportFormatCapabilities.SELF_ENTRY_XLSX.identifier,
+                    platform = ImportPlatformKind.ANDROID,
+                    session = facade.importIntakeSessionFactory()!!,
+                    bytes = largeSyntheticSelfEntryWorkbook(OVER_LIMIT_ROWS),
+                )
+            assertEmptyIntakeAndFormalLedger("before over-limit intake", fixture)
+            val start = System.nanoTime()
+            val outcome = facade.importFileIntake!!.intake(input)
+            val intakeMs = (System.nanoTime() - start) / 1_000_000.0
+
+            val rejected = present("10,001 rows must be rejected", outcome as? ImportFileIntakeOutcome.Rejected)
+            val failure = present("the L2 failure", rejected.failure as? ImportIntakeBatchFailure.BatchExceedsLimit)
+            assertEquals(OVER_LIMIT_ROWS, failure.actualAcceptedRecords)
+            val formalLedgerRows = assertEmptyIntakeAndFormalLedger("after over-limit intake", fixture)
+
+            Log.i(
+                TAG,
+                "$PREFIX rows=$OVER_LIMIT_ROWS fixture=$fixtureName intakeMs=${String.format(Locale.ROOT, "%.1f", intakeMs)} " +
+                    "outcome=BatchExceedsLimit actualAcceptedRecords=${failure.actualAcceptedRecords} " +
+                    "persistedRows=0 formalLedgerRows=$formalLedgerRows",
+            )
+        }
+    }
+
+    private fun assertEmptyIntakeAndFormalLedger(
+        stage: String,
+        fixture: P801ChainFixture,
+    ): Long {
+        val queries = fixture.handle.database.ledgerQueries
+        assertEquals("$stage: import requests", 0L, queries.countImportRequests().executeAsOne())
+        assertEquals("$stage: source records", 0L, queries.countImportSourceRecords().executeAsOne())
+        assertEquals("$stage: evidence", 0L, queries.countImportEvidence().executeAsOne())
+        assertEquals("$stage: candidates", 0L, queries.countImportCandidates().executeAsOne())
+        assertEquals("$stage: candidate status history", 0L, queries.countImportCandidateStatusHistory().executeAsOne())
+        assertEquals("$stage: import receipts", 0L, queries.countImportReceipts().executeAsOne())
+        return assertEmptyFormalLedger(stage, fixture)
+    }
+
+    private fun assertEmptyFormalLedger(
+        stage: String,
+        fixture: P801ChainFixture,
+    ): Long {
+        val counts = fixture.formalCounts()
+        assertTrue("$stage: formal ledger", counts.all { it == 0L })
+        return counts.sum()
     }
 
     /**
-     * A 1,000-row synthetic 9-column workbook, string-built: the generator's six-part minimal
-     * OOXML shape, the frozen 9-string header verbatim from `SelfEntryTemplateGenerator`
-     * (never a hand copy), every row a distinct 日期时间 and 金额, and the 币种 cell always
-     * filled (no inference diagnostics). The amount column is an exact-text numeric cell —
-     * the generator's own shape.
+     * A synthetic 9-column workbook with the generator's six-part OOXML shape and frozen header.
+     * Dates cycle, amounts are unique exact numeric text, and every row supplies the currency.
      */
     private fun largeSyntheticSelfEntryWorkbook(rowCount: Int): ByteArray {
         val sharedStrings = LinkedHashSet<String>()
@@ -388,8 +473,10 @@ class SelfEntryAndroidInstrumentedTest {
         const val PREFIX = "P804-V7DEV"
         const val LOGCAT_CHUNK = 1_000
 
-        /** The device large-sample tier (i4b): the CI wall-clock discipline's safe row count. */
         const val LARGE_SAMPLE_ROWS = 1_000
+        const val V7_BOUNDARY_ARGUMENT = "ul.p804.v7"
+        const val AT_LIMIT_ROWS = 10_000
+        const val OVER_LIMIT_ROWS = 10_001
 
         const val CONTENT_TYPES_PART = "[Content_Types].xml"
         const val ROOT_RELS_PART = "_rels/.rels"

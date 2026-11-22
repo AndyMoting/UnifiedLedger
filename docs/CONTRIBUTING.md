@@ -92,7 +92,13 @@ fork PR 的 fallback 与同仓两片使用同一 AVD 固定配置，并以同一
 
 `tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 59 例 / 16 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
 
-手动派发的 `instrumentation_extra_args` 是 D7-13 的按需读数通道：普通 PR 运行不传该输入，行为与一次 PR 运行逐字相同；传入一个 `KEY=VALUE`（`ul.p802.timing=1` 为 P8-02 V-8，`ul.p806.timing=1` 为 P8-06 V-14）时，它作为单个 `-e KEY VALUE` 到达 `am instrument`，对应计时用例才执行，参数缺席时打印 `SKIPPED` 后普通返回，读数只记录基线、不设阈值（D-347）。每个参数在 `tools/python/android_scale/instrumented.py` 的 `ON_DEMAND_HOSTS` 里点名唯一宿主类：只有分片清单把该类分给本片时，参数才转发给 `am instrument`；另一片既不接收也不要求任何读数标记，普通回归同样不要求。分片清单找不到宿主类时在占用设备前失败。`tools/ci/android-instrumented-cloud.py validate` 接收同一派发参数，重算转发集合：`shard.json` 记录的“请求/转发”参数必须与重算一致，托管分片还必须让读数恰好出现一次且可解析——P8-06 的四条 `P806-V14DEV reading=<label> ms=<x.xxx> statements=<n>` 各出现一次、标签齐全、每条语句数 ≥1，覆盖报表期间金额语句、日历桶、明细首页与计数四个分别可归属的读数。这个 `validate` 步骤是唯一的按需门禁，绿色分片本身不能替代读数；值为非 `1` 的 `KEY=VALUE` 或仅在值里包含计时键的其他键不要求任何读数。
+手动派发的 `instrumentation_extra_args` 是 D7-13 的按需读数通道。普通 PR、fork PR 和空参数手动派发均执行普通回归。传入一个 `KEY=VALUE` 时，`tools/python/android_scale/instrumented.py` 的 `ON_DEMAND_HOSTS` 为已登记参数指定唯一宿主类。只有该类所在的分片将参数作为单个 `-e KEY VALUE` 传给 `am instrument`。宿主类缺席时在占用设备前失败。
+
+- `ul.p802.timing=1` 启用 P8-02 V-8 搜索首页计时用例，并要求对应读数。
+- `ul.p804.v7=1` 在 SelfEntry 宿主分片额外运行 10,000 行和 10,001 行两档边界样本。原 1,000 行用例始终执行。宿主分片必须各有一条匹配的 `P804-V7DEV` 读数。`fixture=at-limit` 记录接收和设备账本读回成功，`fixture=over-limit` 记录 `BatchExceedsLimit(actualAcceptedRecords=10001)` 及零写入。两条读数均须记录 `formalLedgerRows=0`。
+- `ul.p806.timing=1` 启用 P8-06 V-14 报表计时用例。四条 `P806-V14DEV reading=<label> ms=<x.xxx> statements=<n>` 须各出现一次，每条语句数 ≥1，分别覆盖报表期间金额语句、日历桶、明细首页与计数。P8-02 和 P8-06 的计时用例在未启用时打印 `SKIPPED` 后正常返回。
+
+`tools/ci/android-instrumented-cloud.py validate` 接收同一派发参数，重算转发集合并核对 `shard.json` 中的请求与转发记录。它是唯一的按需证据门，要求宿主分片的每条预期读数恰好出现一次，并按各通道定义的格式与结果要求校验。非宿主分片、普通回归、值为非 `1` 的参数及仅在值里包含已登记键的其他参数均无需读数。耗时只记录，不设阈值（D-347）。
 
 实测成本（2026-10-01 一次性探针，同一提交三次，拆分前为单 job）：整条 job 407–417 秒，其中构建两个 APK 212–225 秒、模拟器启动 44.6–52.5 秒、7 个 P0 守卫的安装加执行约 122 秒；3/3 全绿。拆分后构建归 producer、两片并行；每片证据工件名为 `android-instrumented-<sha>-shard-<n>`，含 `shard.json`、原始转录、JUnit XML 与 `logcat.txt`。
 
