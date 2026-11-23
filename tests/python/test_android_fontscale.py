@@ -1,6 +1,7 @@
 """Offline proofs for the P8-00 V-8 / P8-01a / P8-02 / P8-03 font-scale sample rig (cloud AVD chain)."""
 from __future__ import annotations
 
+import base64
 import unittest
 from pathlib import Path
 
@@ -14,7 +15,9 @@ from android_fontscale.sampler import (
     RadioStep,
     SampleError,
     Sampler,
+    Screen,
     ScrollStep,
+    SpeechCheck,
     TapStep,
     adb_input_text,
     derive_p806_seed_facts,
@@ -25,22 +28,34 @@ from android_fontscale.sampler import (
     find_field_center,
     find_radio_center,
     find_reachable_center,
+    find_resource_center,
+    find_talkback_level_summary,
+    gate_artifact_problems,
     gate_profile_problems,
     gate_seed_problems,
     ime_is_shown,
     input_text,
+    isolate_talkback_window,
     marker_problems,
+    notification_permission_dialog_identity,
+    overall_speech_status,
     p806_gate_problems,
     p806_rollover_problem,
     p806_screens,
     parse_font_scale,
     profile_by_name,
     profile_screens,
+    probe_service_connected,
     required_problems,
     screen_center,
     scroll_until,
     scroll_swipe_points,
+    speech_fragments,
+    talkback_check_verdict,
+    talkback_level_summary_value,
+    talkback_status_label,
     tap_radio_for,
+    viewport_problems,
 )
 
 _DUMP = """<?xml version="1.0" encoding="UTF-8"?>
@@ -54,6 +69,26 @@ _DUMP = """<?xml version="1.0" encoding="UTF-8"?>
   </node>
 </hierarchy>
 """
+
+# The observed API 33+ POST_NOTIFICATIONS grant dialog (permissioncontroller ids and message).
+_PERMISSION_DIALOG = """<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0"><node bounds="[0,0][1080,2400]" text="" content-desc="">
+  <node bounds="[0,900][1080,1500]" text="" resource-id="com.android.permissioncontroller:id/grant_dialog">
+    <node bounds="[0,950][1080,1050]" text="Allow Android Accessibility Suite to send you notifications?" resource-id="com.android.permissioncontroller:id/permission_message" />
+    <node bounds="[100,1350][500,1450]" text="Allow" resource-id="com.android.permissioncontroller:id/permission_allow_button" />
+    <node bounds="[600,1350][1000,1450]" text="Don’t allow" resource-id="com.android.permissioncontroller:id/permission_deny_button" />
+  </node>
+</node></hierarchy>"""
+
+_DIALOG_DISMISSED = (
+    '<hierarchy rotation="0"><node bounds="[0,0][1080,2400]" text="首页" content-desc="" /></hierarchy>'
+)
+
+# The same dialog as the device actually rendered it: the node PACKAGE is the Google-signed
+# permissioncontroller while the resource ids keep the `com.android.permissioncontroller` namespace.
+# An identity that keyed on the package attribute would match this tree too, so the fixture must
+# carry both or a future change could pass while rejecting the real dump.
+_PERMISSION_DIALOG_REAL = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.google.android.permissioncontroller" content-desc="" bounds="[28,769][1052,1696]"><node index="0" text="" resource-id="com.android.permissioncontroller:id/grant_dialog" class="android.widget.LinearLayout" package="com.google.android.permissioncontroller" content-desc="" bounds="[28,769][1052,1696]"><node index="0" text="Allow Android Accessibility Suite to send you notifications?" resource-id="com.android.permissioncontroller:id/permission_message" class="android.widget.TextView" package="com.google.android.permissioncontroller" content-desc="" bounds="[133,990][947,1219]" /><node index="1" text="Don’t allow" resource-id="com.android.permissioncontroller:id/permission_deny_button" class="android.widget.Button" package="com.google.android.permissioncontroller" content-desc="" bounds="[133,1444][947,1591]" /></node></node></hierarchy>"""
 
 # One option row's device shape: a clickable RadioButton plus a sibling Text. The 支出 row's radio
 # is also in the 退款到账 row's band, so the lookup has to pick the NEAREST left radio, not the first.
@@ -313,7 +348,7 @@ class _DispatchSampler(_StubSampler):
         self.calls.append("ime")
         return self.tree
 
-    def scroll_to(self, label: str, max_swipes: int = 6) -> str:
+    def scroll_to(self, label: str, max_swipes: int = 6, fully: bool = False) -> str:
         self.calls.append(f"scroll:{label}")
         return self.tree
 
@@ -424,6 +459,16 @@ class ScreenCaptureVerdict(unittest.TestCase):
             problems = marker_problems(_DUMP, "账本为空", (needle,))
             self.assertEqual(1, len(problems))
             self.assertIn("previous-screen string", problems[0])
+
+    def test_the_viewport_check_rejects_a_clipped_marker(self) -> None:
+        self.assertEqual([], viewport_problems(_DUMP, "账本为空"))
+        clipped = _DUMP.replace(
+            '[400,900][900,1000]', '[400,2300][900,2500]'
+        )
+        problem = viewport_problems(clipped, "账本为空")
+        self.assertEqual(1, len(problem))
+        self.assertIn("clipped", problem[0])
+        self.assertTrue(viewport_problems(_DUMP, "未核对 1 条"))
 
 
 class Profiles(unittest.TestCase):
@@ -601,13 +646,18 @@ class P806Profile(unittest.TestCase):
         payment_texts=("-12.34 CNY", "-5.00 CNY"),
     )
 
-    def test_the_three_screens_carry_the_seeds_exact_amounts(self) -> None:
+    def test_the_four_screens_carry_the_seeds_exact_amounts_and_speech_checks(self) -> None:
         screens = p806_screens(self.FACTS)
-        self.assertEqual(["report", "calendar", "day-detail"], [screen.stem for screen in screens])
         self.assertEqual(
-            ["报表期间", "收支日历", "共 2 笔明细"], [screen.marker for screen in screens]
+            ["report", "report-daily-average", "calendar", "day-detail"],
+            [screen.stem for screen in screens],
         )
-        report, calendar, detail = screens
+        note = self.FACTS.daily_average_note_text()
+        self.assertEqual(
+            ["报表期间", note, "收支日历", "共 2 笔明细"],
+            [screen.marker for screen in screens],
+        )
+        report, daily_average, calendar, detail = screens
         self.assertEqual(
             (TapStep("分析"), ScrollStep("净支出（含退款） 17.34 CNY")), report.steps
         )
@@ -617,19 +667,49 @@ class P806Profile(unittest.TestCase):
         self.assertIn("普通收支笔数：2", report.required)
         self.assertIn("以下为最近一次成功载荷（旧数据）：", report.absent)
         self.assertEqual(
+            (SpeechCheck("结余 -17.34 CNY", ("-17.34 CNY",)),), report.speech
+        )
+        self.assertEqual("结余 -17.34 CNY", self.FACTS.balance_text())
+        self.assertEqual((ScrollStep(note, fully=True),), daily_average.steps)
+        self.assertEqual((note,), daily_average.required)
+        self.assertTrue(daily_average.marker_in_viewport)
+        self.assertFalse(report.marker_in_viewport)
+        self.assertEqual((), daily_average.speech)
+        self.assertEqual("-17.34 CNY", self.FACTS.balance_amount_text())
+        self.assertEqual(
             (TapStep("首页"), TapStep("收支日历"), ScrollStep(self.FACTS.day_cell_text())), calendar.steps
         )
         self.assertEqual(
             ("2026-11-22，CNY 支出 17.34、收入 0.00；共 2 笔",), calendar.required
         )
-        self.assertEqual((TapStep(self.FACTS.day_cell_text()),), detail.steps)
+        self.assertEqual(
+            (
+                SpeechCheck(
+                    "2026-11-22，", ("2026-11-22", "CNY 支出 17.34", "收入 0.00")
+                ),
+            ),
+            calendar.speech,
+        )
+        self.assertEqual(
+            (ScrollStep(self.FACTS.day_cell_text()), TapStep(self.FACTS.day_cell_text())),
+            detail.steps,
+        )
         self.assertEqual(
             ("报表明细", "2026-11-22 明细", "共 2 笔明细", "-12.34 CNY", "-5.00 CNY"), detail.required
+        )
+        self.assertEqual(
+            tuple(SpeechCheck(text, (text,)) for text in self.FACTS.payment_texts),
+            detail.speech,
         )
 
     def test_the_period_line_follows_the_seed_month(self) -> None:
         february = P806SeedFacts("2028年2月", "2028-02-29", 2, "CNY", 2, 1_734, 0, ())
         self.assertEqual("月：2028-02-01 至 2028-02-29（29 天）", february.report_period_text())
+        self.assertEqual(29, february.month_day_count())
+        self.assertEqual(
+            "日均按该期间完整自然日数（29 天）计算：进行中的期间不缩短分母。",
+            february.daily_average_note_text(),
+        )
 
     def test_a_seed_month_that_is_not_the_current_reporting_month_is_an_explicit_failure(self) -> None:
         from datetime import datetime, timezone, timedelta
@@ -645,7 +725,10 @@ class P806Profile(unittest.TestCase):
         profile = profile_by_name("p806")
         self.assertTrue(profile.seeded)
         self.assertEqual("流水 · 共 2 笔", profile.launch_marker)
-        self.assertEqual(["report", "calendar", "day-detail"], [screen.stem for screen in profile.screens])
+        self.assertEqual(
+            ["report", "report-daily-average", "calendar", "day-detail"],
+            [screen.stem for screen in profile.screens],
+        )
         with self.assertRaises(SampleError):
             profile_screens(profile, "")
 
@@ -713,52 +796,1022 @@ class P806Profile(unittest.TestCase):
             with self.assertRaises(SampleError):
                 derive_p806_seed_facts(seed)
 
-    def test_the_gate_accepts_pending_speech_and_re_derived_facts(self) -> None:
-        import tempfile
+    @staticmethod
+    def _fragment_line(fragment: str) -> str:
+        # The real brief line: outer tag `talkback` (8 columns, so unpadded), pid right-justified
+        # to 5, and the speaker named in the message (the P7-derived no-inner-pid form; the
+        # parenthesized controller form is exercised apart).
+        return (
+            "V/talkback(   20): SpeechControllerImpl: Speaking fragment text="
+            f'"{fragment}", utteranceId=utt, TtsSpan=null, locale=zh_CN, event=TYPE_VIEW_FOCUSED'
+        )
 
-        with tempfile.TemporaryDirectory() as temp:
-            evidence = Path(temp)
-            (evidence / "talkback-capability.txt").write_text("status: pending\n", encoding="utf-8")
-            host = {
-                "p806": {
-                    "seed_facts": self.FACTS.as_dict(),
-                    "talkback": {
-                        "status": "package-absent-on-image",
-                        "speech": "pending-not-recorded",
-                        "log_signal": "talkback: SpeechControllerImpl: Speaking fragment text=",
-                    },
+    @classmethod
+    def _window(
+        cls,
+        fragments: list[str],
+        *,
+        command_id: int = 1,
+        accepted: bool = True,
+        target: str = "target",
+        needle: str | None = None,
+        node_text: str | None = None,
+        node_desc: str | None = None,
+        pre_begin: list[str] | None = None,
+    ) -> str:
+        raw_target = target if needle is None else needle
+        encoded = base64.b64encode(raw_target.encode("utf-8")).decode("ascii")
+        actual_text = target if node_text is None else node_text
+        actual_desc = "" if node_desc is None else node_desc
+        text64 = base64.b64encode(actual_text.encode("utf-8")).decode("ascii")
+        desc64 = base64.b64encode(actual_desc.encode("utf-8")).decode("ascii")
+
+        def preview(value: str) -> str:
+            return value.replace("\n", " ")[:60]
+
+        # AOSP brief: `%c/%-8.*s(%s%5d): ` — `ULA11Y` pads to 8 columns and pid 10 to width 5.
+        probe = "I/ULA11Y  (   10): "
+        lines = [
+            probe + f"command action=focus id={command_id} needle64={encoded} "
+            f'target="{target}"',
+            probe + f'target id={command_id} found=true text="{preview(actual_text)}" '
+            f'desc="{preview(actual_desc)}" text64="{text64}" desc64="{desc64}"',
+        ]
+        lines.extend(cls._fragment_line(fragment) for fragment in pre_begin or [])
+        lines.extend(
+            [
+                probe + f"speech-window-begin id={command_id}",
+                probe + f"focus-result id={command_id} found=true "
+                f"accepted={'true' if accepted else 'false'}",
+            ]
+        )
+        lines.extend(cls._fragment_line(fragment) for fragment in fragments)
+        lines.append(probe + f"speech-window-end id={command_id}")
+        return "\n".join(lines) + "\n"
+
+    PROBE_COMPONENT = (
+        "com.unifiedledger.android.test/"
+        "com.unifiedledger.android.A11yFocusProbeService"
+    )
+
+    DEVICE_SERVICE = (
+        "com.google.android.marvin.talkback/"
+        "com.google.android.marvin.talkback.TalkBackService"
+    )
+
+    def _speech_fragments(self, stem: str, target: str) -> list[str]:
+        if stem == "report":
+            return ["结余", "-17.34", "CNY"]
+        if stem == "calendar":
+            return [self.FACTS.day_cell_text()]
+        return [target]
+
+    def _canonical_ids(self) -> dict[tuple[str, str], int]:
+        """The run's global command sequence, one id per ordered speech check."""
+        ids: dict[tuple[str, str], int] = {}
+        for screen in p806_screens(self.FACTS):
+            for check in screen.speech:
+                ids[(screen.stem, check.target)] = len(ids) + 1
+        return ids
+
+    @classmethod
+    def _block(
+        cls,
+        target: str,
+        command_id: int,
+        fragments: list[str],
+        *,
+        accepted: bool = True,
+        needle: str | None = None,
+        node_text: str | None = None,
+        node_desc: str | None = None,
+        pre_begin: list[str] | None = None,
+    ) -> str:
+        return (
+            f"# target: {target}\n# command: {command_id}\n"
+            + cls._window(
+                fragments,
+                command_id=command_id,
+                accepted=accepted,
+                target=target,
+                needle=needle,
+                node_text=node_text,
+                node_desc=node_desc,
+                pre_begin=pre_begin,
+            )
+        )
+
+    def _write_windows(
+        self,
+        evidence: Path,
+        *,
+        override: dict[tuple[str, str], str] | None = None,
+        services: list[str] | None = None,
+    ) -> None:
+        """Write one artifact per speech screen: every check in its own bound window.
+
+        Each screen also keeps its own raw `enabled_accessibility_services` read-back, because the
+        coordinator's gate re-derives the enabled TalkBack component per screen.
+        """
+        ids = self._canonical_ids()
+        enabled_raw = ":".join(
+            [self.PROBE_COMPONENT, self.DEVICE_SERVICE] if services is None else services
+        )
+        for screen in p806_screens(self.FACTS):
+            if not screen.speech:
+                continue
+            blocks = []
+            for check in screen.speech:
+                key = (screen.stem, check.target)
+                block = (override or {}).get(key)
+                if block is None:
+                    block = self._block(
+                        check.target,
+                        ids[key],
+                        self._speech_fragments(screen.stem, check.target),
+                    )
+                blocks.append(block)
+            (evidence / f"talkback-{screen.stem}.txt").write_text(
+                "\n".join(blocks), encoding="utf-8"
+            )
+            (evidence / f"talkback-enabled-{screen.stem}.txt").write_text(
+                enabled_raw + "\n", encoding="utf-8"
+            )
+
+    def _host(
+        self,
+        *,
+        statuses: dict[tuple[str, str], str] | None = None,
+        device_service: str | None = None,
+        enabled_components: list[str] | None = None,
+    ) -> dict[str, object]:
+        ids = self._canonical_ids()
+        device = self.DEVICE_SERVICE if device_service is None else device_service
+        components = (
+            [self.PROBE_COMPONENT, self.DEVICE_SERVICE]
+            if enabled_components is None
+            else enabled_components
+        )
+        recorded: dict[str, object] = {}
+        for screen in p806_screens(self.FACTS):
+            if not screen.speech:
+                continue
+            checks = []
+            for check in screen.speech:
+                status = (statuses or {}).get((screen.stem, check.target), "success")
+                checks.append(
+                    {
+                        "target": check.target,
+                        "command_id": ids[(screen.stem, check.target)],
+                        "required": list(check.required),
+                        "status": status,
+                        "label": talkback_status_label(status),
+                        "completed": True,
+                        "accepted": True,
+                        "fragments": [],
+                        "missing": [],
+                        "reason": "",
+                    }
+                )
+            overall = overall_speech_status([check["status"] for check in checks])
+            recorded[screen.stem] = {
+                "status": overall,
+                "label": talkback_status_label(overall),
+                "device_service": device,
+                "artifact": f"talkback-{screen.stem}.txt",
+                "checks": checks,
+                "enable": {
+                    "status": "success",
+                    "enabled_components": components,
+                    "enabled_services_file": f"talkback-enabled-{screen.stem}.txt",
+                    "talkback_bound": True,
+                    "reason": "",
                 },
             }
-            self.assertEqual([], p806_gate_problems(host, self.FACTS, evidence))
+        return {
+            "p806": {
+                "seed_facts": self.FACTS.as_dict(),
+                "talkback": {
+                    "package": "com.google.android.marvin.talkback",
+                    "device_service": device,
+                    "log_level": {
+                        "status": "success",
+                        "value": "VERBOSE",
+                        "steps": ["open the exported developer preferences fragment"],
+                        "reason": "summary shows VERBOSE",
+                    },
+                    "screens": recorded,
+                },
+            },
+        }
 
-    def test_the_gate_rejects_a_fabricated_speech_claim_or_stale_facts(self) -> None:
+    def test_the_gate_accepts_complete_talkback_windows(self) -> None:
         import tempfile
 
         with tempfile.TemporaryDirectory() as temp:
             evidence = Path(temp)
-            (evidence / "talkback-capability.txt").write_text("status: pending\n", encoding="utf-8")
-            talkback = {
-                "status": "recorded",
-                "speech": "spoken-17.34-cny",
-                "log_signal": "wrong",
-            }
-            host = {"p806": {"seed_facts": self.FACTS.as_dict(), "talkback": talkback}}
-            self.assertTrue(p806_gate_problems(host, self.FACTS, evidence))
-            stale = {"p806": {"seed_facts": P806SeedFacts("2026年10月", "2026-10-22", 2, "CNY", 2, 1, 0).as_dict(),
-                              "talkback": talkback}}
-            self.assertTrue(any("seed derives" in problem for problem in p806_gate_problems(stale, self.FACTS, evidence)))
+            self._write_windows(evidence)
+            self.assertEqual([], p806_gate_problems(self._host(), self.FACTS, evidence))
 
-    def test_the_gate_treats_a_missing_capability_record_as_informational(self) -> None:
+    def test_the_gate_names_each_speech_failure_class(self) -> None:
+        import tempfile
+
+        target = self.FACTS.balance_text()
+        report = ("report", target)
+        cases = {
+            "not-obtained": self._block(target, 1, [""], accepted=False),
+            "fragments-missing": self._block(target, 1, []),
+            "amount-wrong": self._block(target, 1, ["结余", "-99.99", "CNY"]),
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            for status, window in cases.items():
+                self._write_windows(evidence, override={report: window})
+                host = self._host(statuses={report: status})
+                problems = p806_gate_problems(host, self.FACTS, evidence)
+                self.assertTrue(
+                    any("report: TalkBack" in problem for problem in problems), (status, problems)
+                )
+                self.assertTrue(
+                    any(talkback_status_label(status) in problem for problem in problems),
+                    (status, problems),
+                )
+            # A host that claims success over a failing artifact is named twice.
+            self._write_windows(evidence, override={report: cases["fragments-missing"]})
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(any("records TalkBack status 'success'" in p for p in problems))
+
+    def test_the_calendar_window_requires_its_exact_amounts_not_just_the_date(self) -> None:
+        import tempfile
+
+        target = self.FACTS.day_date + "，"
+        wrong_amounts = [
+            "2026-11-22，CNY 支出 19.99、收入 0.00；共 2 笔",
+            "2026-11-22，CNY 支出 17.34、收入 9.99；共 2 笔",
+            "2026-11-22，支出 17.34、收入 0.00；共 2 笔",
+            "2026-11-22，CNY 支出 17.34；共 2 笔",
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            for spoken in wrong_amounts:
+                self._write_windows(
+                    evidence,
+                    override={("calendar", target): self._block(target, 2, [spoken])},
+                )
+                problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+                self.assertTrue(
+                    any(
+                        "calendar: TalkBack 金额错误" in problem
+                        and repr(target) in problem
+                        for problem in problems
+                    ),
+                    (spoken, problems),
+                )
+            # The exact seed-derived cell (date + both amounts + currency) passes.
+            self._write_windows(evidence)
+            self.assertEqual([], p806_gate_problems(self._host(), self.FACTS, evidence))
+
+    def test_a_partial_amount_does_not_satisfy_a_longer_number(self) -> None:
+        import tempfile
+
+        target = self.FACTS.day_date + "，"
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # `收入 0.00` occurs inside `收入 10.00`, and `支出 17.34` inside `支出 117.34`; the
+            # digit on the edge means neither is the cell's own number.
+            for spoken in (
+                "2026-11-22，CNY 支出 17.34、收入 10.00；共 2 笔",
+                "2026-11-22，CNY 支出 117.34、收入 0.00；共 2 笔",
+                "2026-11-22，CNY 支出 17.345、收入 0.00；共 2 笔",
+            ):
+                self._write_windows(
+                    evidence,
+                    override={("calendar", target): self._block(target, 2, [spoken])},
+                )
+                problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+                self.assertTrue(
+                    any("calendar: TalkBack 金额错误" in p for p in problems), (spoken, problems)
+                )
+
+    def test_a_failed_or_mixed_second_detail_row_cannot_borrow_the_first(self) -> None:
+        import tempfile
+
+        first, second = self.FACTS.payment_texts
+        key = ("day-detail", second)
+        ids = self._canonical_ids()
+        second_id = ids[key]
+        first_id = ids[("day-detail", first)]
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # The second row's own focus was rejected: its window must not inherit the first's
+            # accepted flag or its spoken amount.
+            rejected = self._block(second, second_id, [first], accepted=False)
+            self._write_windows(evidence, override={key: rejected})
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(
+                any("day-detail: TalkBack 未取得" in problem and repr(second) in problem
+                    for problem in problems),
+                problems,
+            )
+            # The second window is relabelled with the first row's command id: no id may serve
+            # two checks, and the ordered sequence cannot go backwards.
+            relabelled = self._block(second, first_id, [second])
+            self._write_windows(evidence, override={key: relabelled})
+            host = self._host()
+            host["p806"]["talkback"]["screens"]["day-detail"]["checks"][1]["command_id"] = first_id
+            problems = p806_gate_problems(host, self.FACTS, evidence)
+            self.assertTrue(any("recorded twice" in problem for problem in problems), problems)
+            self.assertTrue(any("does not follow" in problem for problem in problems), problems)
+            # A window whose header names a different command than the recorded one is unbound.
+            misbound = self._block(second, second_id, [second]).replace(
+                f"# command: {second_id}\n", f"# command: {second_id + 100}\n", 1
+            )
+            self._write_windows(evidence, override={key: misbound})
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(
+                any("does not bind command" in problem for problem in problems), problems
+            )
+            # Independent windows, each carrying its own amount, pass.
+            self._write_windows(evidence)
+            self.assertEqual([], p806_gate_problems(self._host(), self.FACTS, evidence))
+
+    def test_a_raw_probe_target_mismatch_fails_even_with_correct_headers(self) -> None:
+        import tempfile
+
+        first, second = self.FACTS.payment_texts
+        key = ("day-detail", second)
+        second_id = self._canonical_ids()[key]
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # Headers, host record, fragments and status all say the second row; only the probe's
+            # own raw command still names the first row's target.
+            self._write_windows(
+                evidence,
+                override={key: self._block(second, second_id, [second], needle=first)},
+            )
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(any("raw command focused" in p for p in problems), problems)
+            self.assertTrue(any("not the required target" in p for p in problems), problems)
+            self.assertTrue(any("day-detail: TalkBack 未取得" in p for p in problems), problems)
+            self._write_windows(evidence)
+            self.assertEqual([], p806_gate_problems(self._host(), self.FACTS, evidence))
+
+    def test_a_raw_found_node_for_another_target_fails_even_with_correct_amounts(self) -> None:
+        import tempfile
+
+        first, second = self.FACTS.payment_texts
+        key = ("day-detail", second)
+        second_id = self._canonical_ids()[key]
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # Command target, header, fragments and logged amount all name the second row, but the
+            # probe's found-node text is the first row's: the amount cannot belong to this target.
+            self._write_windows(
+                evidence,
+                override={
+                    key: self._block(second, second_id, [second], node_text=first)
+                },
+            )
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(any("found-node record" in p for p in problems), problems)
+            self.assertTrue(any("day-detail: TalkBack 未取得" in p for p in problems), problems)
+            self._write_windows(evidence)
+            self.assertEqual([], p806_gate_problems(self._host(), self.FACTS, evidence))
+
+    def test_speech_before_the_window_begin_fails_even_with_all_required_values(self) -> None:
+        import tempfile
+
+        target = self.FACTS.balance_text()
+        report = ("report", target)
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # Every required value is spoken, but only before `speech-window-begin`; the accepted
+            # window itself is silent.
+            self._write_windows(
+                evidence,
+                override={
+                    report: self._block(
+                        target, 1, [], pre_begin=["结余", "-17.34", "CNY"]
+                    )
+                },
+            )
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(any("report: TalkBack 片段缺失" in p for p in problems), problems)
+            self._write_windows(evidence)
+            self.assertEqual([], p806_gate_problems(self._host(), self.FACTS, evidence))
+
+    def test_the_report_window_rejects_a_same_named_month_card_node(self) -> None:
+        import tempfile
+
+        target = self.FACTS.balance_text()
+        # The HOME month card ends `结余 -17.34` with no trailing currency. Its command target and
+        # spoken amount/currency are otherwise valid, so only the found-node binding excludes it.
+        month_card = f"{self.FACTS.currency}：普通收入 0.00，净支出 17.34，结余 -17.34"
+        self.assertIn("结余 -17.34", month_card)
+        self.assertNotIn(target, month_card)
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            self._write_windows(
+                evidence,
+                override={
+                    ("report", target): self._block(
+                        target, 1, ["结余", "-17.34", "CNY"], node_text=month_card
+                    )
+                },
+            )
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(any("report: TalkBack 未取得" in p for p in problems), problems)
+            self.assertTrue(any("found-node record" in p for p in problems), problems)
+
+    def test_the_gate_requires_the_exact_enabled_talkback_component(self) -> None:
+        import tempfile
+
+        substituted = "com.google.android.marvin.talkback/.TalkBackService"
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # The host summary claims the device component, but the raw read-back never had it.
+            self._write_windows(evidence, services=[self.PROBE_COMPONENT])
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(
+                any("does not contain the exact TalkBack component" in problem
+                    for problem in problems),
+                problems,
+            )
+            self.assertTrue(
+                any("does not match the raw record" in problem for problem in problems), problems
+            )
+            # The raw record contains the device component, but the host summary adds another.
+            self._write_windows(evidence)
+            summary_only = self._host(enabled_components=[
+                self.PROBE_COMPONENT,
+                self.DEVICE_SERVICE,
+                "com.example.substitute/.TalkBackService",
+            ])
+            self.assertTrue(
+                any("does not match the raw record" in problem
+                    for problem in p806_gate_problems(summary_only, self.FACTS, evidence))
+            )
+            # A missing per-screen raw record fails even when everything else agrees.
+            (evidence / "talkback-enabled-calendar.txt").unlink()
+            problems = p806_gate_problems(self._host(), self.FACTS, evidence)
+            self.assertTrue(
+                any("'talkback-enabled-calendar.txt' is missing" in problem
+                    for problem in problems),
+                problems,
+            )
+            # The enable record must name that screen's own raw record.
+            renamed = self._host()
+            renamed["p806"]["talkback"]["screens"]["calendar"]["enable"][
+                "enabled_services_file"
+            ] = "talkback-enabled-report.txt"
+            self.assertTrue(
+                any("the screen's raw record is" in problem
+                    for problem in p806_gate_problems(renamed, self.FACTS, evidence))
+            )
+            # A different component passes only when its own raw record proves it.
+            self._write_windows(evidence, services=[substituted])
+            self.assertEqual(
+                [],
+                p806_gate_problems(
+                    self._host(
+                        device_service=substituted, enabled_components=[substituted]
+                    ),
+                    self.FACTS,
+                    evidence,
+                ),
+            )
+            missing_enable = self._host()
+            for record in missing_enable["p806"]["talkback"]["screens"].values():
+                record["enable"] = {"status": "not-obtained", "reason": "not listed"}
+            self.assertTrue(
+                any("was not enabled" in problem
+                    for problem in p806_gate_problems(missing_enable, self.FACTS, evidence))
+            )
+
+    def test_the_gate_rejects_stale_facts_or_a_missing_talkback_record(self) -> None:
         import tempfile
 
         with tempfile.TemporaryDirectory() as temp:
-            host = {"p806": {"seed_facts": self.FACTS.as_dict()}}
-            self.assertEqual([], p806_gate_problems(host, self.FACTS, Path(temp)))
+            evidence = Path(temp)
+            self._write_windows(evidence)
+            stale = {"p806": {"seed_facts": P806SeedFacts(
+                "2026年10月", "2026-10-22", 2, "CNY", 2, 1, 0).as_dict()}}
+            self.assertTrue(any("seed derives" in p for p in p806_gate_problems(stale, self.FACTS, evidence)))
+            without_talkback = {"p806": {"seed_facts": self.FACTS.as_dict()}}
+            self.assertTrue(
+                any("no TalkBack" in p for p in p806_gate_problems(without_talkback, self.FACTS, evidence))
+            )
+
+    def test_the_gate_checks_the_installable_artifact_identity(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = root / "app.apk"
+            test = root / "test.apk"
+            app.write_bytes(b"app")
+            test.write_bytes(b"test")
+            host = {
+                "artifacts": {
+                    "app_apk": {"sha256": __import__("hashlib").sha256(b"app").hexdigest()},
+                    "test_apk": {"sha256": __import__("hashlib").sha256(b"test").hexdigest()},
+                }
+            }
+            self.assertEqual([], gate_artifact_problems(host, app, test))
+            test.write_bytes(b"other")
+            self.assertTrue(gate_artifact_problems(host, app, test))
+            self.assertTrue(gate_artifact_problems({"artifacts": {}}, app, test))
 
     def test_required_strings_are_checked_on_the_captured_frame(self) -> None:
         tree = '<hierarchy><node text="净支出（含退款） 17.34 CNY" content-desc="" /></hierarchy>'
         self.assertEqual([], required_problems(tree, ("净支出（含退款） 17.34 CNY",)))
         self.assertEqual(1, len(required_problems(tree, ("普通收入 0.00 CNY",))))
+
+
+class TalkbackArtifacts(unittest.TestCase):
+    """The D-292 speech parser: only TalkBack's own fragment line counts."""
+
+    def test_fragments_are_extracted_in_log_order(self) -> None:
+        log = (
+            'V/talkback(   20): SpeechControllerImpl: Speaking fragment text="结余", '
+            "utteranceId=a, TtsSpan=null, locale=zh_CN, event=x\n"
+            "I/ULA11Y  (   10): focus-result id=1 found=true accepted=true\n"
+            'V/talkback(   20): SpeechControllerImpl: Speaking fragment text="-17.34", '
+            "utteranceId=b, TtsSpan=null, locale=zh_CN, event=x\n"
+            "V/talkback(   20): SpeechControllerImpl: Speaking fragment text=null, "
+            "utteranceId=c, TtsSpan=null, locale=zh_CN, event=x\n"
+        )
+        self.assertEqual(["结余", "-17.34"], speech_fragments(log))
+
+    def test_the_parenthesized_controller_pid_is_the_same_utterance(self) -> None:
+        # The observed brief form names the controller's own pid inside the message; it is the
+        # same TalkBack utterance as the P7-derived no-pid form and is extracted the same way.
+        log = (
+            'V/talkback(   20): SpeechControllerImpl( 20): Speaking fragment text="父级", '
+            "utteranceId=a, TtsSpan=null, locale=zh_CN, event=x\n"
+        )
+        self.assertEqual(["父级"], speech_fragments(log))
+
+    def test_a_speaking_line_with_another_tag_is_not_a_talkback_utterance(self) -> None:
+        # A different logger whose MESSAGE quotes the line must not impersonate the tag column,
+        # whether the controller form sits unquoted or is embedded as a real-looking brief line.
+        log = (
+            'V/SomeOtherLogger(   20): payload SpeechControllerImpl( 20): '
+            'Speaking fragment text="伪造一", utteranceId=fake, event=x\n'
+            'I/SomeOtherLogger(   20): V/talkback(   20): SpeechControllerImpl: '
+            'Speaking fragment text="伪造二", utteranceId=fake, event=x\n'
+            'V/talkback(   20): SpeechControllerImpl: Speaking fragment text="真实", '
+            "utteranceId=real, TtsSpan=null, locale=zh_CN, event=x\n"
+        )
+        self.assertEqual(["真实"], speech_fragments(log))
+
+    def test_padded_brief_readiness_is_recognized_and_mimics_are_not(self) -> None:
+        # AOSP brief pads `ULA11Y` to 8 columns and the pid to 5: `I/ULA11Y  (   42): ...`.
+        self.assertTrue(probe_service_connected("I/ULA11Y  (   42): service connected\n"))
+        self.assertFalse(probe_service_connected("I/OtherTag(   42): service connected\n"))
+        self.assertFalse(
+            probe_service_connected(
+                "I/OtherTag(   42): I/ULA11Y  (   42): service connected\n"
+            )
+        )
+        self.assertFalse(
+            probe_service_connected("trailing I/ULA11Y  (   42): service connected\n")
+        )
+        # Structural padding is horizontal; it must never bridge a line break.
+        self.assertFalse(probe_service_connected("I/ULA11Y\n(   42): service connected\n"))
+
+    def test_structural_padding_never_bridges_a_line_break(self) -> None:
+        self.assertEqual(
+            [],
+            speech_fragments(
+                "V/talkback(   20):\n"
+                "SpeechControllerImpl: Speaking fragment text=joined, utteranceId=1\n"
+            ),
+        )
+        self.assertEqual(
+            [],
+            speech_fragments(
+                "V/talkback\n(   20): SpeechControllerImpl: "
+                "Speaking fragment text=joined, utteranceId=1\n"
+            ),
+        )
+
+    def test_a_mid_message_probe_line_is_not_a_probe_command(self) -> None:
+        encoded = base64.b64encode(b"target").decode("ascii")
+        mimic = (
+            'I/OtherTag(   10): I/ULA11Y  (   10): command action=focus id=1 '
+            f'needle64={encoded} target="target"\n'
+        )
+        window, problem = isolate_talkback_window(mimic, 1)
+        self.assertEqual([], window)
+        self.assertIn("never began", problem)
+
+    @staticmethod
+    def _dialog_sampler(
+        evidence: Path, frames: list[str], *, guard: bool = True
+    ) -> Sampler:
+        class _DialogSampler(Sampler):
+            def __init__(self) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.frames = list(frames)
+                self.commands: list[tuple[str, ...]] = []
+                self.dump_stems: list[str] = []
+                self.notification_dialog_guard = guard
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                self.commands.append(args)
+                return ""
+
+            def dump(self, stem: str) -> str:
+                self.dump_stems.append(stem)
+                return self.frames.pop(0) if len(self.frames) > 1 else self.frames[0]
+
+        return _DialogSampler()
+
+    def test_the_accessibility_suite_notification_prompt_is_denied(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._dialog_sampler(
+                evidence, [_PERMISSION_DIALOG, _DIALOG_DISMISSED]
+            )
+            self.assertTrue(sampler.handle_notification_permission_dialog())
+            self.assertIn(("shell", "input", "tap", "800", "1400"), sampler.commands)
+            self.assertEqual(
+                ["permission-dialog", "permission-dialog-after"], sampler.dump_stems
+            )
+            self.assertTrue((evidence / "notification-dialog.txt").is_file())
+
+    def test_a_different_permission_or_app_dialog_is_not_touched(self) -> None:
+        import tempfile
+
+        other_owner = _PERMISSION_DIALOG.replace(
+            "com.android.permissioncontroller", "com.example.othercontroller"
+        )
+        other_message = _PERMISSION_DIALOG.replace(
+            "Allow Android Accessibility Suite to send you notifications?",
+            "Allow Example to access photos?",
+        )
+        for foreign in (other_owner, other_message):
+            with tempfile.TemporaryDirectory() as temp:
+                sampler = self._dialog_sampler(Path(temp), [foreign])
+                self.assertFalse(sampler.handle_notification_permission_dialog())
+                self.assertFalse(
+                    any(
+                        command[:3] == ("shell", "input", "tap")
+                        for command in sampler.commands
+                    )
+                )
+
+    def test_a_prompt_that_survives_the_deny_is_reported(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._dialog_sampler(
+                Path(temp), [_PERMISSION_DIALOG, _PERMISSION_DIALOG]
+            )
+            with self.assertRaises(SampleError):
+                sampler.handle_notification_permission_dialog()
+
+    def test_the_prompt_is_only_handled_with_the_p806_guard(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._dialog_sampler(
+                Path(temp), [_PERMISSION_DIALOG], guard=False
+            )
+            self.assertFalse(sampler.handle_notification_permission_dialog())
+            self.assertEqual([], sampler.dump_stems)
+
+    def test_the_real_rendered_prompt_tree_is_recognized_by_its_ids(self) -> None:
+        # The device renders package="com.google.android.permissioncontroller" with
+        # com.android.permissioncontroller ids; the ids, not the package attribute, decide.
+        self.assertTrue(notification_permission_dialog_identity(_PERMISSION_DIALOG_REAL))
+        self.assertFalse(
+            notification_permission_dialog_identity(
+                _PERMISSION_DIALOG_REAL.replace(
+                    "com.android.permissioncontroller:id/permission_message",
+                    "com.example.other:id/permission_message",
+                )
+            )
+        )
+
+    def test_the_prompt_is_denied_before_the_first_swipe(self) -> None:
+        import tempfile
+
+        app_without = (
+            '<hierarchy rotation="0"><node bounds="[0,0][1080,2400]" text="首页" '
+            'content-desc="" /></hierarchy>'
+        )
+        app_with = (
+            '<hierarchy rotation="0"><node bounds="[0,100][1080,200]" text="日均按该期间" '
+            'content-desc="" /></hierarchy>'
+        )
+
+        class _ScrollSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.frames = [
+                    _PERMISSION_DIALOG,
+                    _DIALOG_DISMISSED,
+                    app_without,
+                    app_without,
+                    app_with,
+                ]
+                self.commands: list[tuple[str, ...]] = []
+                self.notification_dialog_guard = True
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                self.commands.append(args)
+                return ""
+
+            def dump(self, stem: str) -> str:
+                return self.frames.pop(0) if len(self.frames) > 1 else self.frames[0]
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _ScrollSampler(Path(temp))
+            self.assertEqual(app_with, sampler.scroll_to("日均按该期间"))
+            kinds = [command[:3] for command in sampler.commands]
+            swipe = next(i for i, kind in enumerate(kinds) if kind == ("shell", "input", "swipe"))
+            tap = next(i for i, kind in enumerate(kinds) if kind == ("shell", "input", "tap"))
+            self.assertLess(tap, swipe)
+
+    def test_the_bind_wait_clears_the_prompt_right_after_the_service_starts(self) -> None:
+        import tempfile
+
+        class _EnableSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.talkback_component = (
+                    "com.google.android.marvin.talkback/.TalkBackService"
+                )
+                self.calls: list[str] = []
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                if args[:3] == ("shell", "settings", "get"):
+                    return (
+                        "com.unifiedledger.android.test/"
+                        "com.unifiedledger.android.A11yFocusProbeService:"
+                        f"{self.talkback_component}\n"
+                    )
+                return ""
+
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                return "I/ULA11Y  (   42): service connected\n"
+
+            def accessibility_dumpsys(self) -> str:
+                return (
+                    "Bound services:\n"
+                    "  Service[label=TalkBack, package=com.google.android.marvin.talkback]\n"
+                )
+
+            def handle_notification_permission_dialog(self) -> bool:
+                self.calls.append("dialog")
+                return False
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _EnableSampler(Path(temp))
+            self.assertEqual("success", sampler.enable_talkback("report")["status"])
+            self.assertGreaterEqual(len(sampler.calls), 1)
+
+    def test_the_speech_leg_clears_the_prompt_before_its_first_focus(self) -> None:
+        import tempfile
+
+        class _SpeechSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.calls: list[str] = []
+
+            def handle_notification_permission_dialog(self) -> bool:
+                self.calls.append("dialog")
+                return False
+
+            def enable_talkback(self, stem: str) -> dict[str, object]:
+                self.calls.append("enable")
+                return {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": "f",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+
+            def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+                self.calls.append(f"focus:{target}")
+                lines = P806Profile._window(
+                    ["结余 -17.34 CNY"],
+                    command_id=command_id,
+                    target=target,
+                    needle=target,
+                    node_text=target,
+                ).splitlines()
+                return {
+                    "id": command_id,
+                    "target": target,
+                    "completed": True,
+                    "accepted": True,
+                    "problem": "",
+                    "lines": lines,
+                }
+
+            def disable_talkback_accessibility(self) -> None:
+                pass
+
+            def wait_accessibility_disabled(self) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _SpeechSampler(Path(temp))
+            screen = Screen(
+                "report",
+                (),
+                "结余",
+                speech=(SpeechCheck("结余 -17.34 CNY", ("-17.34 CNY",)),),
+            )
+            record = sampler.p806_talkback_screen(screen)
+            self.assertEqual("success", record["status"])
+            self.assertEqual("enable", sampler.calls[0])
+            self.assertEqual("dialog", sampler.calls[1])
+            self.assertTrue(sampler.calls[2].startswith("focus:"))
+
+    def test_readiness_needs_the_probe_acknowledgement_not_a_bound_listing(self) -> None:
+        import tempfile
+
+        class _ReadinessSampler(Sampler):
+            def __init__(self, evidence: Path, log_text: str) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.log_text = log_text
+
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                return self.log_text
+
+            def accessibility_dumpsys(self) -> str:
+                return (
+                    "Bound services:\n"
+                    "  Service[label=UL a11y probe, "
+                    "package=com.unifiedledger.android.test]\n"
+                )
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # A bound-service line naming the package is not the probe's acknowledgement.
+            silent = _ReadinessSampler(evidence, "I/OtherTag(   42): service connected\n")
+            self.assertFalse(silent.wait_probe_connected(timeout_s=0.01))
+            self.assertIn(
+                "UL a11y probe",
+                (evidence / "readiness-accessibility.txt").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "service connected",
+                (evidence / "readiness-logcat.txt").read_text(encoding="utf-8"),
+            )
+            # The probe's own exact, real-format acknowledgement is what decides readiness.
+            ack = _ReadinessSampler(evidence, "I/ULA11Y  (   42): service connected\n")
+            self.assertTrue(ack.wait_probe_connected(timeout_s=0.01))
+
+    def test_a_window_is_isolated_by_its_command_id(self) -> None:
+        log = P806Profile._window(["first"], command_id=1) + P806Profile._window(
+            ["second"], command_id=2
+        )
+        window, problem = isolate_talkback_window(log, 2)
+        self.assertEqual("", problem)
+        self.assertTrue(any("command action=focus id=2" in line for line in window))
+        self.assertTrue(any("target id=2 found=true" in line for line in window))
+        self.assertTrue(any("id=2" in line for line in window))
+        self.assertEqual(["second"], speech_fragments("\n".join(window)))
+        self.assertNotIn("first", "\n".join(window))
+
+    def test_a_missing_duplicated_or_interleaved_window_is_rejected(self) -> None:
+        first = P806Profile._window(["first"], command_id=1)
+        second = P806Profile._window(["second"], command_id=2)
+        self.assertIn("never began", isolate_talkback_window(first, 2)[1])
+        unclosed = "\n".join(
+            line for line in first.splitlines() if "speech-window-end" not in line
+        )
+        self.assertIn("never ended", isolate_talkback_window(unclosed, 1)[1])
+        self.assertIn(
+            "began more than one window",
+            isolate_talkback_window(unclosed + "\n" + first, 1)[1],
+        )
+        # The next command's begin/end while this window is still open is an interleaving.
+        interleaved = unclosed + "\n" + second
+        self.assertIn(
+            "interleaves another command", isolate_talkback_window(interleaved, 1)[1]
+        )
+        # The interleaved command is still isolated to its own window.
+        window, problem = isolate_talkback_window(interleaved, 2)
+        self.assertEqual("", problem)
+        self.assertEqual(["second"], speech_fragments("\n".join(window)))
+
+    def test_the_four_verdicts(self) -> None:
+        required = ("-12.34 CNY", "-5.00 CNY")
+        self.assertEqual(
+            "not-obtained",
+            talkback_check_verdict(
+                P806Profile._window([], accepted=False), 1, "target", required
+            )[0],
+        )
+        self.assertEqual(
+            "fragments-missing",
+            talkback_check_verdict(P806Profile._window([]), 1, "target", required)[0],
+        )
+        self.assertEqual(
+            "amount-wrong",
+            talkback_check_verdict(
+                P806Profile._window(["-12.34", "CNY"]), 1, "target", required
+            )[0],
+        )
+        status, fragments, missing, _reason = talkback_check_verdict(
+            P806Profile._window(["-12.34", "CNY", "-5.00", "CNY"]), 1, "target", required
+        )
+        self.assertEqual("success", status)
+        self.assertEqual([], missing)
+        self.assertEqual(["-12.34", "CNY", "-5.00", "CNY"], fragments)
+        self.assertEqual("未取得", talkback_status_label("not-obtained"))
+        self.assertEqual("片段缺失", talkback_status_label("fragments-missing"))
+        self.assertEqual("金额错误", talkback_status_label("amount-wrong"))
+        self.assertEqual("成功", talkback_status_label("success"))
+
+    def test_a_window_whose_raw_command_names_another_target_is_rejected(self) -> None:
+        required = ("-5.00 CNY",)
+        log = P806Profile._window(["-5.00 CNY"], target="target", needle="-12.34 CNY")
+        status, _fragments, _missing, reason = talkback_check_verdict(log, 1, "target", required)
+        self.assertEqual("not-obtained", status)
+        self.assertIn("-12.34 CNY", reason)
+        self.assertIn("not the required target", reason)
+
+    def test_a_found_node_whose_own_text_lacks_the_target_is_rejected(self) -> None:
+        log = P806Profile._window(
+            ["-5.00 CNY"], target="target", node_text="-12.34 CNY", node_desc="other"
+        )
+        status, _fragments, _missing, reason = talkback_check_verdict(
+            log, 1, "target", ("-5.00 CNY",)
+        )
+        self.assertEqual("not-obtained", status)
+        self.assertIn("found-node record", reason)
+
+    def test_speech_only_before_the_window_begin_does_not_count(self) -> None:
+        log = P806Profile._window([], target="target", pre_begin=["-5.00 CNY"])
+        status, fragments, _missing, _reason = talkback_check_verdict(
+            log, 1, "target", ("-5.00 CNY",)
+        )
+        self.assertEqual("fragments-missing", status)
+        self.assertEqual([], fragments)
+
+    def test_a_required_number_must_match_on_its_own_boundary(self) -> None:
+        # `5.00` inside `15.00`, `-5.00` inside `-15.00` or `-5.001`, and `0.00` inside `10.00`
+        # are not the spoken amount.
+        for spoken in (["-15.00 CNY"], ["-5.001 CNY"], ["结余", "-17.34", "CNY"]):
+            log = P806Profile._window(spoken)
+            self.assertNotEqual(
+                "success", talkback_check_verdict(log, 1, "target", ("-5.00 CNY",))[0], spoken
+            )
+        self.assertEqual(
+            "success",
+            talkback_check_verdict(
+                P806Profile._window(["-15.00", "-5.00 CNY"]), 1, "target", ("-5.00 CNY",)
+            )[0],
+        )
+        # Whitespace is layout, not meaning: `-5.00 CNY` spoken as two fragments still matches.
+        self.assertEqual(
+            "success",
+            talkback_check_verdict(
+                P806Profile._window(["-5.00", "CNY"]), 1, "target", ("-5.00 CNY",)
+            )[0],
+        )
+
+    def test_the_overall_status_names_the_first_non_success_check(self) -> None:
+        self.assertEqual("success", overall_speech_status(["success", "success"]))
+        self.assertEqual(
+            "amount-wrong", overall_speech_status(["success", "amount-wrong", "not-obtained"])
+        )
+        self.assertEqual("not-obtained", overall_speech_status(["not-obtained", "amount-wrong"]))
+
+    def test_the_level_row_is_found_by_its_literal_summary(self) -> None:
+        tree = """<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0"><node bounds="[0,0][1080,2400]">
+  <node bounds="[0,600][1080,760]" text="Log output level" content-desc=""
+        resource-id="com.google.android.marvin.talkback:id/title" />
+  <node bounds="[0,760][1080,840]" text="ERROR" content-desc=""
+        resource-id="com.google.android.marvin.talkback:id/summary" />
+  <node bounds="[0,900][1080,1000]" text="VERBOSE" content-desc="" />
+  <node bounds="[0,1800][540,1900]" text="OK" content-desc="" resource-id="android:id/button1" />
+</node></hierarchy>"""
+        self.assertEqual("ERROR", talkback_level_summary_value(tree))
+        self.assertEqual((540, 800), find_talkback_level_summary(tree))
+        self.assertEqual((270, 1850), find_resource_center(tree, "android:id/button1"))
+        self.assertIsNone(find_resource_center(tree, "android:id/button2"))
 
 
 if __name__ == "__main__":

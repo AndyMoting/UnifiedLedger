@@ -20,13 +20,16 @@ sample; the device legs run here against a hosted AVD at the requested `system f
   is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
   its confirmation page at the requested scale;
 - `profile=p806` (the P8-06 batch 6 V-12 leg): an independent anonymous seed of two fixed expenses
-  on one clock-relative day, driving the ANALYSIS report region, the calendar day cell and that
-  day's drilldown rows at the requested scale. Its month/day/amount markers are re-derived from
-  the seed database by both the driver and the gate, never trusted from host.json alone; the
-  report's resolved month line and the absence of the previous-payload caption are required, and
-  a seed from another reporting month fails before any capture. The same run records the image's
-  TalkBack capability for information only; spoken output stays PENDING evidence, because a
-  semantic dump or a focus callback is not a recording of TalkBack's speech.
+  on one clock-relative day, driving the ANALYSIS report region (plus a second scrolled frame that
+  shows the natural-day statement in full), the calendar day cell and that day's drilldown rows at
+  the requested scale. Its month/day/amount markers are re-derived from the seed database by both
+  the driver and the gate, never trusted from host.json alone; the report's resolved month line and
+  the absence of the previous-payload caption are required, and a seed from another reporting month
+  fails before any capture. The same run then drives REAL TalkBack on the image's own package
+  (D-292): the androidTest focus probe moves accessibility focus to each screen's target, TalkBack's
+  VERBOSE `SpeechControllerImpl` utterance log is captured inside that target's time window, and
+  both the driver and the gate classify each screen as not-obtained / fragments-missing /
+  amount-wrong / success. A semantic dump or a focus callback alone is never read as speech.
 
 This rig is NOT a PR gate and never runs on a pull request: dispatch it against a commit that is
 already on a branch, and read the artifact.
@@ -47,6 +50,7 @@ cheap, it does not replace it.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -166,11 +170,55 @@ P806_REPORT_COUNT_LABEL = "普通收支笔数："
 P806_REPORT_LAST_SUCCESS_CAPTION = "以下为最近一次成功载荷（旧数据）："
 P806_CALENDAR_TITLE = "收支日历"
 P806_DRILLDOWN_TITLE = "报表明细"
+P806_REPORT_BALANCE_LABEL = "结余"
+
 # The D-292 behavioural evidence: real TalkBack emits this VERBOSE log line with the spoken
-# fragment text. This rig records it, never asserts it; only TalkBack's own line can satisfy the
-# speech limb.
-P806_TALKBACK_LOG_SIGNAL = "talkback: SpeechControllerImpl: Speaking fragment text="
+# fragment text. Only TalkBack's own line can satisfy the speech limb; the focus probe supplies the
+# target and the time window, never the utterance. This is the `-v brief` shape the run reads
+# (`adb logcat -d -v brief`) with BOTH pids elided: the `pid` right after the tag is the logging
+# process's own pid (the padded `(   20):` column), and the one on `SpeechControllerImpl` is the
+# controller's. Both change per run, so the recorded signal names the columns that
+# `_TALKBACK_FRAGMENT` anchors to instead of one run's numbers.
+P806_TALKBACK_LOG_SIGNAL = "V/talkback(pid): SpeechControllerImpl(pid): Speaking fragment text="
 P806_TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
+# The API 33+ POST_NOTIFICATIONS prompt Android Accessibility Suite raises on this AVD is a
+# permissioncontroller grant dialog. The exact package-scoped resource ids and the exact message
+# are both required, so no other app's or permission's dialog is ever touched.
+P806_PERMISSION_CONTROLLER_PACKAGE = "com.android.permissioncontroller"
+P806_NOTIFICATION_PROMPT_MESSAGE = "Allow Android Accessibility Suite to send you notifications?"
+# The exported developer-settings entry point verified in google/talkback source: the preferences
+# activity reads a `FragmentName` extra and instantiates that fragment inside the TalkBack process,
+# so the LogUtils level it sets is the one the service uses.
+P806_TALKBACK_PREFS_ACTIVITY = (
+    "com.google.android.marvin.talkback/com.android.talkback.TalkBackPreferencesActivity"
+)
+P806_TALKBACK_DEVELOPER_FRAGMENT = (
+    "com.google.android.accessibility.talkback.preference.base.DeveloperPrefFragment"
+)
+# The list entries are literal, non-translated strings (`pref_log_level_entries` in
+# donottranslate.xml), so the row can be addressed by the installed app's own rendered value rather
+# than by a locale-dependent title.
+P806_TALKBACK_LEVEL_NAMES = ("NONE", "ASSERT", "ERROR", "WARN", "INFO", "DEBUG", "VERBOSE")
+P806_TALKBACK_LEVEL = "VERBOSE"
+# The test-only probe that moves accessibility focus (D-292). It lives in the androidTest APK; the
+# settings component string is the platform's flattened form of that manifest entry.
+P806_PROBE_PACKAGE = "com.unifiedledger.android.test"
+P806_PROBE_COMPONENT = (
+    "com.unifiedledger.android.test/com.unifiedledger.android.A11yFocusProbeService"
+)
+SETTING_A11Y_COMMAND = "ul_a11y_command"
+SETTING_A11Y_PREFIX = "ul_a11y_prefix"
+SETTING_A11Y_LIMIT = "ul_a11y_limit"
+SETTING_A11Y_CLICK = "ul_a11y_click"
+# The auto pass must not move focus while a host-commanded window is open: this prefix matches no
+# node (the probe compares with startsWith) and a zero limit caps the pass anyway.
+P806_TALKBACK_AUTO_SENTINEL = "__ul_p806_speech_window__"
+TALKBACK_STATUS_LABELS = {
+    "not-obtained": "未取得",
+    "fragments-missing": "片段缺失",
+    "amount-wrong": "金额错误",
+    "success": "成功",
+}
 
 MIN_SCREENSHOT_BYTES = 20_000
 DEFAULT_TIMEOUT = 60
@@ -463,6 +511,413 @@ def required_problems(xml_text: str, required: tuple[str, ...]) -> list[str]:
     return [f"required string {needle!r} is absent" for needle in required if not dump_contains(xml_text, needle)]
 
 
+def viewport_problems(xml_text: str, marker: str) -> list[str]:
+    """The marker node's whole rect must sit inside the dump's window bounds.
+
+    `marker_problems` proves the string is in the tree, which a scrollable screen keeps true for
+    off-screen children; the supplemental report frame must show the natural-day statement IN
+    FULL, so its node may not be clipped by the viewport edge either.
+    """
+    nodes = _nodes(xml_text)
+    if not nodes:
+        return ["the accessibility dump has no window node to compare against"]
+    window = _rect(nodes[0])
+    matches: list[ET.Element] = []
+    for node in nodes:
+        text = node.get("text") or ""
+        description = node.get("content-desc") or ""
+        if text == marker or description == marker:
+            matches.insert(0, node)
+        elif marker in text or marker in description:
+            matches.append(node)
+    if not matches:
+        return [f"marker {marker!r} is absent"]
+    rect = _rect(matches[0])
+    if rect[0] >= window[0] and rect[1] >= window[1] and rect[2] <= window[2] and rect[3] <= window[3]:
+        return []
+    return [f"marker {marker!r} is clipped by the window bounds {window!r} (node {rect!r})"]
+
+
+# AOSP `liblog/logprint.cpp` FORMAT_BRIEF is `%c/%-8.*s(%s%5d): `: the tag is left-justified and
+# padded with ASCII spaces to 8 columns, then `(`, the pid right-justified to 5, and `): `. An
+# 8-column tag such as `talkback` carries no padding; a shorter one does, e.g. the probe's own
+# `I/ULA11Y  (   42): service connected`. Both recognizers anchor to that outer priority/tag
+# column and take only horizontal padding ([ \t]) at the structural separators, so padding never
+# bridges a line break; a different tag whose message merely quotes a real-looking line, at the
+# start of the line or mid-message, is not attributable to the probe or to TalkBack. TalkBack's
+# utterance names its speaker in the message: the P7 raw row renders
+# `V talkback: SpeechControllerImpl: Speaking fragment text=…`, and the device's seen form adds the
+# controller pid, `V/talkback(   20): SpeechControllerImpl( 20): Speaking fragment text=…`. The
+# spoken text is wrapped in ASCII quotes (`String.format("\"%s\"", …)`), and the quotes are
+# stripped so a required value matches the words the device actually spoke.
+_ULA11Y_LINE = re.compile(r"^[VDIWEF]/ULA11Y[ \t]*\([ \t]*\d+\):[ \t]*(.*)", re.MULTILINE)
+_TALKBACK_FRAGMENT = re.compile(
+    r"^[VDIWEF]/talkback[ \t]*\([ \t]*\d+\):[ \t]*SpeechControllerImpl(?:\([ \t]*\d+\))?:"
+    r"[ \t]*Speaking fragment text=(.*?), utteranceId=",
+    re.MULTILINE,
+)
+_COMMAND_NEEDLE64 = re.compile(r"\bneedle64=([A-Za-z0-9+/=]+)")
+
+
+def notification_permission_dialog_identity(tree: str) -> bool:
+    """True iff `tree` is the exact Accessibility Suite POST_NOTIFICATIONS grant dialog.
+
+    The permissioncontroller package-scoped ids and the exact prompt text must all be present; a
+    differently worded or differently owned permission dialog never matches.
+    """
+    dialog = False
+    message = False
+    for node in _nodes(tree):
+        resource_id = node.get("resource-id") or ""
+        if resource_id == f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/grant_dialog":
+            dialog = True
+        elif (
+            resource_id == f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/permission_message"
+            and (node.get("text") or "").strip() == P806_NOTIFICATION_PROMPT_MESSAGE
+        ):
+            message = True
+    return dialog and message
+
+
+def find_resource_center(xml_text: str, resource_id: str) -> tuple[int, int] | None:
+    """Centre of the first node whose `resource-id` equals `resource_id`."""
+    for node in _nodes(xml_text):
+        if node.get("resource-id") == resource_id:
+            return screen_center(node.get("bounds") or "")
+    return None
+
+
+def find_talkback_level_summary(xml_text: str) -> tuple[int, int] | None:
+    """Centre of the TalkBack developer screen's Log output level row.
+
+    The row is the preference whose summary currently renders one of the literal level names; the
+    title is localized, the summary value is not.
+    """
+    nodes = _nodes(xml_text)
+    summaries = [
+        node
+        for node in nodes
+        if (node.get("resource-id") or "").endswith(":id/summary")
+        and (node.get("text") or "").strip() in P806_TALKBACK_LEVEL_NAMES
+    ]
+    for node in summaries or nodes:
+        if (node.get("text") or "").strip() in P806_TALKBACK_LEVEL_NAMES:
+            return screen_center(node.get("bounds") or "")
+    return None
+
+
+def talkback_level_summary_value(xml_text: str) -> str | None:
+    """The rendered Log output level summary, when the developer screen exposes one."""
+    for node in _nodes(xml_text):
+        if not (node.get("resource-id") or "").endswith(":id/summary"):
+            continue
+        text = (node.get("text") or "").strip()
+        if text in P806_TALKBACK_LEVEL_NAMES:
+            return text
+    return None
+
+
+def speech_fragments(log_text: str) -> list[str]:
+    """Every TalkBack utterance fragment in `log_text`, in log order, unquoted and verbatim.
+
+    `SpeechControllerImpl` logs a silenced fragment as the literal `text=null` (unquoted); that is
+    no utterance at all, so it never counts as a spoken fragment.
+    """
+    fragments = []
+    for match in _TALKBACK_FRAGMENT.finditer(log_text):
+        text = match.group(1)
+        if text == "null":
+            continue
+        if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+            text = text[1:-1]
+        fragments.append(text)
+    return fragments
+
+
+def _normalized_speech(text: str) -> str:
+    """Speech matching ignores layout whitespace, never characters or order."""
+    return re.sub(r"\s+", "", text)
+
+
+def _speech_contains(spoken: str, needle: str) -> bool:
+    """`needle` occurs in the normalized `spoken` on a number boundary.
+
+    Fragment joining removes spaces, so a bare substring test would let `5.00` match inside
+    `15.00` or `5.001`. A match is accepted only when neither edge of the matched range is a digit
+    or decimal point continuing a number the needle's own digit edge would then split.
+    """
+    target = _normalized_speech(needle)
+    if not target:
+        return False
+    start = 0
+    while True:
+        index = spoken.find(target, start)
+        if index < 0:
+            return False
+        before = spoken[index - 1] if index > 0 else ""
+        after_index = index + len(target)
+        after = spoken[after_index] if after_index < len(spoken) else ""
+        before_conflict = (
+            (target[0].isdigit() or target[0] == ".")
+            and bool(before)
+            and (before.isdigit() or before == ".")
+        )
+        after_conflict = (
+            (target[-1].isdigit() or target[-1] == ".")
+            and bool(after)
+            and (after.isdigit() or after == ".")
+        )
+        if not before_conflict and not after_conflict:
+            return True
+        start = index + 1
+
+
+def _ula11y_tokens(line: str) -> set[str] | None:
+    match = _ULA11Y_LINE.search(line)
+    return None if match is None else set(match.group(1).split())
+
+
+def probe_service_connected(log_text: str) -> bool:
+    """True iff the probe's own outer line records `service connected`.
+
+    Uses the same anchored brief-column recognizer as the command window, so padded tag/pid and a
+    foreign tag or a mid-message mimic are classified identically in both places.
+    """
+    for line in log_text.splitlines():
+        match = _ULA11Y_LINE.search(line)
+        if match is not None and match.group(1).strip() == "service connected":
+            return True
+    return False
+
+
+def _ula11y_event(line: str) -> tuple[str, str] | None:
+    """`(kind, command id)` for one probe control line, else None.
+
+    The kinds are the ordered probe stages: `command` (the host's request with its lossless
+    `needle64` target), `target` (the node search result), `begin`, `focus-result` and `end`.
+    """
+    tokens = _ula11y_tokens(line)
+    if tokens is None:
+        return None
+    ids = [token[3:] for token in tokens if token.startswith("id=")]
+    if not ids:
+        return None
+    command_id = ids[0]
+    if "command" in tokens and "action=focus" in tokens:
+        return "command", command_id
+    if "target" in tokens:
+        return "target", command_id
+    if "speech-window-begin" in tokens:
+        return "begin", command_id
+    if "focus-result" in tokens:
+        return "focus-result", command_id
+    if "speech-window-end" in tokens:
+        return "end", command_id
+    return None
+
+
+def isolate_talkback_window(log_text: str, command_id: int) -> tuple[list[str], str]:
+    """One command's ordered raw window: `(lines, problem)`.
+
+    The window opens at the probe's own `command ... id=<command_id> needle64=...` line and must
+    then carry exactly one `target` result, one `speech-window-begin`, one `focus-result` and one
+    `speech-window-end`, all with the same id and in that order. No other command's control line
+    may sit inside the window. A missing or duplicated stage, an end without a begin, a reordered
+    stage, an unclosed window or an interleaved command is a problem: no stage or fragment from
+    another command may ever support this target.
+    """
+    marker = f"id={command_id}"
+    lines = log_text.splitlines()
+    events: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        event = _ula11y_event(line)
+        if event is not None:
+            events.append((index, event[0], event[1]))
+    own = [(index, kind) for index, kind, ident in events if ident == str(command_id)]
+    problem = ""
+    commands = [index for index, kind in own if kind == "command"]
+    if not commands:
+        return [], f"command {marker} never began a speech window"
+    if len(commands) > 1:
+        problem = f"command {marker} began more than one window"
+    start = commands[0]
+    stages: dict[str, list[int]] = {}
+    for index, kind in own:
+        if index >= start:
+            stages.setdefault(kind, []).append(index)
+    end = stages.get("end", [None])[0]
+    stop = end if isinstance(end, int) else len(lines)
+    for index, _kind, ident in events:
+        if start < index < stop and ident != str(command_id):
+            problem = problem or f"command {marker} interleaves another command's window"
+    expected_order = ("command", "target", "begin", "focus-result", "end")
+    previous_index = -1
+    for kind in expected_order:
+        indexes = stages.get(kind, [])
+        if not indexes:
+            if kind == "end":
+                problem = problem or f"command {marker}'s speech window never ended"
+                return lines[start:], problem
+            problem = problem or f"command {marker} carries no {kind} stage"
+            return lines[start:], problem
+        if len(indexes) > 1:
+            problem = problem or f"command {marker} records {kind} more than once"
+        if indexes[0] <= previous_index:
+            problem = problem or f"command {marker}'s {kind} stage is out of order"
+        previous_index = indexes[0]
+    if not isinstance(end, int):
+        return lines[start:], problem or f"command {marker}'s speech window never ended"
+    return lines[start : end + 1], problem
+
+
+def _window_command_target(window: list[str], command_id: int) -> tuple[str | None, str]:
+    """Re-decode the lossless target the probe's own command line carries."""
+    for line in window:
+        tokens = _ula11y_tokens(line)
+        if tokens is None or "command" not in tokens or "action=focus" not in tokens:
+            continue
+        if f"id={command_id}" not in tokens:
+            continue
+        match = _COMMAND_NEEDLE64.search(line)
+        if match is None:
+            return None, "the command line carries no lossless target identifier"
+        try:
+            return (
+                base64.b64decode(match.group(1), validate=True).decode("utf-8"),
+                "",
+            )
+        except (ValueError, UnicodeDecodeError):
+            return None, "the command line's target identifier is unreadable"
+    return None, "the isolated window carries no probe command"
+
+
+def _decode_node_field(line: str, name: str) -> str | None:
+    """One base64 text/description field of the found-node record, decoded losslessly."""
+    match = re.search(rf'\b{name}="([^"]*)"', line)
+    if match is None:
+        return None
+    try:
+        return base64.b64decode(match.group(1), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _window_node_found(window: list[str], command_id: int, target: str) -> bool:
+    """True iff the probe's found-node record for this id carries `target` in ITS text/description.
+
+    The record's human-readable fields are trimmed previews, so only the base64 text/description
+    count: a preview saying `text="target"` for every node cannot bind the expected target.
+    """
+    for line in window:
+        tokens = _ula11y_tokens(line)
+        if tokens is None or "target" not in tokens or f"id={command_id}" not in tokens:
+            continue
+        if "found=true" not in tokens:
+            continue
+        values = (_decode_node_field(line, "text64"), _decode_node_field(line, "desc64"))
+        return any(value is not None and target in value for value in values)
+    return False
+
+
+def _speech_window_lines(window: list[str], command_id: int) -> list[str]:
+    """Only the lines strictly between this command's begin and end stages.
+
+    Command and found-node lines stay in the isolated window for attribution, but their text is
+    never speech: a required amount present only before `speech-window-begin` (or a fragment after
+    `speech-window-end`) cannot satisfy the spoken requirement.
+    """
+    begin: int | None = None
+    for index, line in enumerate(window):
+        tokens = _ula11y_tokens(line)
+        if tokens is None or f"id={command_id}" not in tokens:
+            continue
+        if "speech-window-begin" in tokens:
+            begin = index
+            continue
+        if "speech-window-end" in tokens and begin is not None:
+            return window[begin + 1 : index]
+    return window[begin + 1 :] if begin is not None else []
+
+
+def _window_focus_accepted(window: list[str], command_id: int) -> bool:
+    accepted = False
+    rejected = False
+    for line in window:
+        tokens = _ula11y_tokens(line)
+        if tokens is None or "focus-result" not in tokens or f"id={command_id}" not in tokens:
+            continue
+        accepted = accepted or "accepted=true" in tokens
+        rejected = rejected or "accepted=false" in tokens
+    return accepted and not rejected
+
+
+def talkback_check_verdict(
+    log_text: str, command_id: int, target: str, required: tuple[str, ...]
+) -> tuple[str, list[str], list[str], str]:
+    """Classify one command's window: `(status, fragments, missing, reason)`.
+
+    Every value is derived from THIS command's isolated raw window only. The window must carry the
+    probe's own command line and re-decode to `target`, record a found node whose own text or
+    description contains `target`, complete the ordered accepted/end stages, and contain every
+    required value in the fragments strictly between begin and end. `not-obtained` covers a
+    missing, malformed, relabelled, unfound or unaccepted window; `fragments-missing` means it
+    completed accepted but produced no TalkBack fragment; `amount-wrong` means it spoke, but a
+    required value is absent from ITS fragments (on a number boundary); `success` means all hold.
+    """
+    window, problem = isolate_talkback_window(log_text, command_id)
+    fragments = speech_fragments("\n".join(_speech_window_lines(window, command_id)))
+    spoken = _normalized_speech("".join(fragments))
+    missing = [needle for needle in required if not _speech_contains(spoken, needle)]
+    if problem:
+        return "not-obtained", fragments, missing, problem
+    focused_target, target_problem = _window_command_target(window, command_id)
+    if target_problem:
+        return "not-obtained", fragments, missing, target_problem
+    if focused_target != target:
+        return (
+            "not-obtained",
+            fragments,
+            missing,
+            f"the probe's raw command focused {focused_target!r}, not the required target {target!r}",
+        )
+    if not _window_node_found(window, command_id, target):
+        return (
+            "not-obtained",
+            fragments,
+            missing,
+            "the probe's found-node record does not carry the required target",
+        )
+    if not _window_focus_accepted(window, command_id):
+        return "not-obtained", fragments, missing, f"command id={command_id} has no accepted focus result"
+    if not fragments:
+        return (
+            "fragments-missing",
+            fragments,
+            missing,
+            "the accepted window produced no TalkBack fragment",
+        )
+    if missing:
+        return (
+            "amount-wrong",
+            fragments,
+            missing,
+            "required values are absent from this window's fragments",
+        )
+    return "success", fragments, missing, ""
+
+
+def overall_speech_status(statuses: list[str]) -> str:
+    """A screen succeeds only when every one of its ordered target windows succeeds."""
+    for status in statuses:
+        if status != "success":
+            return status
+    return "success"
+
+
+def talkback_status_label(status: str) -> str:
+    return TALKBACK_STATUS_LABELS.get(status, status)
+
+
 def sha256_file(path: Path) -> str:
     """The exact digest of a file's bytes (the seed a run pushed, re-read by a gate)."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -518,6 +973,9 @@ class ScrollStep:
 
     label: str
     max_swipes: int = 6
+    # Also require the label node's whole rect inside the window (the supplemental report frame
+    # must show the natural-day statement in full, not merely its centre).
+    fully: bool = False
 
 
 BACK = BackStep()
@@ -547,13 +1005,13 @@ def dismiss_ime() -> DismissImeStep:
     return DISMISS_IME
 
 
-def scroll_until(label: str, max_swipes: int = 6) -> ScrollStep:
+def scroll_until(label: str, max_swipes: int = 6, fully: bool = False) -> ScrollStep:
     """The step that swipes the content region until `label` is on screen."""
     if not label:
         raise SampleError("an empty scroll label would match every screen")
     if max_swipes <= 0:
         raise SampleError(f"scroll_until needs a positive swipe budget, got {max_swipes}")
-    return ScrollStep(label, max_swipes)
+    return ScrollStep(label, max_swipes, fully)
 
 
 def describe_step(step: Step) -> str:
@@ -567,8 +1025,17 @@ def describe_step(step: Step) -> str:
     if isinstance(step, DismissImeStep):
         return "dismiss ime"
     if isinstance(step, ScrollStep):
-        return f"scroll to {step.label!r} (max {step.max_swipes} swipes)"
+        suffix = ", fully visible" if step.fully else ""
+        return f"scroll to {step.label!r} (max {step.max_swipes} swipes{suffix})"
     return "back"
+
+
+@dataclass(frozen=True)
+class SpeechCheck:
+    """One accessibility-focus target and the exact values ITS OWN speech window must contain."""
+
+    target: str
+    required: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -585,6 +1052,14 @@ class Screen:
     # whose exact values only the seed can tell). The driver checks them before the capture and
     # the gate re-derives the same tuple from the seed, so neither trusts the other's word.
     required: tuple[str, ...] = ()
+    # The D-292 speech limb: each ordered check names its focus target (substring match on the
+    # node's text or content description) and the values TalkBack's fragments inside THAT target's
+    # accepted, completed window must contain. Empty on every non-p806 screen, which keeps those
+    # profiles on the screenshot-only path.
+    speech: tuple[SpeechCheck, ...] = ()
+    # Capture-time proof that the marker's WHOLE rect is inside the window, not merely that the
+    # string exists in a scrollable tree (the supplemental report frame needs this).
+    marker_in_viewport: bool = False
 
 
 @dataclass(frozen=True)
@@ -734,11 +1209,38 @@ class P806SeedFacts:
         last = next_first - timedelta(days=1)
         return f"月：{first.isoformat()} 至 {last.isoformat()}（{(last - first).days + 1} 天）"
 
+    def month_day_count(self) -> int:
+        year, month, _ = (int(part) for part in self.day_date.split("-"))
+        first = date(year, month, 1)
+        next_first = date(year + (month == 12), month % 12 + 1, 1)
+        return (next_first - first).days
+
+    def balance_amount_text(self) -> str:
+        """The exact signed 结余 value and currency (`-17.34 CNY`), as the report renders it."""
+        return f"{minor_text(self.income_minor - self.net_expense_minor, self.precision)} {self.currency}"
+
+    def balance_text(self) -> str:
+        return f"{P806_REPORT_BALANCE_LABEL} {self.balance_amount_text()}"
+
+    def daily_average_note_text(self) -> str:
+        """The natural-day statement the supplemental scrolled frame must show in full."""
+        return (
+            f"日均按该期间完整自然日数（{self.month_day_count()} 天）计算："
+            "进行中的期间不缩短分母。"
+        )
+
+    def day_expense_amount_text(self) -> str:
+        """The calendar cell's exact expense amount with its currency (`CNY 支出 17.34`)."""
+        return f"{self.currency} 支出 {minor_text(self.net_expense_minor, self.precision)}"
+
+    def day_income_amount_text(self) -> str:
+        """The calendar cell's exact income amount (`收入 0.00`; the currency precedes the pair)."""
+        return f"收入 {minor_text(self.income_minor, self.precision)}"
+
     def day_cell_text(self) -> str:
         return (
-            f"{self.day_date}，{self.currency} 支出 "
-            f"{minor_text(self.net_expense_minor, self.precision)}、收入 "
-            f"{minor_text(self.income_minor, self.precision)}；共 {self.day_count} 笔"
+            f"{self.day_date}，{self.day_expense_amount_text()}、"
+            f"{self.day_income_amount_text()}；共 {self.day_count} 笔"
         )
 
 
@@ -868,12 +1370,17 @@ def p806_rollover_problem(facts: P806SeedFacts, now: datetime | None = None) -> 
 
 
 def p806_screens(facts: P806SeedFacts) -> tuple[Screen, ...]:
-    """The `p806` profile's three V-12 screens, parameterized by the facts re-derived from the seed.
+    """The `p806` profile's V-12 screens, parameterized by the facts re-derived from the seed.
 
     Navigation is the production one: the ANALYSIS tab renders the report region; the HOME month
     row's 收支日历 button opens the calendar; tapping the seeded day's own cell opens the shared
     day drilldown. Each screen's `required` tuple is the exact signed amount and currency of the
     seed, so a zero, a failure face or a different day cannot pass.
+
+    The second frame is the report region scrolled to the natural-day statement: at 1.3x the
+    statement sits below the first frame's fold, and V-12 needs it readable, not merely present in
+    the tree. The speech tuple follows the same rule — the report speaks its signed 结余 and
+    currency, the calendar its own day and currency, and the drilldown BOTH signed payment rows.
     """
     report_required = (
         facts.report_period_text(),
@@ -882,6 +1389,7 @@ def p806_screens(facts: P806SeedFacts) -> tuple[Screen, ...]:
         f"{P806_REPORT_COUNT_LABEL}{facts.day_count}",
     )
     day_required = (facts.day_cell_text(),)
+    note_text = facts.daily_average_note_text()
     drilldown_count_text = f"共 {facts.day_count} 笔明细"
     drilldown_required = (
         P806_DRILLDOWN_TITLE,
@@ -900,6 +1408,17 @@ def p806_screens(facts: P806SeedFacts) -> tuple[Screen, ...]:
             P806_REPORT_TITLE,
             absent=("账本为空", P806_REPORT_LAST_SUCCESS_CAPTION),
             required=report_required,
+            # The report page also renders the HOME month card, whose line ends `结余 <value>` with
+            # no trailing currency. Targeting the report cell's full text (`结余 <signed> <code>`)
+            # lets the gate's found-node binding accept only that cell, never the same-named card.
+            speech=(SpeechCheck(facts.balance_text(), (facts.balance_amount_text(),)),),
+        ),
+        Screen(
+            "report-daily-average",
+            (ScrollStep(note_text, fully=True),),
+            note_text,
+            required=(note_text,),
+            marker_in_viewport=True,
         ),
         Screen(
             "calendar",
@@ -909,15 +1428,33 @@ def p806_screens(facts: P806SeedFacts) -> tuple[Screen, ...]:
             P806_CALENDAR_TITLE,
             absent=(P806_REPORT_TITLE, SEEDED_HOME_COUNT),
             required=day_required,
+            # The date alone would accept a cell whose amounts are wrong or missing; the same
+            # seed-derived expense/income pair the cell renders (with its currency) is required in
+            # this cell's own accepted focus window.
+            speech=(
+                SpeechCheck(
+                    facts.day_date + "，",
+                    (
+                        facts.day_date,
+                        facts.day_expense_amount_text(),
+                        facts.day_income_amount_text(),
+                    ),
+                ),
+            ),
         ),
         Screen(
             "day-detail",
-            (TapStep(facts.day_cell_text()),),
+            # The scroll precedes the tap because the calendar's speech pass may have moved the
+            # grid; the tap must address the cell's current reachable centre.
+            (ScrollStep(facts.day_cell_text()), TapStep(facts.day_cell_text())),
             # The loaded count, not the screen title: 报表明细 renders before the first page and
             # count land, so waiting on the count proves the rows the capture is for are present.
             drilldown_count_text,
             absent=(P806_CALENDAR_TITLE,),
             required=drilldown_required,
+            # One ordered check per payment row: each row's amount must be spoken inside its OWN
+            # command's accepted, completed window, never borrowed from the other row.
+            speech=tuple(SpeechCheck(text, (text,)) for text in facts.payment_texts),
         ),
     )
 
@@ -992,6 +1529,15 @@ class Sampler:
     avd_name: str
     screenshots: list[str] = field(default_factory=list)
     dumps: list[str] = field(default_factory=list)
+    # Monotonic id for the probe's host-command channel: every focus command needs a fresh value,
+    # because the probe executes only a value it has not already seen.
+    talkback_sequence: int = 0
+    # The image's own TalkBackService component (empty when the image does not ship one).
+    talkback_component: str = ""
+    # The image's exported preferences activity, discovered from its package dump.
+    talkback_prefs_activity: str = P806_TALKBACK_PREFS_ACTIVITY
+    # P806 only: dismiss the observed Accessibility Suite notification prompt when it appears.
+    notification_dialog_guard: bool = False
 
     def adb(self, *args: str, timeout: int = DEFAULT_TIMEOUT, best_effort: bool = False) -> str:
         command = ["adb"]
@@ -1030,45 +1576,501 @@ class Sampler:
                 f"device answers emu avd name {name!r}; this rig only drives {self.avd_name!r}"
             )
 
-    def p806_talkback_capability(self) -> dict[str, object]:
-        """Record the image's TalkBack capability WITHOUT enabling or driving it.
+    def logcat_tail(self, line_count: int = 4000) -> str:
+        """The recent logcat in `brief` form; the probe and TalkBack lines both fit that shape."""
+        return self.adb(
+            "shell", "logcat", "-d", "-v", "brief", "-t", str(line_count), best_effort=True
+        )
 
-        A semantic dump or a focus callback proves reachability, never speech (the D-292 matrix's
-        own correction). This probe therefore only records what the image ships and what a future
-        run would have to drive; the spoken output stays PENDING evidence, and the screenshot limbs
-        above it are already captured and unaffected. Enabling TalkBack here would also change the
-        touch semantics the screenshot navigation just used.
+    def accessibility_dumpsys(self) -> str:
+        return self.adb("shell", "dumpsys", "accessibility", best_effort=True)
+
+    def find_talkback_component(self) -> str:
+        """The image's own TalkBack accessibility service component, read from the package dump.
+
+        The class name is not guessed: the dump must mention the service, and a package that does
+        not ship it yields an empty answer (the caller records 未取得 instead of enabling a
+        non-existent component).
         """
+        dump = self.adb("shell", "dumpsys", "package", P806_TALKBACK_PACKAGE, best_effort=True)
+        full = f"{P806_TALKBACK_PACKAGE}.TalkBackService"
+        if full in dump:
+            return f"{P806_TALKBACK_PACKAGE}/{full}"
+        if f"{P806_TALKBACK_PACKAGE}/.TalkBackService" in dump:
+            return f"{P806_TALKBACK_PACKAGE}/.TalkBackService"
+        return ""
+
+    def find_talkback_prefs_activity(self) -> str:
+        """The image's exported preferences activity, read from the same package dump if named."""
+        dump = self.adb("shell", "dumpsys", "package", P806_TALKBACK_PACKAGE, best_effort=True)
+        for match in re.finditer(r"([A-Za-z0-9_.]+\.TalkBackPreferencesActivity)", dump):
+            return f"{P806_TALKBACK_PACKAGE}/{match.group(1)}"
+        return P806_TALKBACK_PREFS_ACTIVITY
+
+    def prepare_talkback_device(self) -> dict[str, str]:
+        """Put the run-owned AVD into a known accessibility state and return the prior one.
+
+        The emulator belongs to this run, and a crashed previous dispatch can leave either service
+        enabled; starting from "no accessibility services" keeps the screenshot navigation on the
+        ordinary touch semantics it was written for.
+        """
+        prior_services = self.adb(
+            "shell", "settings", "get", "secure", "enabled_accessibility_services", best_effort=True
+        ).strip()
+        prior_enabled = self.adb(
+            "shell", "settings", "get", "secure", "accessibility_enabled", best_effort=True
+        ).strip()
+        for key in (
+            SETTING_A11Y_COMMAND,
+            SETTING_A11Y_PREFIX,
+            SETTING_A11Y_LIMIT,
+            SETTING_A11Y_CLICK,
+        ):
+            self.adb("shell", "settings", "delete", "global", key, best_effort=True)
+        self.disable_talkback_accessibility()
+        return {
+            "enabled_accessibility_services": prior_services,
+            "accessibility_enabled": prior_enabled,
+        }
+
+    def disable_talkback_accessibility(self) -> None:
+        self.adb(
+            "shell",
+            "settings",
+            "delete",
+            "secure",
+            "enabled_accessibility_services",
+            best_effort=True,
+        )
+        self.adb(
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "accessibility_enabled",
+            "0",
+            best_effort=True,
+        )
+        time.sleep(2)
+
+    def _probe_connected(self, log_text: str) -> bool:
+        return probe_service_connected(log_text)
+
+    def _bound_accessibility_section(self, dump: str) -> str:
+        start = dump.find("Bound services:")
+        if start < 0:
+            return ""
+        end = dump.find("Enabled services:", start)
+        return dump[start : end if end > start else start + 6000]
+
+    def wait_probe_connected(self, timeout_s: int = 90) -> bool:
+        """Wait for the probe's own `service connected` acknowledgement.
+
+        Only that exact line decides readiness. An enabled-services entry is not proof of binding,
+        and API 36 renders bound services as `Service[label=…]` without a guaranteed component, so
+        the dumpsys is read alongside as raw context rather than accepted as connection. On a
+        not-obtained verdict the last logcat tail and dumpsys are retained for diagnosis.
+        """
+        deadline = time.monotonic() + timeout_s
+        last_log = ""
+        last_dump = ""
+        while time.monotonic() < deadline:
+            last_log = self.logcat_tail()
+            if self._probe_connected(last_log):
+                return True
+            last_dump = self.accessibility_dumpsys()
+            time.sleep(1)
+        (self.evidence / "readiness-logcat.txt").write_text(last_log + "\n", encoding="utf-8")
+        (self.evidence / "readiness-accessibility.txt").write_text(
+            last_dump + "\n", encoding="utf-8"
+        )
+        return False
+
+    def wait_accessibility_disabled(self, timeout_s: int = 30) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            bound = self._bound_accessibility_section(self.accessibility_dumpsys())
+            if not bound:
+                time.sleep(1)
+                continue
+            if P806_PROBE_PACKAGE not in bound and P806_TALKBACK_PACKAGE not in bound:
+                return True
+            time.sleep(1)
+        return False
+
+    def enable_talkback(self, stem: str) -> dict[str, object]:
+        """Enable probe plus TalkBack for one screen and keep ITS read-back raw record.
+
+        The secure services value is written to `talkback-enabled-<stem>.txt` (never one shared
+        file): the gate reads that screen's own device observation back and re-derives which
+        TalkBack component was enabled while its fragments were captured.
+        """
+        enabled_file = f"talkback-enabled-{stem}.txt"
+        if not self.talkback_component:
+            return {
+                "status": "not-obtained",
+                "enabled_services_file": enabled_file,
+                "reason": "the image exposes no TalkBackService component to enable",
+            }
+        # The automatic probe passes must never move focus inside a commanded speech window.
+        self.adb("shell", "settings", "put", "global", SETTING_A11Y_PREFIX, P806_TALKBACK_AUTO_SENTINEL)
+        self.adb("shell", "settings", "put", "global", SETTING_A11Y_LIMIT, "0")
+        self.adb("shell", "settings", "delete", "global", SETTING_A11Y_CLICK, best_effort=True)
+        # A stale command would run on connect; the host sets the first real one after "service
+        # connected", and every later command carries a fresh id.
+        self.adb("shell", "settings", "delete", "global", SETTING_A11Y_COMMAND, best_effort=True)
+        # A stale buffer could hold an earlier command id; a failed clear would make a collision
+        # possible, so it is a hard precondition rather than a best-effort convenience.
+        self.adb("shell", "logcat", "-c")
+        self.adb(
+            "shell",
+            "settings",
+            "put",
+            "secure",
+            "enabled_accessibility_services",
+            f"{P806_PROBE_COMPONENT}:{self.talkback_component}",
+        )
+        self.adb("shell", "settings", "put", "secure", "accessibility_enabled", "1")
+        # The put command reports only its own exit; the value Android actually holds is the
+        # evidence that the exact TalkBack component-the one whose fragments this run will
+        # accept-is enabled while sampling. A substituted or truncated component would otherwise
+        # leave speech attributed to a service the gate never verified.
+        enabled_raw = self.adb(
+            "shell",
+            "settings",
+            "get",
+            "secure",
+            "enabled_accessibility_services",
+            best_effort=True,
+        ).strip()
+        enabled_components = [
+            part.strip() for part in enabled_raw.split(":") if part.strip() and part.strip() != "null"
+        ]
+        (self.evidence / enabled_file).write_text(enabled_raw + "\n", encoding="utf-8")
+        if self.talkback_component not in enabled_components:
+            return {
+                "status": "not-obtained",
+                "enabled_components": enabled_components,
+                "enabled_services_file": enabled_file,
+                "reason": (
+                    "enabled_accessibility_services does not list the exact TalkBack component "
+                    f"{self.talkback_component}"
+                ),
+            }
+        if not self.wait_probe_connected():
+            return {
+                "status": "not-obtained",
+                "enabled_components": enabled_components,
+                "enabled_services_file": enabled_file,
+                "reason": "the focus probe never logged 'service connected'; no focus can be driven",
+            }
+        # Binding is not required for the probe to answer, but an unbound TalkBack service cannot
+        # speak; record it as context and let the fragment verdict report the consequence.
+        deadline = time.monotonic() + 45
+        bound = False
+        dump = ""
+        while time.monotonic() < deadline:
+            # Enabling TalkBack starts the service that raises its notification prompt. Dismiss it
+            # in these first seconds, before any focus command exists, or the probe's active window
+            # is the dialog and the command reports found=false.
+            self.handle_notification_permission_dialog()
+            dump = self.accessibility_dumpsys()
+            if P806_TALKBACK_PACKAGE in self._bound_accessibility_section(dump):
+                bound = True
+                break
+            time.sleep(1)
+        (self.evidence / "talkback-accessibility.txt").write_text(
+            self._bound_accessibility_section(dump) + "\n", encoding="utf-8"
+        )
+        return {
+            "status": "success",
+            "enabled_components": enabled_components,
+            "enabled_services_file": enabled_file,
+            "talkback_bound": bound,
+            "reason": "" if bound else "TalkBack was enabled but is not listed as a bound service",
+        }
+
+    def talkback_log_level_setup(self) -> dict[str, object]:
+        """Select TalkBack's own Log output level VERBOSE through its exported settings UI.
+
+        The persisted preference is application-private, so it is set the way the product exposes
+        it: open the developer fragment by its verified intent extra, tap the row whose SUMMARY is
+        one of the literal level names, choose VERBOSE from the list (literal entries), and confirm
+        the framework dialog's positive button. The final developer-screen dump proves the summary
+        now renders VERBOSE; no private file is copied and no preference key is typed.
+        """
+        record: dict[str, object] = {
+            "status": "not-obtained",
+            "value": "",
+            "reason": "",
+            "steps": [],
+        }
+        steps: list[str] = record["steps"]  # type: ignore[assignment]
+        started = False
+        try:
+            self.adb(
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-n",
+                self.talkback_prefs_activity,
+                "--es",
+                "FragmentName",
+                P806_TALKBACK_DEVELOPER_FRAGMENT,
+                timeout=120,
+            )
+            started = True
+            steps.append("open the exported developer preferences fragment")
+            tree = ""
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                tree = self.dump("talkback-prefs-before")
+                if find_talkback_level_summary(tree) is not None:
+                    break
+                time.sleep(3)
+            else:
+                # The developer list is long and the row may be below the 1.3x fold; scroll the
+                # preference list (not the app) until a level-name summary is composed.
+                for _attempt in range(6):
+                    x1, y1, x2, y2 = scroll_swipe_points(tree)
+                    self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
+                    time.sleep(2)
+                    tree = self.dump("talkback-prefs-before")
+                    if find_talkback_level_summary(tree) is not None:
+                        break
+                else:
+                    raise SampleError(
+                        "the developer preferences screen exposed no Log output level summary"
+                    )
+            current = talkback_level_summary_value(tree)
+            steps.append(f"rendered Log output level summary is {current!r}")
+            if current == P806_TALKBACK_LEVEL:
+                record.update(status="success", value=P806_TALKBACK_LEVEL, reason="already selected")
+                return record
+            center = find_talkback_level_summary(tree)
+            if center is None:
+                raise SampleError("the Log output level row has no tappable centre")
+            self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+            steps.append("open the level list")
+            time.sleep(2)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                tree = self.dump("talkback-prefs-dialog")
+                if find_center(tree, P806_TALKBACK_LEVEL) is not None:
+                    break
+                time.sleep(2)
+            else:
+                # At 1.3x the last entry can sit below the dialog's fold; the single-choice list
+                # itself scrolls, so swipe inside it before giving up.
+                for _attempt in range(4):
+                    x1, y1, x2, y2 = scroll_swipe_points(tree)
+                    self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
+                    time.sleep(2)
+                    tree = self.dump("talkback-prefs-dialog")
+                    if find_center(tree, P806_TALKBACK_LEVEL) is not None:
+                        break
+                else:
+                    raise SampleError("the level list never rendered a VERBOSE entry")
+            center = find_center(tree, P806_TALKBACK_LEVEL)
+            if center is None:
+                raise SampleError("the VERBOSE entry has no tappable centre")
+            self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+            steps.append("select the literal VERBOSE entry")
+            time.sleep(2)
+            # The list change raises a confirmation dialog; its positive button is the framework's
+            # `android:id/button1`, and the changed summary is the proof it persisted.
+            deadline = time.monotonic() + 20
+            confirmed = False
+            while time.monotonic() < deadline:
+                tree = self.dump("talkback-prefs-confirm")
+                button = find_resource_center(tree, "android:id/button1")
+                if button is not None:
+                    self.adb("shell", "input", "tap", str(button[0]), str(button[1]))
+                    confirmed = True
+                    steps.append("confirm the framework dialog's positive button")
+                    break
+                if talkback_level_summary_value(tree) == P806_TALKBACK_LEVEL:
+                    confirmed = True
+                    steps.append("the dialog closed with the level already applied")
+                    break
+                time.sleep(1)
+            if not confirmed:
+                raise SampleError("the level change showed no confirmation dialog and no new summary")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                tree = self.dump("talkback-prefs-after")
+                if talkback_level_summary_value(tree) == P806_TALKBACK_LEVEL:
+                    record.update(
+                        status="success", value=P806_TALKBACK_LEVEL, reason="summary shows VERBOSE"
+                    )
+                    return record
+                time.sleep(1)
+            raise SampleError("the developer screen's summary never rendered VERBOSE")
+        except SampleError as error:
+            record["reason"] = str(error)
+            return record
+        finally:
+            if started:
+                # Let the dialog's persisted preference reach disk, leave the settings activity,
+                # and drop the cached process so the accessibility service starts fresh and reads
+                # the level from preferences. `am kill` (not force-stop) keeps the package out of
+                # the stopped state the accessibility manager refuses to bind from.
+                time.sleep(3)
+                self.adb("shell", "input", "keyevent", "3", best_effort=True)
+                time.sleep(2)
+                self.adb("shell", "am", "kill", P806_TALKBACK_PACKAGE, best_effort=True)
+                time.sleep(1)
+
+    def p806_talkback_capability(self, log_level: dict[str, object]) -> dict[str, object]:
+        """Record the image's TalkBack capability and the route this run actually drives."""
         flavor = self.adb("shell", "getprop", "ro.build.flavor", best_effort=True).strip()
         product = self.adb("shell", "getprop", "ro.product.name", best_effort=True).strip()
         packages = self.adb("shell", "pm", "list", "packages", P806_TALKBACK_PACKAGE, best_effort=True)
         enabled = self.adb(
             "shell", "settings", "get", "secure", "enabled_accessibility_services", best_effort=True
         ).strip()
+        accessibility_enabled = self.adb(
+            "shell", "settings", "get", "secure", "accessibility_enabled", best_effort=True
+        ).strip()
         package_present = P806_TALKBACK_PACKAGE in packages
-        status = "package-present-not-driven" if package_present else "package-absent-on-image"
         capability: dict[str, object] = {
-            "status": status,
-            "speech": "pending-not-recorded",
+            "status": "package-present" if package_present else "package-absent-on-image",
             "package_present": package_present,
+            "device_service": self.talkback_component,
+            "prefs_activity": self.talkback_prefs_activity,
             "package_listing": packages.strip(),
-            "enabled_accessibility_services": enabled,
+            "enabled_accessibility_services_at_probe": enabled,
+            "accessibility_enabled_at_probe": accessibility_enabled,
             "build_flavor": flavor,
             "product_name": product,
             "log_signal": P806_TALKBACK_LOG_SIGNAL,
-            # The route a cloud dispatch would need: a real TalkBack install, its developer log
-            # output at VERBOSE, an accessibility-focus driver in the androidTest APK, and this
-            # exact log line per focused node. None of that is claimed by this run.
-            "reason": (
-                "informational only: the package listing says whether this image ships TalkBack, "
-                "but no speech was recorded. A semantic dump or focus callback proves reachability, "
-                "not spoken output; recording speech needs TalkBack enabled and its own "
-                "SpeechControllerImpl log line"
-            ),
+            "log_level": log_level,
+            "probe_component": P806_PROBE_COMPONENT,
         }
         lines = [f"{key}: {value}" for key, value in capability.items()]
         (self.evidence / "talkback-capability.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         return capability
+
+    def talkback_focus(self, needle: str, command_id: int) -> dict[str, object]:
+        """Ask the probe to focus the node containing `needle`; return ONLY that command's window."""
+        encoded = base64.b64encode(needle.encode("utf-8")).decode("ascii")
+        self.adb(
+            "shell",
+            "settings",
+            "put",
+            "global",
+            SETTING_A11Y_COMMAND,
+            f"focus,{command_id},{encoded}",
+        )
+        deadline = time.monotonic() + 75
+        log_text = ""
+        while time.monotonic() < deadline:
+            log_text = self.logcat_tail()
+            if (
+                f"speech-window-end id={command_id}" in log_text
+                or f"target id={command_id} found=false" in log_text
+            ):
+                break
+            time.sleep(1)
+        window, problem = isolate_talkback_window(log_text, command_id)
+        token_sets = [tokens for tokens in map(_ula11y_tokens, window) if tokens]
+        return {
+            "id": command_id,
+            "target": needle,
+            "completed": any(
+                "speech-window-end" in tokens and f"id={command_id}" in tokens
+                for tokens in token_sets
+            ),
+            "accepted": _window_focus_accepted(window, command_id),
+            "problem": problem,
+            "lines": window,
+        }
+
+    def p806_talkback_screen(self, screen: Screen) -> dict[str, object]:
+        """Drive one screen's ordered speech checks, each bound to its own command window."""
+        artifact_name = f"talkback-{screen.stem}.txt"
+        lines: list[str] = [f"# stem: {screen.stem}"]
+        enabled: dict[str, object] = {
+            "status": "not-obtained",
+            "reason": "",
+            "enabled_components": [],
+            "enabled_services_file": f"talkback-enabled-{screen.stem}.txt",
+        }
+        driven: list[tuple[SpeechCheck, dict[str, object] | None]] = []
+        try:
+            enabled = self.enable_talkback(screen.stem)
+            lines.append(
+                f"# enable: {enabled.get('status')} components={enabled.get('enabled_components')} "
+                f"bound={enabled.get('talkback_bound')} {enabled.get('reason', '')}".rstrip()
+            )
+            if enabled.get("status") != "success":
+                raise SampleError(str(enabled.get("reason") or "TalkBack could not be enabled"))
+            # The prompt can arrive after the bind wait (TalkBack asks once its process is up), so
+            # the last clear sits between enabling the service and the first focus command.
+            self.handle_notification_permission_dialog()
+            for check in screen.speech:
+                self.talkback_sequence += 1
+                command_id = self.talkback_sequence
+                window = self.talkback_focus(check.target, command_id)
+                driven.append((check, window))
+                lines.append(f"# target: {check.target}")
+                lines.append(f"# command: {command_id}")
+                lines.extend(str(line) for line in window["lines"])
+        except SampleError as error:
+            enabled = {
+                "status": "not-obtained",
+                "reason": str(error),
+                "enabled_components": list(enabled.get("enabled_components") or []),
+                "enabled_services_file": enabled.get(
+                    "enabled_services_file", f"talkback-enabled-{screen.stem}.txt"
+                ),
+                "talkback_bound": bool(enabled.get("talkback_bound")),
+            }
+            lines.append(f"# enable failed: {error}")
+        finally:
+            self.disable_talkback_accessibility()
+            self.wait_accessibility_disabled()
+        for check in screen.speech[len(driven) :]:
+            driven.append((check, None))
+        artifact = "\n".join(lines) + "\n"
+        (self.evidence / artifact_name).write_text(artifact, encoding="utf-8")
+        checks = []
+        for check, window in driven:
+            if window is None:
+                status, fragments, missing, reason = (
+                    "not-obtained",
+                    [],
+                    list(check.required),
+                    str(enabled.get("reason") or "the check produced no command window"),
+                )
+            else:
+                status, fragments, missing, reason = talkback_check_verdict(
+                    artifact, int(window["id"]), check.target, check.required
+                )
+            checks.append(
+                {
+                    "target": check.target,
+                    "command_id": int(window["id"]) if window is not None else None,
+                    "required": list(check.required),
+                    "status": status,
+                    "label": talkback_status_label(status),
+                    "completed": bool(window["completed"]) if window is not None else False,
+                    "accepted": bool(window["accepted"]) if window is not None else False,
+                    "fragments": fragments,
+                    "missing": missing,
+                    "reason": reason,
+                }
+            )
+        status = overall_speech_status([check["status"] for check in checks])
+        return {
+            "status": status,
+            "label": talkback_status_label(status),
+            "device_service": self.talkback_component,
+            "checks": checks,
+            "artifact": artifact_name,
+            "enable": enabled,
+        }
 
     def apply_font_scale(self) -> float:
         self.adb("shell", "settings", "put", "system", "font_scale", f"{self.font_scale:g}")
@@ -1179,6 +2181,47 @@ class Sampler:
         self.dumps.append(f"{stem}.xml")
         return (self.evidence / f"{stem}.xml").read_text(encoding="utf-8")
 
+    def handle_notification_permission_dialog(self) -> bool:
+        """Deny the observed Accessibility Suite POST_NOTIFICATIONS prompt when it is present.
+
+        On the P806 AVD, TalkBack raises the API 33+ notification prompt after it starts; left up
+        it intercepts focus/scroll input. Only the exact permissioncontroller grant dialog whose
+        message is the Accessibility Suite notification prompt is touched, and denying an
+        unnecessary notification permission is the least-privilege action. One bounded readback
+        proves it closed; a prompt that survives raises rather than silently continuing.
+        """
+        if not self.notification_dialog_guard:
+            return False
+        tree = self.dump("permission-dialog")
+        if not notification_permission_dialog_identity(tree):
+            return False
+        center = find_resource_center(
+            tree, f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/permission_deny_button"
+        )
+        if center is None:
+            center = find_resource_center(
+                tree,
+                f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/permission_deny_and_dont_ask_again_button",
+            )
+        if center is None:
+            raise SampleError(
+                "the Accessibility Suite notification prompt has no deny button; "
+                "see permission-dialog.xml"
+            )
+        self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+        time.sleep(2)
+        after = self.dump("permission-dialog-after")
+        if notification_permission_dialog_identity(after):
+            raise SampleError(
+                "the Accessibility Suite notification prompt did not close after denying it; "
+                "see permission-dialog-after.xml"
+            )
+        (self.evidence / "notification-dialog.txt").write_text(
+            "dismissed the Android Accessibility Suite POST_NOTIFICATIONS prompt (deny)\n",
+            encoding="utf-8",
+        )
+        return True
+
     def save_tree(self, stem: str, tree: str) -> None:
         """Write the frame the sample was taken from under the screen's own name.
 
@@ -1249,18 +2292,29 @@ class Sampler:
                 raise SampleError("the software keyboard stayed up after KEYCODE_BACK")
         return self.dump("after-ime")
 
-    def scroll_to(self, label: str, max_swipes: int = 6) -> str:
+    def scroll_to(self, label: str, max_swipes: int = 6, fully: bool = False) -> str:
         """Swipe the content region until `label` is on screen; each swipe must change the frame."""
         if not label:
             raise SampleError("an empty scroll label would match every screen")
+        # A system permission prompt would swallow the swipes; clear the one observed P806 prompt
+        # before the first frame is read. Other profiles never set the guard.
+        self.handle_notification_permission_dialog()
         tree = self.dump("scroll-probe")
+
+        def on_screen(frame: str) -> bool:
+            if find_reachable_center(frame, label) is None:
+                return False
+            return not fully or not viewport_problems(frame, label)
+
         for _ in range(max_swipes):
-            if find_reachable_center(tree, label) is not None:
+            if on_screen(tree):
                 return tree
+            # A prompt raised between two swipes would swallow the next one and freeze the frame.
+            self.handle_notification_permission_dialog()
             x1, y1, x2, y2 = scroll_swipe_points(tree)
             self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
             tree = self.wait_for_change(tree, timeout_s=30)
-        if find_reachable_center(tree, label) is not None:
+        if on_screen(tree):
             return tree
         raise SampleError(f"scroll target {label!r} is not on screen after {max_swipes} swipes")
 
@@ -1280,7 +2334,7 @@ class Sampler:
         if isinstance(step, DismissImeStep):
             return self.hide_ime()
         if isinstance(step, ScrollStep):
-            return self.scroll_to(step.label, max_swipes=step.max_swipes)
+            return self.scroll_to(step.label, max_swipes=step.max_swipes, fully=step.fully)
         raise SampleError(f"unknown step {step!r}")
 
 
@@ -1318,23 +2372,53 @@ def run(args: argparse.Namespace) -> int:
         avd_name=args.avd_name,
     )
     sampler.require_owned_avd()
+    # The notification prompt is an Android Accessibility Suite behavior; only the P806 dynamic
+    # profile enables its handler, and only on this session's owned AVD.
+    sampler.notification_dialog_guard = facts is not None
+
+    def dismiss_notification_prompt(context: str) -> None:
+        """Deny the Accessibility Suite prompt, naming what was under way when it fails."""
+        try:
+            sampler.handle_notification_permission_dialog()
+        except SampleError as error:
+            raise SampleError(f"{context}: clearing the notification prompt: {error}") from error
+
     sampler.adb("shell", "mkdir", "-p", Sampler.DUMP_DIR, best_effort=True)
     applied = sampler.apply_font_scale()
     sampler.adb("install", "-r", args.apk, timeout=180)
+    talkback_capability: dict[str, object] | None = None
+    talkback_log_level: dict[str, object] | None = None
+    prior_accessibility: dict[str, str] | None = None
+    if facts is not None:
+        if not Path(args.test_apk).is_file():
+            raise SampleError(
+                f"the p806 profile drives the focus probe from {args.test_apk!r}, which is missing; "
+                "build :android-app:assembleDebugAndroidTest before the emulator session"
+            )
+        sampler.adb("install", "-r", args.test_apk, timeout=180)
+        sampler.talkback_component = sampler.find_talkback_component()
+        sampler.talkback_prefs_activity = sampler.find_talkback_prefs_activity()
+        # The level is the app-private VERBOSE threshold TalkBack's own log gate reads; it is set
+        # before the service is ever enabled, and the route's evidence is its own settings screen.
+        prior_accessibility = sampler.prepare_talkback_device()
+        talkback_log_level = sampler.talkback_log_level_setup()
+        talkback_capability = sampler.p806_talkback_capability(talkback_log_level)
     seed_sha256 = ""
     if profile.seeded:
         seed_sha256 = sampler.seed(args.seed)
-    # The capability probe only reads image properties, so it runs BEFORE the launch and survives a
-    # navigation failure; the screenshots themselves never depend on it.
-    talkback = sampler.p806_talkback_capability() if profile.name in DYNAMIC_PROFILES else None
     sampler.launch()
+    dismiss_notification_prompt("the launch frame")
     # The launch frame is the change-detection baseline for the first tap, and its marker proves
     # the expected ledger state (empty, or the seeded transaction) before any step runs.
     previous = sampler.wait_for(profile.launch_marker)
 
     observations: dict[str, dict[str, object]] = {}
+    talkback_screens: dict[str, dict[str, object]] = {}
     for screen in screens:
         for index, step in enumerate(screen.steps):
+            dismiss_notification_prompt(
+                f"screen {screen.stem!r} step {index} ({describe_step(step)})"
+            )
             try:
                 previous = sampler.apply_step(step, previous)
             except SampleError as error:
@@ -1343,6 +2427,7 @@ def run(args: argparse.Namespace) -> int:
                     f"to marker {screen.marker!r}: {error}"
                 ) from error
         # Wait for the screen to be the one we are about to photograph, then photograph it.
+        dismiss_notification_prompt(f"screen {screen.stem!r} marker {screen.marker!r}")
         try:
             tree = sampler.wait_for(screen.marker)
         except SampleError as error:
@@ -1359,10 +2444,29 @@ def run(args: argparse.Namespace) -> int:
         }
         problems = marker_problems(tree, screen.marker, screen.absent)
         problems += required_problems(tree, screen.required)
+        if screen.marker_in_viewport:
+            problems += viewport_problems(tree, screen.marker)
         if problems:
             raise SampleError(
                 f"screen {screen.stem}: {'; '.join(problems)} at font_scale {applied:g}"
             )
+        # The screenshot/dump limbs above are already on disk and independent of this leg: the
+        # speech pass only moves accessibility focus on the live screen.
+        if facts is not None and screen.speech:
+            talkback_screens[screen.stem] = sampler.p806_talkback_screen(screen)
+
+    if facts is not None:
+        sampler.disable_talkback_accessibility()
+        for key in (
+            SETTING_A11Y_COMMAND,
+            SETTING_A11Y_PREFIX,
+            SETTING_A11Y_LIMIT,
+            SETTING_A11Y_CLICK,
+        ):
+            sampler.adb("shell", "settings", "delete", "global", key, best_effort=True)
+
+    def apk_record(path: str) -> dict[str, str]:
+        return {"path": str(path), "sha256": sha256_file(Path(path))}
 
     host = {
         "sha": args.sha,
@@ -1373,7 +2477,10 @@ def run(args: argparse.Namespace) -> int:
         "screenshots": sampler.screenshots,
         "dumps": sampler.dumps,
         "observations": observations,
+        "artifacts": {"app_apk": apk_record(args.apk)},
     }
+    if facts is not None:
+        host["artifacts"]["test_apk"] = apk_record(args.test_apk)
     if profile.seeded and facts is None:
         # The seed contract this evidence was produced against (the ledger id must be the app's
         # PRODUCT_LEDGER_ID; a mismatch would have failed the launch marker above). The digest is
@@ -1386,9 +2493,22 @@ def run(args: argparse.Namespace) -> int:
         }
     if facts is not None:
         # The p806 seed carries none of the P8-01/P8-03 literals; its identity is the pushed
-        # digest plus the facts re-derived from that file.
+        # digest plus the facts re-derived from that file. The TalkBack record names the device
+        # service, its own log-level route and every screen's focus/speech window.
         host["seed"] = {"ledger_id": P806_LEDGER_ID, "sha256": seed_sha256}
-        host["p806"] = {"seed_facts": facts.as_dict(), "talkback": talkback}
+        host["p806"] = {
+            "seed_facts": facts.as_dict(),
+            "talkback": {
+                "package": P806_TALKBACK_PACKAGE,
+                "device_service": sampler.talkback_component,
+                "package_present": bool(
+                    talkback_capability.get("package_present") if talkback_capability else False
+                ),
+                "prior_accessibility": prior_accessibility,
+                "log_level": talkback_log_level,
+                "screens": talkback_screens,
+            },
+        }
     (evidence / "host.json").write_text(json.dumps(host, indent=2), encoding="utf-8")
     return 0
 
@@ -1414,13 +2534,13 @@ def gate_seed_problems(host: dict[str, object], seed_sha256: str | None) -> list
 def p806_gate_problems(
     host: dict[str, object], facts: P806SeedFacts, evidence: Path
 ) -> list[str]:
-    """Re-derive the p806 hand-off: host.json's facts must be THIS seed's facts.
+    """Re-derive the p806 hand-off: the seed facts AND every screen's per-target speech windows.
 
-    The marker strings the gate checks are built from [facts], so host.json only has to agree
-    that it recorded the same sample; a stale or foreign host cannot pass even with matching
-    screenshot names. The TalkBack limb is informational: a missing or incomplete capability
-    record never fails the screenshot evidence, and a claim that speech WAS captured fails unless
-    it is the explicit pending state this rig can produce.
+    Each screen check is bound to its own recorded command id and re-derived from that id's
+    isolated `speech-window-begin`/accepted/`speech-window-end` window in the raw artifact. The
+    required values come from the seed facts, not from host.json: an evidence file that narrowed
+    or swapped a target's requirements fails. Any class other than success (未取得 / 片段缺失 /
+    金额错误) fails the gate. The image capability record is context, not a substitute for speech.
     """
     problems: list[str] = []
     recorded = host.get("p806")
@@ -1431,12 +2551,204 @@ def p806_gate_problems(
             f"host.json records p806 facts {recorded.get('seed_facts')!r}, the seed derives {facts.as_dict()!r}"
         )
     talkback = recorded.get("talkback")
-    if isinstance(talkback, dict):
-        speech = talkback.get("speech")
-        if speech is not None and (not isinstance(speech, str) or not speech.startswith("pending-")):
+    if not isinstance(talkback, dict):
+        return problems + ["host.json records no TalkBack evidence"]
+    if talkback.get("package") != P806_TALKBACK_PACKAGE:
+        problems.append(
+            f"host.json records TalkBack package {talkback.get('package')!r}, "
+            f"expected {P806_TALKBACK_PACKAGE!r}"
+        )
+    device_service = talkback.get("device_service")
+    if not isinstance(device_service, str) or not device_service:
+        problems.append("host.json records no device TalkBack service component")
+        device_service = ""
+    elif not (
+        device_service.startswith(f"{P806_TALKBACK_PACKAGE}/")
+        and device_service.endswith("TalkBackService")
+    ):
+        problems.append(
+            f"host.json records {device_service!r} as the TalkBack service, "
+            f"which is not a {P806_TALKBACK_PACKAGE} TalkBackService component"
+        )
+    log_level = talkback.get("log_level")
+    if not isinstance(log_level, dict) or log_level.get("status") != "success":
+        problems.append(
+            "TalkBack's VERBOSE log-level route did not succeed: "
+            f"{log_level.get('reason') if isinstance(log_level, dict) else log_level!r}"
+        )
+    else:
+        if log_level.get("value") != P806_TALKBACK_LEVEL:
             problems.append(
-                f"TalkBack speech {speech!r} claims recorded output; this rig can only record PENDING speech"
+                f"TalkBack's log-level route records {log_level.get('value')!r}, "
+                f"expected {P806_TALKBACK_LEVEL!r}"
             )
+        steps = log_level.get("steps")
+        if not isinstance(steps, list) or not steps:
+            problems.append("TalkBack's log-level route records no settings-UI steps")
+    screen_records = talkback.get("screens")
+    if not isinstance(screen_records, dict):
+        return problems + ["host.json records no per-screen TalkBack evidence"]
+    seen_ids: set[int] = set()
+    for screen in p806_screens(facts):
+        if not screen.speech:
+            continue
+        artifact = evidence / f"talkback-{screen.stem}.txt"
+        if not artifact.is_file():
+            problems.append(f"{screen.stem}: TalkBack window artifact is missing")
+            continue
+        record = screen_records.get(screen.stem)
+        if not isinstance(record, dict):
+            problems.append(f"{screen.stem}: host.json records no TalkBack screen result")
+            continue
+        if record.get("artifact") != artifact.name:
+            problems.append(
+                f"{screen.stem}: host.json names artifact {record.get('artifact')!r}, "
+                f"the gate read {artifact.name!r}"
+            )
+        if record.get("device_service") != device_service:
+            problems.append(
+                f"{screen.stem}: host.json records TalkBack device service "
+                f"{record.get('device_service')!r}, the run-level record is {device_service!r}"
+            )
+        enable = record.get("enable")
+        enabled_components = enable.get("enabled_components") if isinstance(enable, dict) else None
+        expected_enabled_file = f"talkback-enabled-{screen.stem}.txt"
+        if not isinstance(enable, dict) or enable.get("status") != "success":
+            problems.append(
+                f"{screen.stem}: TalkBack was not enabled for the speech pass: "
+                f"{enable.get('reason') if isinstance(enable, dict) else enable!r}"
+            )
+        else:
+            if enable.get("enabled_services_file") != expected_enabled_file:
+                problems.append(
+                    f"{screen.stem}: the enable record names "
+                    f"{enable.get('enabled_services_file')!r}, the screen's raw record is "
+                    f"{expected_enabled_file!r}"
+                )
+            raw_services = evidence / expected_enabled_file
+            if not raw_services.is_file():
+                problems.append(
+                    f"{screen.stem}: the raw enabled-services record "
+                    f"{expected_enabled_file!r} is missing"
+                )
+            else:
+                raw_components = [
+                    part.strip()
+                    for part in raw_services.read_text(encoding="utf-8").strip().split(":")
+                    if part.strip() and part.strip() != "null"
+                ]
+                if device_service not in raw_components:
+                    problems.append(
+                        f"{screen.stem}: the raw enabled-services record {raw_components!r} "
+                        f"does not contain the exact TalkBack component {device_service!r}"
+                    )
+                if not isinstance(enabled_components, list) or enabled_components != raw_components:
+                    problems.append(
+                        f"{screen.stem}: the host enable summary {enabled_components!r} does not "
+                        f"match the raw record {raw_components!r}"
+                    )
+        checks = record.get("checks")
+        if not isinstance(checks, list) or len(checks) != len(screen.speech):
+            problems.append(
+                f"{screen.stem}: host.json records {len(checks) if isinstance(checks, list) else checks!r} "
+                f"TalkBack checks, the seed derives {len(screen.speech)}"
+            )
+            continue
+        text = artifact.read_text(encoding="utf-8")
+        artifact_lines = text.splitlines()
+        derived_statuses: list[str] = []
+        previous_id = 0
+        for expected, check in zip(screen.speech, checks):
+            if not isinstance(check, dict):
+                problems.append(f"{screen.stem}: a TalkBack check record is not an object")
+                derived_statuses.append("not-obtained")
+                continue
+            target = check.get("target")
+            if target != expected.target:
+                problems.append(
+                    f"{screen.stem}: a TalkBack target is recorded as {target!r}, "
+                    f"the seed derives {expected.target!r}"
+                )
+            if check.get("required") != list(expected.required):
+                problems.append(
+                    f"{screen.stem}: target {target!r} records requirements "
+                    f"{check.get('required')!r}, the seed derives {list(expected.required)!r}"
+                )
+            command_id = check.get("command_id")
+            if type(command_id) is not int or command_id <= 0:
+                problems.append(
+                    f"{screen.stem}: target {target!r} records command id {command_id!r}, "
+                    "expected a positive integer"
+                )
+                derived_statuses.append("not-obtained")
+                continue
+            if command_id in seen_ids:
+                problems.append(f"{screen.stem}: command id {command_id} is recorded twice")
+            seen_ids.add(command_id)
+            if command_id <= previous_id:
+                problems.append(
+                    f"{screen.stem}: command id {command_id} does not follow {previous_id}; "
+                    "the ordered checks were not driven in order"
+                )
+            previous_id = command_id
+            # The header must bind command to target, and the raw window itself must carry the
+            # probe's command with the same losslessly encoded target and a found node: a
+            # relabelled host header alone cannot attribute another focus target's speech.
+            command_line = f"# command: {command_id}"
+            target_line = f"# target: {expected.target}"
+            if not any(
+                line == command_line
+                and index > 0
+                and artifact_lines[index - 1] == target_line
+                for index, line in enumerate(artifact_lines)
+            ):
+                problems.append(
+                    f"{screen.stem}: the artifact does not bind command {command_id} "
+                    f"to target {expected.target!r}"
+                )
+            status, _fragments, missing, reason = talkback_check_verdict(
+                text, command_id, expected.target, expected.required
+            )
+            derived_statuses.append(status)
+            if check.get("status") != status:
+                problems.append(
+                    f"{screen.stem}: target {target!r} records TalkBack status "
+                    f"{check.get('status')!r}, the artifact derives {status!r}"
+                )
+            if status != "success":
+                suffix = f"; missing {missing!r}" if missing else (f"; {reason}" if reason else "")
+                problems.append(
+                    f"{screen.stem}: TalkBack {talkback_status_label(status)} ({status}) "
+                    f"for target {target!r}{suffix}"
+                )
+        if len(derived_statuses) != len(screen.speech):
+            continue
+        overall = overall_speech_status(derived_statuses)
+        if record.get("status") != overall:
+            problems.append(
+                f"{screen.stem}: host.json records TalkBack status {record.get('status')!r}, "
+                f"the artifact derives {overall!r}"
+            )
+    return problems
+
+
+def gate_artifact_problems(
+    host: dict[str, object], app_apk: Path, test_apk: Path
+) -> list[str]:
+    """The p806 gate's artifact identity: the APKs the evidence names are the files on disk."""
+    problems: list[str] = []
+    recorded = host.get("artifacts")
+    if not isinstance(recorded, dict):
+        return ["host.json records no APK artifacts"]
+    for key, path in (("app_apk", app_apk), ("test_apk", test_apk)):
+        entry = recorded.get(key)
+        digest = entry.get("sha256") if isinstance(entry, dict) else None
+        if not path.is_file():
+            problems.append(f"the {key} file {str(path)!r} is not present for the gate")
+            continue
+        actual = sha256_file(path)
+        if digest != actual:
+            problems.append(f"host.json records {key} sha256 {digest!r}, the file is {actual}")
     return problems
 
 
@@ -1471,12 +2783,16 @@ def gate(args: argparse.Namespace) -> int:
             problems.append(f"{screen.stem}: {problem}")
         for problem in required_problems(tree.read_text(encoding="utf-8"), screen.required):
             problems.append(f"{screen.stem}: {problem}")
+        if screen.marker_in_viewport:
+            for problem in viewport_problems(tree.read_text(encoding="utf-8"), screen.marker):
+                problems.append(f"{screen.stem}: {problem}")
     if profile.seeded:
         seed_file = Path(args.seed) if args.seed else None
         actual = sha256_file(seed_file) if seed_file is not None and seed_file.is_file() else None
         problems.extend(gate_seed_problems(host, actual))
     if facts is not None:
         problems.extend(p806_gate_problems(host, facts, evidence))
+        problems.extend(gate_artifact_problems(host, Path(args.apk), Path(args.test_apk)))
     if problems:
         for problem in problems:
             print(f"gate: {problem}", file=sys.stderr)
@@ -1505,6 +2821,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--font-scale", type=float, default=1.3)
     parser.add_argument("--avd-name", default="ul-fontscale")
     parser.add_argument("--apk", default="android-app/build/outputs/apk/debug/android-app-debug.apk")
+    parser.add_argument(
+        "--test-apk",
+        default="android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk",
+        help=(
+            "the androidTest APK that hosts the D-292 focus probe; installed and hash-recorded for "
+            "the p806 profile, and hash-compared by the p806 gate"
+        ),
+    )
     parser.add_argument("--serial", default="")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     try:

@@ -5,9 +5,11 @@ import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.provider.Settings;
+import android.util.Base64;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -21,9 +23,11 @@ import java.util.List;
  * <p>Why a service and not UiAutomator: TalkBack speaks when the ACCESSIBILITY focus moves. A
  * non-focusable `TextView` (the month-card values, per-leg amounts) never receives that focus from
  * TAB traversal, so its screen-reader leg could not be measured at all. This fixture service holds
- * exactly one capability the test needs — `canRetrieveWindowContent` — and does two things once
- * connected: dumps a bounded summary of the visible tree (text / class / focusable / a11y-focused)
- * and asks for accessibility focus on every node whose text contains one of {@link #TARGETS}.
+ * exactly one capability the test needs — `canRetrieveWindowContent` — and does three things once
+ * connected: dumps a bounded summary of the visible tree (text / class / focusable / a11y-focused),
+ * asks for accessibility focus on every node whose text contains one of {@link #TARGETS}, and
+ * watches a host-commanded channel that focuses one named target inside an id-labelled speech
+ * window (P8-06 V-12).
  *
  * <p>It holds no product data, lives only in the androidTest APK (never in the product build), and
  * logs under the {@code ULA11Y} tag so the host can read the transcript with plain `adb logcat`.
@@ -41,7 +45,7 @@ public final class A11yFocusProbeService extends AccessibilityService {
     private static final long PROBE_DELAY_MS = 6000L;
 
     /** Bounded tree dump: enough to see the regions under test, never a whole page. */
-    private static final int MAX_NODES = 220;
+    private static final int MAX_NODES = 400;
 
     /** The texts whose accessibility focus is in question (substring match, case-insensitive). */
     private static final List<String> TARGETS =
@@ -84,10 +88,42 @@ public final class A11yFocusProbeService extends AccessibilityService {
      */
     private static final String SETTING_CLICK = "ul_a11y_click";
 
+    /**
+     * Host-commanded focus: {@code adb shell settings put global ul_a11y_command
+     * "focus,<id>,<base64 of target>"}. The host needs the SAME target's speech window per screen
+     * (P8-06 V-12), so the command carries a unique id, the probe logs the command's own base64
+     * target as {@code needle64=...}, the found node as {@code target id=... found=...} with its
+     * full text/description base64-encoded (so a trimmed preview cannot substitute a node), and
+     * {@code speech-window-begin/end id=...} around the utterance, and the host can extract exactly
+     * that window from logcat and re-decode the target it actually focused. The target is base64 so
+     * a full composed sentence (spaces, CJK, punctuation) survives the settings transport
+     * byte-for-byte; commas are shell-safe and not part of the base64 alphabet.
+     */
+    private static final String SETTING_COMMAND = "ul_a11y_command";
+
+    private static final long COMMAND_POLL_MS = 300L;
+
+    /** TalkBack needs the whole utterance to finish before the window closes. */
+    private static final long COMMAND_SPEECH_MS = 8000L;
+
+    /**
+     * The single command watcher for the bound service instance. A host screen disables the service
+     * between legs and enables it again for the next one; the process usually survives, so an old
+     * watcher must be stopped before a second one starts — two watchers would run the same new
+     * command twice and the second focus move would cancel the first utterance.
+     */
+    private static volatile Thread commandWatcher;
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        Log.i(TAG, "service connected");
+        // Replace any watcher left by an earlier bind BEFORE announcing the connection: the host
+        // polls this log line and writes its first command right after it, and a stale watcher
+        // would otherwise read that command on an unbound instance (its root is null).
+        stopCommandWatcher();
+        Thread started = new Thread(this::watchCommands, "ul-a11y-command");
+        commandWatcher = started;
+        started.start();
         new Thread(
                         () -> {
                             for (int pass = 1; pass <= PROBE_PASSES; pass++) {
@@ -102,6 +138,28 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         },
                         "ul-a11y-probe")
                 .start();
+        Log.i(TAG, "service connected");
+    }
+
+    @Override
+    public void onDestroy() {
+        stopCommandWatcher();
+        super.onDestroy();
+    }
+
+    /** Stops the bound instance's command watcher so a new bind can start exactly one. */
+    private static void stopCommandWatcher() {
+        Thread watcher = commandWatcher;
+        commandWatcher = null;
+        if (watcher == null) {
+            return;
+        }
+        watcher.interrupt();
+        try {
+            watcher.join(1000L);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Override
@@ -209,6 +267,99 @@ public final class A11yFocusProbeService extends AccessibilityService {
         Log.i(TAG, "pass summary trigger=" + trigger + " nodes=" + nodes.size() + " focused=" + focused);
     }
 
+    /**
+     * The host-command channel. Only a NEW value runs, and the value embeds its own id, so the host
+     * can issue the same target twice and every run has one identifiable speech window.
+     */
+    private void watchCommands() {
+        String last = "";
+        while (!Thread.currentThread().isInterrupted()) {
+            String command = setting(SETTING_COMMAND, "");
+            if (!command.isEmpty() && !command.equals(last)) {
+                last = command;
+                runCommand(command);
+            }
+            try {
+                Thread.sleep(COMMAND_POLL_MS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private void runCommand(String command) {
+        String[] parts = command.split(",", 3);
+        if (parts.length != 3 || !"focus".equals(parts[0])) {
+            Log.i(TAG, "command unsupported");
+            return;
+        }
+        String id = parts[1];
+        String needle;
+        try {
+            needle = new String(Base64.decode(parts[2], Base64.NO_WRAP), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException invalid) {
+            Log.i(TAG, "command id=" + id + " target=unreadable");
+            return;
+        }
+        Log.i(
+                TAG,
+                "command action=focus id="
+                        + id
+                        + " needle64="
+                        + parts[2]
+                        + " target=\""
+                        + trim(needle)
+                        + "\"");
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) {
+            Log.i(TAG, "target id=" + id + " found=false root=null");
+            return;
+        }
+        AccessibilityNodeInfo target = null;
+        for (AccessibilityNodeInfo node : collect(root)) {
+            if (contains(node.getText(), needle) || contains(node.getContentDescription(), needle)) {
+                target = node;
+                break;
+            }
+        }
+        if (target == null) {
+            Log.i(TAG, "target id=" + id + " found=false");
+            return;
+        }
+        Log.i(
+                TAG,
+                "target id="
+                        + id
+                        + " found=true text=\""
+                        + trim(target.getText())
+                        + "\" desc=\""
+                        + trim(target.getContentDescription())
+                        + "\" text64=\""
+                        + encode(target.getText())
+                        + "\" desc64=\""
+                        + encode(target.getContentDescription())
+                        + "\"");
+        Log.i(TAG, "speech-window-begin id=" + id);
+        boolean accepted = false;
+        try {
+            accepted = target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+        } catch (RuntimeException failure) {
+            Log.i(TAG, "focus-error id=" + id + " error=" + failure);
+        }
+        Log.i(TAG, "focus-result id=" + id + " found=true accepted=" + accepted);
+        try {
+            Thread.sleep(COMMAND_SPEECH_MS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        Log.i(TAG, "speech-window-end id=" + id);
+    }
+
+    private static boolean contains(CharSequence text, String needle) {
+        return text != null && text.toString().contains(needle);
+    }
+
     private List<AccessibilityNodeInfo> collect(AccessibilityNodeInfo root) {
         List<AccessibilityNodeInfo> nodes = new ArrayList<>();
         Deque<AccessibilityNodeInfo> queue = new ArrayDeque<>();
@@ -263,6 +414,14 @@ public final class A11yFocusProbeService extends AccessibilityService {
             }
         }
         return false;
+    }
+
+    /**
+     * The node value byte-for-byte, so the trimmed preview can never hide which node matched.
+     */
+    private static String encode(CharSequence text) {
+        String value = text == null ? "" : text.toString();
+        return Base64.encodeToString(value.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
     }
 
     private static String trim(CharSequence text) {
