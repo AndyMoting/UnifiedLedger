@@ -91,4 +91,6 @@ sqldelight {
 tasks.withType<Test>().configureEach {
     System.getProperty("ul.fontscale.seed")?.let { systemProperty("ul.fontscale.seed", it) }
     System.getProperty("ul.p806.fontscale.seed")?.let { systemProperty("ul.p806.fontscale.seed", it) }
+    // P8-07 adds a third writer and property for the shared acceptance seed.
+    System.getProperty("ul.p807.shared.seed")?.let { systemProperty("ul.p807.shared.seed", it) }
 }
