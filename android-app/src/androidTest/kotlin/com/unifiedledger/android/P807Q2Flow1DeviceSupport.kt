@@ -1027,8 +1027,7 @@ internal class P807Q2Flow1Ui(
     }
 
     /** The detail's own entry: its visible text is exactly the token (the list entry appends a count). */
-    private fun findDetailBatchEntry(): AccessibilityNodeInfo? =
-        appNodes().firstOrNull { node -> textOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY }
+    private fun findDetailBatchEntry(): AccessibilityNodeInfo? = appNodes().firstOrNull { node -> textOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY }
 
     /**
      * Clicks the detail's batch entry by its EXACT text — never a prefix, and not the list-side
