@@ -13,8 +13,6 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.accessibility.AccessibilityNodeInfo
-import com.unifiedledger.application.AssetPaidOrdinaryExpenseCommand
-import com.unifiedledger.application.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.ConfirmationId
@@ -69,6 +67,8 @@ import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.AccountTransferIds
+import com.unifiedledger.domain.AssetPaidOrdinaryExpenseCommand
+import com.unifiedledger.domain.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
