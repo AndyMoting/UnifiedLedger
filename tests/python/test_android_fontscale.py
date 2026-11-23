@@ -22,6 +22,7 @@ from android_fontscale.sampler import (
     ScrollStep,
     SpeechCheck,
     TapStep,
+    accessibility_services_bound,
     adb_input_text,
     derive_p806_seed_facts,
     describe_step,
@@ -50,6 +51,7 @@ from android_fontscale.sampler import (
     permission_dialog_readback_delays,
     profile_by_name,
     profile_screens,
+    probe_bound_service,
     probe_service_connected,
     required_problems,
     screen_center,
@@ -1412,6 +1414,63 @@ class TalkbackArtifacts(unittest.TestCase):
                 "  Service[label=TalkBack, package=com.google.android.marvin.talkback]\n"
             )
         )
+
+    def test_the_disabled_wait_needs_both_bound_services_to_leave(self) -> None:
+        import tempfile
+
+        # The real label-only shape: the teardown has not reached the device until BOTH entries are
+        # gone; matching on package names alone saw neither and returned immediately.
+        both = (
+            "Bound services:{Service[label=UL a11y probe, feedbackType[FEEDBACK_GENERIC], "
+            "capabilities=33, eventTypes=[TYPE_WINDOW_STATE_CHANGED], notificationTimeout=100, "
+            "requestA11yBtn=false], \n"
+            "                     Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN], "
+            "capabilities=251, eventTypes=TYPES_ALL_MASK, notificationTimeout=0, "
+            "requestA11yBtn=false]}\n"
+        )
+        probe_only = both.replace(
+            "Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN], capabilities=251, "
+            "eventTypes=TYPES_ALL_MASK, notificationTimeout=0, requestA11yBtn=false]",
+            "Service[label=Other, capabilities=0]",
+        )
+        self.assertNotEqual(both, probe_only)
+        self.assertTrue(probe_bound_service(both))
+        self.assertTrue(talkback_bound_service(both))
+        self.assertTrue(accessibility_services_bound(both))
+        self.assertTrue(probe_bound_service(probe_only))
+        self.assertFalse(talkback_bound_service(probe_only))
+        self.assertTrue(accessibility_services_bound(probe_only))
+        # The package-name shape still counts as bound through the fallback.
+        package_form = (
+            "Bound services:\n"
+            "  com.unifiedledger.android.test/.A11yFocusProbeService\n"
+            "  com.google.android.marvin.talkback/.TalkBackService\n"
+        )
+        self.assertTrue(probe_bound_service(package_form))
+        self.assertTrue(talkback_bound_service(package_form))
+        self.assertTrue(accessibility_services_bound(package_form))
+        self.assertFalse(accessibility_services_bound("Bound services:\n"))
+
+        class _BoundSampler(Sampler):
+            def __init__(self, evidence: Path, dump: str) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.dump_text = dump
+
+            def accessibility_dumpsys(self) -> str:
+                return self.dump_text
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            self.assertFalse(
+                _BoundSampler(evidence, both).wait_accessibility_disabled(timeout_s=0.01)
+            )
+            self.assertTrue(
+                _BoundSampler(evidence, "Bound services:\n").wait_accessibility_disabled(
+                    timeout_s=1
+                )
+            )
 
     def test_structural_padding_never_bridges_a_line_break(self) -> None:
         self.assertEqual(

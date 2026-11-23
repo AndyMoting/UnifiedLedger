@@ -217,6 +217,11 @@ P806_PROBE_PACKAGE = "com.unifiedledger.android.test"
 P806_PROBE_COMPONENT = (
     "com.unifiedledger.android.test/com.unifiedledger.android.A11yFocusProbeService"
 )
+# `dumpsys accessibility` renders a bound service by its LABEL on API 36
+# (`Service[label=TalkBack, feedbackType[…]]`), with no package name anywhere, so the label is what
+# a bound-state check matches first; the package name stays as the fallback for older dumps.
+P806_TALKBACK_LABEL = "TalkBack"
+P806_PROBE_LABEL = "UL a11y probe"
 SETTING_A11Y_COMMAND = "ul_a11y_command"
 SETTING_A11Y_PREFIX = "ul_a11y_prefix"
 SETTING_A11Y_LIMIT = "ul_a11y_limit"
@@ -735,14 +740,29 @@ def probe_service_connected(log_text: str) -> bool:
     return False
 
 
-def talkback_bound_service(bound_section: str) -> bool:
-    """True when a `dumpsys accessibility` Bound services section lists TalkBack.
+def accessibility_service_bound(bound_section: str, label: str, package: str) -> bool:
+    """True when a `dumpsys accessibility` Bound services section lists one service.
 
-    API 36 renders each bound entry as `Service[label=TalkBack, feedbackType[…], …]` and never
-    prints the package name, so the exact label is the primary signal. The package name stays as
-    the fallback for images whose dump carries it; an empty or probe-only section matches neither.
+    API 36 renders each entry as `Service[label=TalkBack, feedbackType[…], …]` and never prints the
+    package name, so the exact label is the primary signal; the package name stays as the fallback
+    for images whose dump carries it.
     """
-    return "Service[label=TalkBack," in bound_section or P806_TALKBACK_PACKAGE in bound_section
+    return f"Service[label={label}," in bound_section or package in bound_section
+
+
+def talkback_bound_service(bound_section: str) -> bool:
+    """True when the Bound services section lists TalkBack (label first, package as fallback)."""
+    return accessibility_service_bound(bound_section, P806_TALKBACK_LABEL, P806_TALKBACK_PACKAGE)
+
+
+def probe_bound_service(bound_section: str) -> bool:
+    """True when the Bound services section lists the focus probe (label first, package fallback)."""
+    return accessibility_service_bound(bound_section, P806_PROBE_LABEL, P806_PROBE_PACKAGE)
+
+
+def accessibility_services_bound(bound_section: str) -> bool:
+    """True while either the probe or TalkBack is bound; both must leave for a teardown to count."""
+    return probe_bound_service(bound_section) or talkback_bound_service(bound_section)
 
 
 def _ula11y_event(line: str) -> tuple[str, str] | None:
@@ -1742,13 +1762,19 @@ class Sampler:
         return False
 
     def wait_accessibility_disabled(self, timeout_s: int = 30) -> bool:
+        """Wait until neither the probe nor TalkBack is bound.
+
+        Both services are matched by their API 36 bound-service label (package name as fallback):
+        an entry still in the Bound services section means the teardown has not reached the device
+        yet, and a following screen would enable TalkBack on top of the old binding.
+        """
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             bound = self._bound_accessibility_section(self.accessibility_dumpsys())
             if not bound:
                 time.sleep(1)
                 continue
-            if P806_PROBE_PACKAGE not in bound and P806_TALKBACK_PACKAGE not in bound:
+            if not accessibility_services_bound(bound):
                 return True
             time.sleep(1)
         return False
