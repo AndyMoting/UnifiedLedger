@@ -957,16 +957,78 @@ internal class P807Q2Flow1Ui(
     }
 
     /**
-     * Scrolls the current surface forward until [textPrefix] is visible. A transition between two
-     * screens can momentarily expose no scrollable container (`seek`'s own loud failure); the
-     * bounded retry keeps that transient state from reading as a missing product affordance, and a
-     * target that never appears still fails loudly on the final attempt.
+     * Establishes the candidate-detail batch selection. The postcondition is the BATCH ENTRY, not
+     * the checkbox's own read-back: the client tree can answer a stale "already checked" (D-338),
+     * and a click on a stale node toggles nothing (D-216). `AndroidScaleUi.clickUntil` exists for
+     * exactly this pair and retries the toggle until the entry surfaces.
+     */
+    fun selectCandidateForBatch(): Boolean {
+        if (ui.has(P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY)) {
+            log("${P807Q2Flow1Facts.PREFIX} selection already established (the batch entry is present)")
+            return true
+        }
+        return try {
+            ui.clickUntil(P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION, P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY)
+            log("${P807Q2Flow1Facts.PREFIX} selection established by ${P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION}")
+            true
+        } catch (failure: IllegalStateException) {
+            log("${P807Q2Flow1Facts.PREFIX} selection never established: ${failure.message}")
+            dumpUiSnapshot("selectCandidateForBatch")
+            false
+        }
+    }
+
+    /**
+     * Clicks the detail's batch entry, matched by its EXACT text or contentDescription — never a
+     * prefix. The selection row's static copy 「勾选进入批量确认（须先补齐决策）」 is a label, not
+     * the entry, and a prefix match would also shadow any future copy that starts with the token.
+     * The actual node is read back and logged before the click.
+     */
+    fun enterBatchConfirmation(timeoutMillis: Long = NODE_TIMEOUT_MILLIS): Boolean {
+        val appeared = runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY) } }.isSuccess
+        if (!appeared) {
+            log("${P807Q2Flow1Facts.PREFIX} batch entry absent windows=${describePickerWindows()}")
+            dumpUiSnapshot("enterBatchConfirmation:absent")
+            return false
+        }
+        val entry =
+            appNodes().firstOrNull { node ->
+                textOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY || descriptionOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY
+            }
+        if (entry == null) {
+            log("${P807Q2Flow1Facts.PREFIX} batch entry not read back by exact text/description")
+            dumpUiSnapshot("enterBatchConfirmation:node")
+            return false
+        }
+        log("${P807Q2Flow1Facts.PREFIX} batch entry ${describeNode(entry)}")
+        tap(entry)
+        val opened = runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.BATCH_CONFIRM_TITLE, prefix = true) } }.isSuccess
+        if (!opened) {
+            log("${P807Q2Flow1Facts.PREFIX} batch page never opened windows=${describePickerWindows()}")
+            dumpUiSnapshot("enterBatchConfirmation:page")
+        }
+        return opened
+    }
+
+    /**
+     * Reaches a target that may sit below the fold: FIRST look on the current surface, and only
+     * scroll when the surface actually exposes a scrollable container. A short surface (the
+     * candidate detail) has none, so a miss there gets one bounded render wait and then fails
+     * loudly with the window dump — the old unconditional scroll died with
+     * "scroll container absent" and hid which surface it was on.
      */
     fun seekApp(
         textPrefix: String,
         maxScrolls: Int = 40,
     ) {
         if (ui.has(textPrefix, prefix = true)) return
+        if (runCatching { ui.scrollable() }.isFailure) {
+            if (runCatching { ui.await(SEEK_SHORT_SURFACE_TIMEOUT_MILLIS) { ui.has(textPrefix, prefix = true) } }.isSuccess) return
+            withUiDump("seekApp:$textPrefix") {
+                error("seekApp('$textPrefix'): the target is absent and the current surface has no scrollable container")
+            }
+            return
+        }
         repeat(SEEK_ATTEMPTS) {
             if (runCatching { ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls) }.isSuccess) return
             SystemClock.sleep(1_000)
@@ -1366,6 +1428,7 @@ internal class P807Q2Flow1Ui(
         const val PICKER_WINDOW_TIMEOUT_MILLIS = 30_000L
         const val PICKER_RETURN_TIMEOUT_MILLIS = 20_000L
         const val FIELD_SETTLE_TIMEOUT_MILLIS = 10_000L
+        const val SEEK_SHORT_SURFACE_TIMEOUT_MILLIS = 10_000L
         const val POLL_MILLIS = 500L
         const val MAX_TREE_NODES = 2_000
         const val MAX_DUMP_TEXTS = 80

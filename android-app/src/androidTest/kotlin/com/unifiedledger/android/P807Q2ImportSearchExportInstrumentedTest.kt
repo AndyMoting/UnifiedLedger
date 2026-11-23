@@ -156,15 +156,23 @@ class P807Q2ImportSearchExportInstrumentedTest {
             "${P807Q2Flow1Facts.PREFIX} the detail must show the confirmed funding account's match basis",
             ui.hasAppText(P807Q2Flow1Facts.CANDIDATE_MATCH_BASIS_ACCOUNT),
         )
-        ui.seekApp(P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION)
-        ui.clickAppDescription(P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION)
         ui.seekApp(P807Q2Flow1Facts.CANDIDATE_DECISION_COMPLETE)
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} the prefilled self-entry decision must be complete",
             ui.hasAppText(P807Q2Flow1Facts.CANDIDATE_DECISION_COMPLETE),
         )
-        ui.seekApp(P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY)
-        ui.clickApp(P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY)
+        // The selection row's 「勾选进入批量确认（须先补齐决策）」 is static copy, not a gate: the
+        // checkbox is rendered for every selectable candidate, and 进入批量确认 appears only while
+        // selectedCandidateIds is non-empty (P503ImportReview.kt:1035-1047). A stale-node click on
+        // the checkbox can toggle nothing, so the toggle retries until the ENTRY surfaces.
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the detail's ${P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION} must establish the batch selection",
+            ui.selectCandidateForBatch(),
+        )
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the selected candidate's batch entry must be clickable",
+            ui.enterBatchConfirmation(),
+        )
         ui.awaitAppText(P807Q2Flow1Facts.BATCH_CONFIRM_TITLE)
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} the confirmation page must carry the selected candidate",
