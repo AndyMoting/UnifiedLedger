@@ -176,10 +176,11 @@ P806_REPORT_BALANCE_LABEL = "结余"
 # fragment text. Only TalkBack's own line can satisfy the speech limb; the focus probe supplies the
 # target and the time window, never the utterance. This is the `-v brief` shape the run reads
 # (`adb logcat -d -v brief`) with BOTH pids elided: the `pid` right after the tag is the logging
-# process's own pid (the padded `(   20):` column), and the one on `SpeechControllerImpl` is the
-# controller's. Both change per run, so the recorded signal names the columns that
-# `_TALKBACK_FRAGMENT` anchors to instead of one run's numbers.
-P806_TALKBACK_LOG_SIGNAL = "V/talkback(pid): SpeechControllerImpl(pid): Speaking fragment text="
+# process's own pid (the padded `(   20):` column) and may be absent on API 36, where the row reads
+# `V/talkback: SpeechControllerImpl( 5884): Speaking fragment text=…`; the one on
+# `SpeechControllerImpl` is the controller's. Every pid changes per run, so the recorded signal
+# names the columns that `_TALKBACK_FRAGMENT` anchors to instead of one run's numbers.
+P806_TALKBACK_LOG_SIGNAL = "V/talkback[(pid)]: SpeechControllerImpl[(pid)]: Speaking fragment text="
 P806_TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
 # The API 33+ POST_NOTIFICATIONS prompt Android Accessibility Suite raises on this AVD is a
 # permissioncontroller grant dialog. The exact package-scoped resource ids and the exact message
@@ -556,13 +557,15 @@ def viewport_problems(xml_text: str, marker: str) -> list[str]:
 # bridges a line break; a different tag whose message merely quotes a real-looking line, at the
 # start of the line or mid-message, is not attributable to the probe or to TalkBack. TalkBack's
 # utterance names its speaker in the message: the P7 raw row renders
-# `V talkback: SpeechControllerImpl: Speaking fragment text=…`, and the device's seen form adds the
-# controller pid, `V/talkback(   20): SpeechControllerImpl( 20): Speaking fragment text=…`. The
-# spoken text is wrapped in ASCII quotes (`String.format("\"%s\"", …)`), and the quotes are
-# stripped so a required value matches the words the device actually spoke.
+# `V talkback: SpeechControllerImpl: Speaking fragment text=…`, and the pid columns are optional.
+# Two device forms were observed: `V/talkback(   20): SpeechControllerImpl( 20): …` and, on API 36,
+# `V/talkback: SpeechControllerImpl( 5884): …` — the tag carries no pid there while the controller
+# pid stays inside the message. The spoken text is wrapped in ASCII quotes
+# (`String.format("\"%s\"", …)`), and the quotes are stripped so a required value matches the words
+# the device actually spoke.
 _ULA11Y_LINE = re.compile(r"^[VDIWEF]/ULA11Y[ \t]*\([ \t]*\d+\):[ \t]*(.*)", re.MULTILINE)
 _TALKBACK_FRAGMENT = re.compile(
-    r"^[VDIWEF]/talkback[ \t]*\([ \t]*\d+\):[ \t]*SpeechControllerImpl(?:\([ \t]*\d+\))?:"
+    r"^[VDIWEF]/talkback(?:[ \t]*\([ \t]*\d+\))?:[ \t]*SpeechControllerImpl(?:\([ \t]*\d+\))?:"
     r"[ \t]*Speaking fragment text=(.*?), utteranceId=",
     re.MULTILINE,
 )
@@ -730,6 +733,16 @@ def probe_service_connected(log_text: str) -> bool:
         if match is not None and match.group(1).strip() == "service connected":
             return True
     return False
+
+
+def talkback_bound_service(bound_section: str) -> bool:
+    """True when a `dumpsys accessibility` Bound services section lists TalkBack.
+
+    API 36 renders each bound entry as `Service[label=TalkBack, feedbackType[…], …]` and never
+    prints the package name, so the exact label is the primary signal. The package name stays as
+    the fallback for images whose dump carries it; an empty or probe-only section matches neither.
+    """
+    return "Service[label=TalkBack," in bound_section or P806_TALKBACK_PACKAGE in bound_section
 
 
 def _ula11y_event(line: str) -> tuple[str, str] | None:
@@ -1817,7 +1830,7 @@ class Sampler:
             # is the dialog and the command reports found=false.
             self.handle_notification_permission_dialog()
             dump = self.accessibility_dumpsys()
-            if P806_TALKBACK_PACKAGE in self._bound_accessibility_section(dump):
+            if talkback_bound_service(self._bound_accessibility_section(dump)):
                 bound = True
                 break
             time.sleep(1)
