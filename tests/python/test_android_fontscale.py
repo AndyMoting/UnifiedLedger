@@ -22,6 +22,7 @@ from android_fontscale.sampler import (
     ScrollStep,
     SpeechCheck,
     TapStep,
+    accessibility_services_bound,
     adb_input_text,
     derive_p806_seed_facts,
     describe_step,
@@ -50,6 +51,7 @@ from android_fontscale.sampler import (
     permission_dialog_readback_delays,
     profile_by_name,
     profile_screens,
+    probe_bound_service,
     probe_service_connected,
     required_problems,
     screen_center,
@@ -57,6 +59,7 @@ from android_fontscale.sampler import (
     scroll_swipe_points,
     speech_fragments,
     talkback_check_verdict,
+    talkback_bound_service,
     talkback_level_summary_value,
     talkback_status_label,
     tap_radio_for,
@@ -1385,6 +1388,90 @@ class TalkbackArtifacts(unittest.TestCase):
         # Structural padding is horizontal; it must never bridge a line break.
         self.assertFalse(probe_service_connected("I/ULA11Y\n(   42): service connected\n"))
 
+    def test_the_api36_bound_section_names_talkback_by_its_label(self) -> None:
+        # The real talkback-accessibility.txt paragraph from run 45218212942: API 36 renders each
+        # bound service by label only, so a package-name match alone can never see TalkBack.
+        real = (
+            "Bound services:{Service[label=UL a11y probe, feedbackType[FEEDBACK_GENERIC], "
+            "capabilities=33, eventTypes=[TYPE_WINDOW_STATE_CHANGED, "
+            "TYPE_WINDOW_CONTENT_CHANGED], notificationTimeout=100, requestA11yBtn=false], \n"
+            "                     Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN, "
+            "FEEDBACK_HAPTIC, FEEDBACK_AUDIBLE], capabilities=251, eventTypes=TYPES_ALL_MASK, "
+            "notificationTimeout=0, requestA11yBtn=false]}\n"
+        )
+        self.assertTrue(talkback_bound_service(real))
+        self.assertFalse(
+            talkback_bound_service(
+                "Bound services:{Service[label=UL a11y probe, "
+                "feedbackType[FEEDBACK_GENERIC], capabilities=33]}\n"
+            )
+        )
+        self.assertFalse(talkback_bound_service(""))
+        # The package-name form remains the fallback for an image whose dump carries it.
+        self.assertTrue(
+            talkback_bound_service(
+                "Bound services:\n"
+                "  Service[label=TalkBack, package=com.google.android.marvin.talkback]\n"
+            )
+        )
+
+    def test_the_disabled_wait_needs_both_bound_services_to_leave(self) -> None:
+        import tempfile
+
+        # The real label-only shape: the teardown has not reached the device until BOTH entries are
+        # gone; matching on package names alone saw neither and returned immediately.
+        both = (
+            "Bound services:{Service[label=UL a11y probe, feedbackType[FEEDBACK_GENERIC], "
+            "capabilities=33, eventTypes=[TYPE_WINDOW_STATE_CHANGED], notificationTimeout=100, "
+            "requestA11yBtn=false], \n"
+            "                     Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN], "
+            "capabilities=251, eventTypes=TYPES_ALL_MASK, notificationTimeout=0, "
+            "requestA11yBtn=false]}\n"
+        )
+        probe_only = both.replace(
+            "Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN], capabilities=251, "
+            "eventTypes=TYPES_ALL_MASK, notificationTimeout=0, requestA11yBtn=false]",
+            "Service[label=Other, capabilities=0]",
+        )
+        self.assertNotEqual(both, probe_only)
+        self.assertTrue(probe_bound_service(both))
+        self.assertTrue(talkback_bound_service(both))
+        self.assertTrue(accessibility_services_bound(both))
+        self.assertTrue(probe_bound_service(probe_only))
+        self.assertFalse(talkback_bound_service(probe_only))
+        self.assertTrue(accessibility_services_bound(probe_only))
+        # The package-name shape still counts as bound through the fallback.
+        package_form = (
+            "Bound services:\n"
+            "  com.unifiedledger.android.test/.A11yFocusProbeService\n"
+            "  com.google.android.marvin.talkback/.TalkBackService\n"
+        )
+        self.assertTrue(probe_bound_service(package_form))
+        self.assertTrue(talkback_bound_service(package_form))
+        self.assertTrue(accessibility_services_bound(package_form))
+        self.assertFalse(accessibility_services_bound("Bound services:\n"))
+
+        class _BoundSampler(Sampler):
+            def __init__(self, evidence: Path, dump: str) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.dump_text = dump
+
+            def accessibility_dumpsys(self) -> str:
+                return self.dump_text
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            self.assertFalse(
+                _BoundSampler(evidence, both).wait_accessibility_disabled(timeout_s=0.01)
+            )
+            self.assertTrue(
+                _BoundSampler(evidence, "Bound services:\n").wait_accessibility_disabled(
+                    timeout_s=1
+                )
+            )
+
     def test_structural_padding_never_bridges_a_line_break(self) -> None:
         self.assertEqual(
             [],
@@ -1546,6 +1633,49 @@ class TalkbackArtifacts(unittest.TestCase):
             tap = next(i for i, kind in enumerate(kinds) if kind == ("shell", "input", "tap"))
             self.assertLess(tap, swipe)
 
+    def test_the_api36_brief_row_names_talkback_without_a_tag_pid(self) -> None:
+        # The verbatim rows from run 45218212942's talkback-report.txt: API 36 emits
+        # `V/talkback:` with no pid after the tag; the controller pid stays in the message.
+        log = (
+            'V/talkback: SpeechControllerImpl( 5884): Speaking fragment text="TalkBack on", '
+            "utteranceId=talkback_0, TtsSpan=null, locale=null, event=null\n"
+            'V/talkback: SpeechControllerImpl( 5884): Speaking fragment text="UnifiedLedger", '
+            "utteranceId=talkback_1, TtsSpan=null, locale=null, "
+            "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_WINDOWS_CHANGED displayId:0 "
+            "time:262253\n"
+            'V/talkback: SpeechControllerImpl( 5884): Speaking fragment text="结余 -17.34 CNY", '
+            "utteranceId=talkback_2, TtsSpan=null, locale=en_US, "
+            "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_VIEW_ACCESSIBILITY_FOCUSED "
+            "displayId:0 time:263316\n"
+        )
+        self.assertEqual(
+            ["TalkBack on", "UnifiedLedger", "结余 -17.34 CNY"], speech_fragments(log)
+        )
+
+    def test_the_fragment_row_keeps_its_tag_and_null_rules(self) -> None:
+        self.assertEqual(
+            [],
+            speech_fragments(
+                "V/talkback: SpeechControllerImpl( 5884): Speaking fragment text=null, "
+                "utteranceId=quiet, TtsSpan=null, locale=null, event=null\n"
+            ),
+        )
+        self.assertEqual(
+            [],
+            speech_fragments(
+                'V/other: SpeechControllerImpl( 5884): Speaking fragment text="伪造", '
+                "utteranceId=fake, TtsSpan=null, locale=null, event=null\n"
+            ),
+        )
+        # A different tag that merely quotes the real row is not TalkBack's own line.
+        self.assertEqual(
+            [],
+            speech_fragments(
+                'I/ULA11Y  ( 5888): V/talkback: SpeechControllerImpl( 5884): '
+                'Speaking fragment text="mid-message", utteranceId=fake\n'
+            ),
+        )
+
     def test_the_bind_wait_clears_the_prompt_right_after_the_service_starts(self) -> None:
         import tempfile
 
@@ -1572,9 +1702,15 @@ class TalkbackArtifacts(unittest.TestCase):
                 return "I/ULA11Y  (   42): service connected\n"
 
             def accessibility_dumpsys(self) -> str:
+                # The API 36 shape: bound services by label only, no package name anywhere.
                 return (
-                    "Bound services:\n"
-                    "  Service[label=TalkBack, package=com.google.android.marvin.talkback]\n"
+                    "Bound services:{Service[label=UL a11y probe, "
+                    "feedbackType[FEEDBACK_GENERIC], capabilities=33, "
+                    "eventTypes=[TYPE_WINDOW_STATE_CHANGED], notificationTimeout=100, "
+                    "requestA11yBtn=false], \n"
+                    "                     Service[label=TalkBack, "
+                    "feedbackType[FEEDBACK_SPOKEN, FEEDBACK_HAPTIC], capabilities=251, "
+                    "eventTypes=TYPES_ALL_MASK, notificationTimeout=0, requestA11yBtn=false]}\n"
                 )
 
             def handle_notification_permission_dialog(self) -> bool:
@@ -1583,7 +1719,9 @@ class TalkbackArtifacts(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             sampler = _EnableSampler(Path(temp))
-            self.assertEqual("success", sampler.enable_talkback("report")["status"])
+            record = sampler.enable_talkback("report")
+            self.assertEqual("success", record["status"])
+            self.assertTrue(record["talkback_bound"])
             self.assertGreaterEqual(len(sampler.calls), 1)
 
     def test_the_speech_leg_clears_the_prompt_before_its_first_focus(self) -> None:
