@@ -2,6 +2,7 @@ package com.unifiedledger.android
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
+import com.unifiedledger.application.ImportCandidateDecisionResult
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.P408EvidenceResponsibility
@@ -43,12 +44,12 @@ import kotlin.time.Instant
  * composition root (`openAndroidStableStorageLedger` + the real Android SQLite driver), with the
  * reducer's scroll-slot round trip (返回保留滚动位) as the fourth leg.
  *
- * The seeding lives in `P801ChainFixture.kt` (this file holds exactly the four device cases the
+ * The seeding lives in `P801ChainFixture.kt` (this file holds exactly the five device cases the
  * inventory enumerates). No Compose UI test harness is involved: the scroll slots are plain
  * reducer state, and `app-ui` is an `implementation` dependency of this module.
  *
  * EVERY CASE IS INDEPENDENT: each one opens its own redirected ledger root (see the fixture), so
- * the four can run in any order and leave nothing behind.
+ * the five can run in any order and leave nothing behind.
  */
 @RunWith(AndroidJUnit4::class)
 class P801AccountReconciliationChainInstrumentedTest {
@@ -206,6 +207,129 @@ class P801AccountReconciliationChainInstrumentedTest {
         assertEquals(countsBeforeChain, chain.formalCounts())
         assertEquals(balancesBeforeChain, chain.balanceFingerprint())
         assertEquals(postingsBeforeChain, chain.postingFingerprint(accountId, sourceAccountId))
+    }
+
+    /**
+     * P8-07 Q2 flow 2 (spec §2) on device: after the reconciliation confirm, the production
+     * import-review read surface derives `usedForReconciliation` for the same candidate from its
+     * active `evidence_link`; a second attempt to confirm that same source candidate is refused
+     * with `IMPORT_EVIDENCE_ALREADY_RECONCILED` and moves no formal row or evidence-link count; and
+     * the audit read-back still reports the identical link and source afterwards.
+     */
+    @Test
+    fun aSecondImportConfirmationIsRejectedAndTheReconciliationStaysLinked() {
+        val chain = openChain("q2-double-booking")
+        val accountId = chain.createSecondAccount()
+        val incomeCategoryId = chain.createIncomeCategoryLeaf()
+        chain.createConfirmedTransfer(accountId)
+        val sourceAccountId = AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID)
+        val seeded = chain.createImportCandidateEvidence()
+
+        // The import-review read surface starts with the candidate not used for reconciliation.
+        val reviewBefore =
+            checkNotNull(chain.importReviewRow(seeded.candidateId)) {
+                "the seeded candidate must be visible on the import-review surface"
+            }
+        assertEquals(seeded.evidenceId, reviewBefore.evidenceId)
+        assertFalse("an unlinked candidate must not read as used for reconciliation", reviewBefore.usedForReconciliation)
+
+        val leg = chain.queueRows(accountId).single()
+        val bound = chain.bind(seeded.evidenceId, accountId)
+        check(bound is P801BindEvidenceResult.Bound) { "the bind must be accepted, got $bound" }
+        val proposals = chain.propose(leg)
+        check(proposals is P801CandidateProposalResult.Success) { "the proposal read must answer, got $proposals" }
+        val proposal = proposals.proposals.single()
+        val confirmed = chain.confirm(proposal.evidence, proposal.match.candidates.single())
+        check(confirmed is P801ConfirmLinkResult.Linked) { "the confirm must be accepted, got $confirmed" }
+
+        // (a) The same candidate now reads as used for reconciliation, still anchored to its evidence.
+        val reviewAfter =
+            checkNotNull(chain.importReviewRow(seeded.candidateId)) {
+                "the reconciled candidate must remain visible on the import-review surface"
+            }
+        assertEquals(seeded.evidenceId, reviewAfter.evidenceId)
+        assertTrue("an active link must surface as used for reconciliation", reviewAfter.usedForReconciliation)
+
+        // The audit read-back before the rejected second attempt.
+        val auditBefore = chain.audit(leg.postingId)
+        check(auditBefore is P801ReconciledLegAuditResult.Success) { "the audit read must answer, got $auditBefore" }
+        val linkedBefore = auditBefore.audit.evidence.single()
+        assertEquals(seeded.evidenceId, linkedBefore.evidenceId)
+        assertEquals(P801ChainFacts.INPUT_REF, linkedBefore.source.importInputRef)
+
+        // (b) Confirming the same source candidate again is refused with zero movement of formal
+        // accounting, evidence links, balances, postings, or the candidate's own state and history.
+        val countsBefore = chain.formalCounts()
+        val balancesBefore = chain.balanceFingerprint()
+        val postingsBefore = chain.postingFingerprint(accountId, sourceAccountId)
+        val linkCountBefore = chain.activeEvidenceLinkCount(seeded.evidenceId)
+        assertEquals("the confirmed reconciliation must hold exactly one active link", 1, linkCountBefore)
+        val candidateBefore =
+            checkNotNull(chain.importCandidateDetail(seeded.candidateId)) {
+                "the seeded candidate detail must be readable"
+            }
+        val rejected = chain.confirmImportCandidate(seeded.candidateId, reviewAfter.contentHash, "p801-q2-second-confirm", incomeCategoryId)
+        check(rejected is ImportCandidateDecisionResult.Rejected) { "the second confirmation must be rejected, got $rejected" }
+        assertEquals("IMPORT_EVIDENCE_ALREADY_RECONCILED", rejected.diagnostic.code)
+        assertEquals("the rejected confirmation must move no formal accounting", countsBefore, chain.formalCounts())
+        assertEquals("the rejected confirmation must move no balance", balancesBefore, chain.balanceFingerprint())
+        assertEquals("the rejected confirmation must move no posting", postingsBefore, chain.postingFingerprint(accountId, sourceAccountId))
+        assertEquals("the rejected confirmation must add no evidence link", linkCountBefore, chain.activeEvidenceLinkCount(seeded.evidenceId))
+        assertEquals(
+            "the rejected confirmation must not change the candidate state or its status history",
+            candidateBefore,
+            chain.importCandidateDetail(seeded.candidateId),
+        )
+
+        // (c) The audit read-back is unchanged: the same single link to the same source.
+        val auditAfter = chain.audit(leg.postingId)
+        check(auditAfter is P801ReconciledLegAuditResult.Success) { "the audit read must still answer, got $auditAfter" }
+        assertEquals("the audit read-back must be identical after the rejection", auditBefore.audit, auditAfter.audit)
+        assertEquals(1, auditAfter.audit.evidence.size)
+        val linkedEvidence = auditAfter.audit.evidence.single()
+        assertEquals(seeded.evidenceId, linkedEvidence.evidenceId)
+        assertEquals(P801ChainFacts.INPUT_REF, linkedEvidence.source.importInputRef)
+        assertEquals(P408ReconciliationStatus.CHECKED, checkNotNull(auditAfter.audit.reconciliation).status)
+
+        // Q2-F03 control on its own redirected ledger: the IDENTICAL request shape — same valid
+        // income category and funding account — passes validation and creates exactly one formal
+        // transaction when no active evidence link exists. This proves the rejection above is the
+        // double-booking guard, not a malformed request.
+        val control = P801ChainFixture("q2-control")
+        try {
+            control.open()
+            val controlAccountId = control.createSecondAccount()
+            val controlIncomeCategoryId = control.createIncomeCategoryLeaf()
+            control.createConfirmedTransfer(controlAccountId)
+            val controlSeeded = control.createImportCandidateEvidence()
+            val controlHash =
+                checkNotNull(control.importReviewRow(controlSeeded.candidateId)) {
+                    "the control candidate must be readable"
+                }.contentHash
+            val controlCountsBefore = control.formalCounts()
+            val accepted =
+                control.confirmImportCandidate(
+                    controlSeeded.candidateId,
+                    controlHash,
+                    "p801-q2-control-confirm",
+                    controlIncomeCategoryId,
+                )
+            check(accepted is ImportCandidateDecisionResult.Accepted) {
+                "the unlinked control must confirm, got $accepted"
+            }
+            val controlCountsAfter = control.formalCounts()
+            assertEquals("the control must add exactly one transaction", controlCountsBefore[0] + 1, controlCountsAfter[0])
+            assertEquals("the control must add exactly one version", controlCountsBefore[1] + 1, controlCountsAfter[1])
+            assertEquals("the control must add exactly one posting set", controlCountsBefore[2] + 1, controlCountsAfter[2])
+            assertEquals("the control must add exactly two postings", controlCountsBefore[3] + 2, controlCountsAfter[3])
+            assertEquals(
+                "the control must add exactly one effective transaction",
+                controlCountsBefore[4] + 1,
+                controlCountsAfter[4],
+            )
+        } finally {
+            control.close()
+        }
     }
 
     /**

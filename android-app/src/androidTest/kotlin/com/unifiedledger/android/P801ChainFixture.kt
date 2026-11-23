@@ -8,6 +8,7 @@ import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogAdmissionTransferTransactionFactory
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.CommitOnceInvocationTrackerTransfer
+import com.unifiedledger.application.ConfirmImportCandidate
 import com.unifiedledger.application.ConfirmedManualTransferResult
 import com.unifiedledger.application.ConfirmedTransferTransactionFactory
 import com.unifiedledger.application.DEFAULT_MANAGEABLE_ACCOUNT_ID
@@ -16,7 +17,12 @@ import com.unifiedledger.application.ExecuteImportIntake
 import com.unifiedledger.application.ExplicitManualSave
 import com.unifiedledger.application.ExplicitlyConfirmedManualTransfer
 import com.unifiedledger.application.IMPORT_FUNDING_RULE_LEGACY_SETTLED
+import com.unifiedledger.application.ImportCandidateConfirmRequest
+import com.unifiedledger.application.ImportCandidateDecisionResult
+import com.unifiedledger.application.ImportCandidateDetailRow
+import com.unifiedledger.application.ImportCandidateId
 import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportConfirmDecisionFields
 import com.unifiedledger.application.ImportContentFingerprint
 import com.unifiedledger.application.ImportFundingState
 import com.unifiedledger.application.ImportIntakeRequest
@@ -24,8 +30,10 @@ import com.unifiedledger.application.ImportIntakeResult
 import com.unifiedledger.application.ImportRecordKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
+import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.ImportSourceFacts
 import com.unifiedledger.application.ManualTransferTransactionFactory
+import com.unifiedledger.application.OrdinaryFlowFormalFactory
 import com.unifiedledger.application.P408MatchCandidate
 import com.unifiedledger.application.P801AccountPostingFactsResult
 import com.unifiedledger.application.P801AccountReconciliationPageResult
@@ -44,15 +52,19 @@ import com.unifiedledger.application.UuidV7Generator
 import com.unifiedledger.application.UuidV7ImportIntakeIdSource
 import com.unifiedledger.application.UuidV7ManualTransferRequestIdSource
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
+import com.unifiedledger.data.SqlDelightImportReviewReadAdapter
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CategoryKind
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.DomainViolation
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.ui.ImportFilePickResultChannel
+import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import java.io.File
 import java.security.SecureRandom
 import kotlin.time.Duration.Companion.days
@@ -64,7 +76,7 @@ import kotlin.time.Instant
  *
  * WHY THIS FILE CARRIES NO TEST ANNOTATION: `tools/python/android_scale/inventory.py` enumerates
  * exactly one class per file (the FIRST `class` keyword) and skips every file without a test
- * annotation, so the four device cases live in their own file and this helper never enters
+ * annotation, so the five device cases live in their own file and this helper never enters
  * `tools/ci/android-instrumented-inventory.txt`.
  *
  * WHAT IS REAL HERE. [open] is the production entry [openAndroidStableStorageLedger] over the real
@@ -107,6 +119,10 @@ internal object P801ChainFacts {
     /** The seeded account's name; `createManagedAccount` normalizes it and it must be unique. */
     const val ACCOUNT_NAME: String = "对账链资产账户"
 
+    /** The income category group/leaf names the ordinary-confirmation control creates. */
+    const val INCOME_GROUP_NAME: String = "对账链收入分组"
+    const val INCOME_LEAF_NAME: String = "对账链收入"
+
     /** The transfer note, also the queue row's label. */
     const val NOTE: String = "对账链合成转账"
 
@@ -123,7 +139,17 @@ internal object P801ChainFacts {
     const val ROOT_PREFIX: String = "p801-v10-chain-"
 }
 
-/** One seeded chain: the opened graph, its captured handle and the ids the four cases assert on. */
+/**
+ * The id pair the production intake minted for one seeded import row: the evidence the
+ * reconciliation chain links, and the candidate the import-review surface and the double-booking
+ * guard address.
+ */
+internal data class P801SeededImportEvidence(
+    val evidenceId: String,
+    val candidateId: String,
+)
+
+/** One seeded chain: the opened graph, its captured handle and the ids the five cases assert on. */
 internal class P801ChainFixture(
     testName: String,
 ) : AutoCloseable {
@@ -187,6 +213,34 @@ internal class P801ChainFixture(
     }
 
     /**
+     * An owned INCOME leaf category through the production catalog command, so the ordinary-flow
+     * confirmation below carries genuinely valid decision fields for the seeded `in` evidence. The
+     * bootstrap seed holds ONLY expense categories, so a valid income category must be created
+     * first. `expectedCatalogVersion = 2` is the version [createSecondAccount] leaves behind.
+     */
+    fun createIncomeCategoryLeaf(): CategoryId {
+        val commands =
+            checkNotNull(graph.catalogCommands) { "the production graph must wire the catalog commands" }
+        val receipt =
+            when (
+                val result =
+                    commands.createCategoryGroup(
+                        ledgerId = P801ChainFacts.ledgerId,
+                        kind = CategoryKind.INCOME,
+                        groupName = P801ChainFacts.INCOME_GROUP_NAME,
+                        firstChildName = P801ChainFacts.INCOME_LEAF_NAME,
+                        expectedCatalogVersion = 2L,
+                    )
+            ) {
+                is CatalogCommandResult.Accepted -> result.receipt
+                else -> throw AssertionError("the income category group must be created, got $result")
+            }
+        return checkNotNull(receipt.createdChildCategoryId) {
+            "an accepted CreateCategoryGroup must name the child category it created"
+        }
+    }
+
+    /**
      * One confirmed `ACCOUNT_TRANSFER` with two legs, built exactly as `App.kt` builds the product
      * chain: the invocation tracker over the handle's commit port, the real id sources, and the
      * catalog-admission wrapper whose delegate reloads the current catalog per write. Fee is zero,
@@ -234,8 +288,14 @@ internal class P801ChainFixture(
      * the production intake, which writes all of them in one transaction. The facts are the frozen
      * five-field funding identity of the transfer's DESTINATION leg: `in`, the same minor units, the
      * same currency and precision, and a source time whose text shape and natural day match.
+     *
+     * [createImportCandidateEvidence] keeps the candidate id the intake minted; this compatibility
+     * accessor returns only the evidence id the existing reconciliation cases assert on.
      */
-    fun createImportEvidence(): String {
+    fun createImportEvidence(): String = createImportCandidateEvidence().evidenceId
+
+    /** The same intake as [createImportEvidence], exposing the created candidate as well. */
+    fun createImportCandidateEvidence(): P801SeededImportEvidence {
         val execute =
             ExecuteImportIntake(
                 commitPort = handle.importSpineStore,
@@ -274,7 +334,10 @@ internal class P801ChainFixture(
                 is ImportIntakeResult.Accepted -> result.receipt
                 else -> throw AssertionError("the seeded intake must be accepted, got $result")
             }
-        return checkNotNull(receipt.evidenceId) { "an accepted intake must name its evidence" }.value
+        return P801SeededImportEvidence(
+            evidenceId = checkNotNull(receipt.evidenceId) { "an accepted intake must name its evidence" }.value,
+            candidateId = receipt.candidateId.value,
+        )
     }
 
     // ------------------------------------------------------------------ the production chain reads
@@ -325,6 +388,66 @@ internal class P801ChainFixture(
 
     /** The audit read-back of one leg (spec section 2.6). */
     fun audit(postingId: PostingId): P801ReconciledLegAuditResult = readPort().loadReconciledLegAudit(P801ChainFacts.ledgerId, postingId)
+
+    /**
+     * The production import-review read surface (P8-01a spec section 2.7), read through the same
+     * [SqlDelightImportReviewReadAdapter] the composition root wires. `usedForReconciliation` is
+     * derived from the latest ACTIVE `evidence_link` history row, never a persisted status.
+     */
+    fun importReviewRow(candidateId: String): ImportReviewRow? =
+        SqlDelightImportReviewReadAdapter(handle.database)
+            .loadImportReviewRows(P801ChainFacts.ledgerId)
+            .firstOrNull { it.candidateId.value == candidateId }
+
+    /** The single-candidate detail (row + status-history count) from the same production read. */
+    fun importCandidateDetail(candidateId: String): ImportCandidateDetailRow? =
+        SqlDelightImportReviewReadAdapter(handle.database)
+            .loadImportCandidateDetail(P801ChainFacts.ledgerId, ImportCandidateId(candidateId))
+
+    /**
+     * The production ordinary-flow import confirmation (the same [ConfirmImportCandidate] wiring
+     * `App.kt` uses) over this graph's spine store and a fresh UUIDv7 id mint. A request that the
+     * spine store refuses aborts before any id is consumed, so the mint is never reached on the
+     * double-booking path.
+     */
+    fun confirmImportCandidate(
+        candidateId: String,
+        expectedContentHash: String,
+        requestId: String,
+        categoryId: CategoryId,
+    ): ImportCandidateDecisionResult {
+        val catalog =
+            checkNotNull(handle.catalogStore.loadCurrent(P801ChainFacts.ledgerId)) {
+                "the seeded ledger must still carry its current catalog"
+            }
+        val useCase =
+            ConfirmImportCandidate(
+                commitPort = handle.importSpineStore,
+                idSource = UuidV7ImportCommitIdSource(UuidV7Generator(::p801SecureRandomBytes), postingCount = 2),
+                createFormalTransaction = OrdinaryFlowFormalFactory(catalog),
+                catalog = catalog,
+            )
+        return useCase.execute(
+            ImportCandidateConfirmRequest(
+                identity = ImportRequestIdentity(P801ChainFacts.ledgerId, ImportRequestId(requestId)),
+                candidateId = ImportCandidateId(candidateId),
+                expectedContentHash = expectedContentHash,
+                explicitConfirmedAt = P801ChainFacts.OCCURRED_AT_TEXT,
+                decisionFields =
+                    ImportConfirmDecisionFields.OrdinaryFlow(
+                        categoryId = categoryId,
+                        fundingAccountId = AccountId(DEFAULT_MANAGEABLE_ACCOUNT_ID),
+                    ),
+            ),
+        )
+    }
+
+    /** The count of ACTIVE evidence links for one evidence id (the double-booking guard's own read). */
+    fun activeEvidenceLinkCount(evidenceId: String): Int =
+        handle.database.ledgerQueries
+            .selectP408ActiveLinksForEvidence(P801ChainFacts.ledgerId.value, evidenceId)
+            .executeAsList()
+            .size
 
     // ------------------------------------------------------------------ the "no accounting moved" face
 
