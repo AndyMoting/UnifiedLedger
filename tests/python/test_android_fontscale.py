@@ -15,6 +15,7 @@ from android_fontscale.sampler import (
     RadioStep,
     SampleError,
     Sampler,
+    Screen,
     ScrollStep,
     SpeechCheck,
     TapStep,
@@ -36,6 +37,7 @@ from android_fontscale.sampler import (
     input_text,
     isolate_talkback_window,
     marker_problems,
+    notification_permission_dialog_identity,
     overall_speech_status,
     p806_gate_problems,
     p806_rollover_problem,
@@ -43,6 +45,7 @@ from android_fontscale.sampler import (
     parse_font_scale,
     profile_by_name,
     profile_screens,
+    probe_service_connected,
     required_problems,
     screen_center,
     scroll_until,
@@ -66,6 +69,26 @@ _DUMP = """<?xml version="1.0" encoding="UTF-8"?>
   </node>
 </hierarchy>
 """
+
+# The observed API 33+ POST_NOTIFICATIONS grant dialog (permissioncontroller ids and message).
+_PERMISSION_DIALOG = """<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0"><node bounds="[0,0][1080,2400]" text="" content-desc="">
+  <node bounds="[0,900][1080,1500]" text="" resource-id="com.android.permissioncontroller:id/grant_dialog">
+    <node bounds="[0,950][1080,1050]" text="Allow Android Accessibility Suite to send you notifications?" resource-id="com.android.permissioncontroller:id/permission_message" />
+    <node bounds="[100,1350][500,1450]" text="Allow" resource-id="com.android.permissioncontroller:id/permission_allow_button" />
+    <node bounds="[600,1350][1000,1450]" text="Don’t allow" resource-id="com.android.permissioncontroller:id/permission_deny_button" />
+  </node>
+</node></hierarchy>"""
+
+_DIALOG_DISMISSED = (
+    '<hierarchy rotation="0"><node bounds="[0,0][1080,2400]" text="首页" content-desc="" /></hierarchy>'
+)
+
+# The same dialog as the device actually rendered it: the node PACKAGE is the Google-signed
+# permissioncontroller while the resource ids keep the `com.android.permissioncontroller` namespace.
+# An identity that keyed on the package attribute would match this tree too, so the fixture must
+# carry both or a future change could pass while rejecting the real dump.
+_PERMISSION_DIALOG_REAL = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.google.android.permissioncontroller" content-desc="" bounds="[28,769][1052,1696]"><node index="0" text="" resource-id="com.android.permissioncontroller:id/grant_dialog" class="android.widget.LinearLayout" package="com.google.android.permissioncontroller" content-desc="" bounds="[28,769][1052,1696]"><node index="0" text="Allow Android Accessibility Suite to send you notifications?" resource-id="com.android.permissioncontroller:id/permission_message" class="android.widget.TextView" package="com.google.android.permissioncontroller" content-desc="" bounds="[133,990][947,1219]" /><node index="1" text="Don’t allow" resource-id="com.android.permissioncontroller:id/permission_deny_button" class="android.widget.Button" package="com.google.android.permissioncontroller" content-desc="" bounds="[133,1444][947,1591]" /></node></node></hierarchy>"""
 
 # One option row's device shape: a clickable RadioButton plus a sibling Text. The 支出 row's radio
 # is also in the 退款到账 row's band, so the lookup has to pick the NEAREST left radio, not the first.
@@ -775,10 +798,11 @@ class P806Profile(unittest.TestCase):
 
     @staticmethod
     def _fragment_line(fragment: str) -> str:
-        # The real brief line: outer tag `talkback`, speaker named in the message. This uses the
-        # P7-derived controller form with no inner pid; the parenthesized form is exercised apart.
+        # The real brief line: outer tag `talkback` (8 columns, so unpadded), pid right-justified
+        # to 5, and the speaker named in the message (the P7-derived no-inner-pid form; the
+        # parenthesized controller form is exercised apart).
         return (
-            "V/talkback( 20): SpeechControllerImpl: Speaking fragment text="
+            "V/talkback(   20): SpeechControllerImpl: Speaking fragment text="
             f'"{fragment}", utteranceId=utt, TtsSpan=null, locale=zh_CN, event=TYPE_VIEW_FOCUSED'
         )
 
@@ -805,22 +829,24 @@ class P806Profile(unittest.TestCase):
         def preview(value: str) -> str:
             return value.replace("\n", " ")[:60]
 
+        # AOSP brief: `%c/%-8.*s(%s%5d): ` — `ULA11Y` pads to 8 columns and pid 10 to width 5.
+        probe = "I/ULA11Y  (   10): "
         lines = [
-            f"I/ULA11Y( 10): command action=focus id={command_id} needle64={encoded} "
+            probe + f"command action=focus id={command_id} needle64={encoded} "
             f'target="{target}"',
-            f'I/ULA11Y( 10): target id={command_id} found=true text="{preview(actual_text)}" '
+            probe + f'target id={command_id} found=true text="{preview(actual_text)}" '
             f'desc="{preview(actual_desc)}" text64="{text64}" desc64="{desc64}"',
         ]
         lines.extend(cls._fragment_line(fragment) for fragment in pre_begin or [])
         lines.extend(
             [
-                f"I/ULA11Y( 10): speech-window-begin id={command_id}",
-                f"I/ULA11Y( 10): focus-result id={command_id} found=true "
+                probe + f"speech-window-begin id={command_id}",
+                probe + f"focus-result id={command_id} found=true "
                 f"accepted={'true' if accepted else 'false'}",
             ]
         )
         lines.extend(cls._fragment_line(fragment) for fragment in fragments)
-        lines.append(f"I/ULA11Y( 10): speech-window-end id={command_id}")
+        lines.append(probe + f"speech-window-end id={command_id}")
         return "\n".join(lines) + "\n"
 
     PROBE_COMPONENT = (
@@ -1307,12 +1333,12 @@ class TalkbackArtifacts(unittest.TestCase):
 
     def test_fragments_are_extracted_in_log_order(self) -> None:
         log = (
-            'V/talkback( 20): SpeechControllerImpl: Speaking fragment text="结余", '
+            'V/talkback(   20): SpeechControllerImpl: Speaking fragment text="结余", '
             "utteranceId=a, TtsSpan=null, locale=zh_CN, event=x\n"
-            "I/ULA11Y( 10): focus-result id=1 found=true accepted=true\n"
-            'V/talkback( 20): SpeechControllerImpl: Speaking fragment text="-17.34", '
+            "I/ULA11Y  (   10): focus-result id=1 found=true accepted=true\n"
+            'V/talkback(   20): SpeechControllerImpl: Speaking fragment text="-17.34", '
             "utteranceId=b, TtsSpan=null, locale=zh_CN, event=x\n"
-            "V/talkback( 20): SpeechControllerImpl: Speaking fragment text=null, "
+            "V/talkback(   20): SpeechControllerImpl: Speaking fragment text=null, "
             "utteranceId=c, TtsSpan=null, locale=zh_CN, event=x\n"
         )
         self.assertEqual(["结余", "-17.34"], speech_fragments(log))
@@ -1321,7 +1347,7 @@ class TalkbackArtifacts(unittest.TestCase):
         # The observed brief form names the controller's own pid inside the message; it is the
         # same TalkBack utterance as the P7-derived no-pid form and is extracted the same way.
         log = (
-            'V/talkback( 20): SpeechControllerImpl( 20): Speaking fragment text="父级", '
+            'V/talkback(   20): SpeechControllerImpl( 20): Speaking fragment text="父级", '
             "utteranceId=a, TtsSpan=null, locale=zh_CN, event=x\n"
         )
         self.assertEqual(["父级"], speech_fragments(log))
@@ -1330,14 +1356,329 @@ class TalkbackArtifacts(unittest.TestCase):
         # A different logger whose MESSAGE quotes the line must not impersonate the tag column,
         # whether the controller form sits unquoted or is embedded as a real-looking brief line.
         log = (
-            'V/SomeOtherLogger( 20): payload SpeechControllerImpl( 20): '
+            'V/SomeOtherLogger(   20): payload SpeechControllerImpl( 20): '
             'Speaking fragment text="伪造一", utteranceId=fake, event=x\n'
-            'I/SomeOtherLogger( 20): V/talkback( 20): SpeechControllerImpl: '
+            'I/SomeOtherLogger(   20): V/talkback(   20): SpeechControllerImpl: '
             'Speaking fragment text="伪造二", utteranceId=fake, event=x\n'
-            'V/talkback( 20): SpeechControllerImpl: Speaking fragment text="真实", '
+            'V/talkback(   20): SpeechControllerImpl: Speaking fragment text="真实", '
             "utteranceId=real, TtsSpan=null, locale=zh_CN, event=x\n"
         )
         self.assertEqual(["真实"], speech_fragments(log))
+
+    def test_padded_brief_readiness_is_recognized_and_mimics_are_not(self) -> None:
+        # AOSP brief pads `ULA11Y` to 8 columns and the pid to 5: `I/ULA11Y  (   42): ...`.
+        self.assertTrue(probe_service_connected("I/ULA11Y  (   42): service connected\n"))
+        self.assertFalse(probe_service_connected("I/OtherTag(   42): service connected\n"))
+        self.assertFalse(
+            probe_service_connected(
+                "I/OtherTag(   42): I/ULA11Y  (   42): service connected\n"
+            )
+        )
+        self.assertFalse(
+            probe_service_connected("trailing I/ULA11Y  (   42): service connected\n")
+        )
+        # Structural padding is horizontal; it must never bridge a line break.
+        self.assertFalse(probe_service_connected("I/ULA11Y\n(   42): service connected\n"))
+
+    def test_structural_padding_never_bridges_a_line_break(self) -> None:
+        self.assertEqual(
+            [],
+            speech_fragments(
+                "V/talkback(   20):\n"
+                "SpeechControllerImpl: Speaking fragment text=joined, utteranceId=1\n"
+            ),
+        )
+        self.assertEqual(
+            [],
+            speech_fragments(
+                "V/talkback\n(   20): SpeechControllerImpl: "
+                "Speaking fragment text=joined, utteranceId=1\n"
+            ),
+        )
+
+    def test_a_mid_message_probe_line_is_not_a_probe_command(self) -> None:
+        encoded = base64.b64encode(b"target").decode("ascii")
+        mimic = (
+            'I/OtherTag(   10): I/ULA11Y  (   10): command action=focus id=1 '
+            f'needle64={encoded} target="target"\n'
+        )
+        window, problem = isolate_talkback_window(mimic, 1)
+        self.assertEqual([], window)
+        self.assertIn("never began", problem)
+
+    @staticmethod
+    def _dialog_sampler(
+        evidence: Path, frames: list[str], *, guard: bool = True
+    ) -> Sampler:
+        class _DialogSampler(Sampler):
+            def __init__(self) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.frames = list(frames)
+                self.commands: list[tuple[str, ...]] = []
+                self.dump_stems: list[str] = []
+                self.notification_dialog_guard = guard
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                self.commands.append(args)
+                return ""
+
+            def dump(self, stem: str) -> str:
+                self.dump_stems.append(stem)
+                return self.frames.pop(0) if len(self.frames) > 1 else self.frames[0]
+
+        return _DialogSampler()
+
+    def test_the_accessibility_suite_notification_prompt_is_denied(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._dialog_sampler(
+                evidence, [_PERMISSION_DIALOG, _DIALOG_DISMISSED]
+            )
+            self.assertTrue(sampler.handle_notification_permission_dialog())
+            self.assertIn(("shell", "input", "tap", "800", "1400"), sampler.commands)
+            self.assertEqual(
+                ["permission-dialog", "permission-dialog-after"], sampler.dump_stems
+            )
+            self.assertTrue((evidence / "notification-dialog.txt").is_file())
+
+    def test_a_different_permission_or_app_dialog_is_not_touched(self) -> None:
+        import tempfile
+
+        other_owner = _PERMISSION_DIALOG.replace(
+            "com.android.permissioncontroller", "com.example.othercontroller"
+        )
+        other_message = _PERMISSION_DIALOG.replace(
+            "Allow Android Accessibility Suite to send you notifications?",
+            "Allow Example to access photos?",
+        )
+        for foreign in (other_owner, other_message):
+            with tempfile.TemporaryDirectory() as temp:
+                sampler = self._dialog_sampler(Path(temp), [foreign])
+                self.assertFalse(sampler.handle_notification_permission_dialog())
+                self.assertFalse(
+                    any(
+                        command[:3] == ("shell", "input", "tap")
+                        for command in sampler.commands
+                    )
+                )
+
+    def test_a_prompt_that_survives_the_deny_is_reported(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._dialog_sampler(
+                Path(temp), [_PERMISSION_DIALOG, _PERMISSION_DIALOG]
+            )
+            with self.assertRaises(SampleError):
+                sampler.handle_notification_permission_dialog()
+
+    def test_the_prompt_is_only_handled_with_the_p806_guard(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._dialog_sampler(
+                Path(temp), [_PERMISSION_DIALOG], guard=False
+            )
+            self.assertFalse(sampler.handle_notification_permission_dialog())
+            self.assertEqual([], sampler.dump_stems)
+
+    def test_the_real_rendered_prompt_tree_is_recognized_by_its_ids(self) -> None:
+        # The device renders package="com.google.android.permissioncontroller" with
+        # com.android.permissioncontroller ids; the ids, not the package attribute, decide.
+        self.assertTrue(notification_permission_dialog_identity(_PERMISSION_DIALOG_REAL))
+        self.assertFalse(
+            notification_permission_dialog_identity(
+                _PERMISSION_DIALOG_REAL.replace(
+                    "com.android.permissioncontroller:id/permission_message",
+                    "com.example.other:id/permission_message",
+                )
+            )
+        )
+
+    def test_the_prompt_is_denied_before_the_first_swipe(self) -> None:
+        import tempfile
+
+        app_without = (
+            '<hierarchy rotation="0"><node bounds="[0,0][1080,2400]" text="首页" '
+            'content-desc="" /></hierarchy>'
+        )
+        app_with = (
+            '<hierarchy rotation="0"><node bounds="[0,100][1080,200]" text="日均按该期间" '
+            'content-desc="" /></hierarchy>'
+        )
+
+        class _ScrollSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.frames = [
+                    _PERMISSION_DIALOG,
+                    _DIALOG_DISMISSED,
+                    app_without,
+                    app_without,
+                    app_with,
+                ]
+                self.commands: list[tuple[str, ...]] = []
+                self.notification_dialog_guard = True
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                self.commands.append(args)
+                return ""
+
+            def dump(self, stem: str) -> str:
+                return self.frames.pop(0) if len(self.frames) > 1 else self.frames[0]
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _ScrollSampler(Path(temp))
+            self.assertEqual(app_with, sampler.scroll_to("日均按该期间"))
+            kinds = [command[:3] for command in sampler.commands]
+            swipe = next(i for i, kind in enumerate(kinds) if kind == ("shell", "input", "swipe"))
+            tap = next(i for i, kind in enumerate(kinds) if kind == ("shell", "input", "tap"))
+            self.assertLess(tap, swipe)
+
+    def test_the_bind_wait_clears_the_prompt_right_after_the_service_starts(self) -> None:
+        import tempfile
+
+        class _EnableSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.talkback_component = (
+                    "com.google.android.marvin.talkback/.TalkBackService"
+                )
+                self.calls: list[str] = []
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                if args[:3] == ("shell", "settings", "get"):
+                    return (
+                        "com.unifiedledger.android.test/"
+                        "com.unifiedledger.android.A11yFocusProbeService:"
+                        f"{self.talkback_component}\n"
+                    )
+                return ""
+
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                return "I/ULA11Y  (   42): service connected\n"
+
+            def accessibility_dumpsys(self) -> str:
+                return (
+                    "Bound services:\n"
+                    "  Service[label=TalkBack, package=com.google.android.marvin.talkback]\n"
+                )
+
+            def handle_notification_permission_dialog(self) -> bool:
+                self.calls.append("dialog")
+                return False
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _EnableSampler(Path(temp))
+            self.assertEqual("success", sampler.enable_talkback("report")["status"])
+            self.assertGreaterEqual(len(sampler.calls), 1)
+
+    def test_the_speech_leg_clears_the_prompt_before_its_first_focus(self) -> None:
+        import tempfile
+
+        class _SpeechSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.calls: list[str] = []
+
+            def handle_notification_permission_dialog(self) -> bool:
+                self.calls.append("dialog")
+                return False
+
+            def enable_talkback(self, stem: str) -> dict[str, object]:
+                self.calls.append("enable")
+                return {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": "f",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+
+            def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+                self.calls.append(f"focus:{target}")
+                lines = P806Profile._window(
+                    ["结余 -17.34 CNY"],
+                    command_id=command_id,
+                    target=target,
+                    needle=target,
+                    node_text=target,
+                ).splitlines()
+                return {
+                    "id": command_id,
+                    "target": target,
+                    "completed": True,
+                    "accepted": True,
+                    "problem": "",
+                    "lines": lines,
+                }
+
+            def disable_talkback_accessibility(self) -> None:
+                pass
+
+            def wait_accessibility_disabled(self) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _SpeechSampler(Path(temp))
+            screen = Screen(
+                "report",
+                (),
+                "结余",
+                speech=(SpeechCheck("结余 -17.34 CNY", ("-17.34 CNY",)),),
+            )
+            record = sampler.p806_talkback_screen(screen)
+            self.assertEqual("success", record["status"])
+            self.assertEqual("enable", sampler.calls[0])
+            self.assertEqual("dialog", sampler.calls[1])
+            self.assertTrue(sampler.calls[2].startswith("focus:"))
+
+    def test_readiness_needs_the_probe_acknowledgement_not_a_bound_listing(self) -> None:
+        import tempfile
+
+        class _ReadinessSampler(Sampler):
+            def __init__(self, evidence: Path, log_text: str) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.log_text = log_text
+
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                return self.log_text
+
+            def accessibility_dumpsys(self) -> str:
+                return (
+                    "Bound services:\n"
+                    "  Service[label=UL a11y probe, "
+                    "package=com.unifiedledger.android.test]\n"
+                )
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            # A bound-service line naming the package is not the probe's acknowledgement.
+            silent = _ReadinessSampler(evidence, "I/OtherTag(   42): service connected\n")
+            self.assertFalse(silent.wait_probe_connected(timeout_s=0.01))
+            self.assertIn(
+                "UL a11y probe",
+                (evidence / "readiness-accessibility.txt").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "service connected",
+                (evidence / "readiness-logcat.txt").read_text(encoding="utf-8"),
+            )
+            # The probe's own exact, real-format acknowledgement is what decides readiness.
+            ack = _ReadinessSampler(evidence, "I/ULA11Y  (   42): service connected\n")
+            self.assertTrue(ack.wait_probe_connected(timeout_s=0.01))
 
     def test_a_window_is_isolated_by_its_command_id(self) -> None:
         log = P806Profile._window(["first"], command_id=1) + P806Profile._window(

@@ -25,11 +25,12 @@
 #   day's drilldown rows) at 1.3x. Month, day, count and exact signed amounts are re-derived from
 #   the seed database by both the driver and the gate. The run then drives REAL TalkBack on the
 #   image's own package (D-292): the androidTest focus probe moves accessibility focus to each
-#   screen's target, TalkBack's VERBOSE `SpeechControllerImpl` utterance log is captured inside
-#   that target's time window, and each screen is classified as not-obtained / fragments-missing /
-#   amount-wrong / success. The p806 gate fails unless every ordered speech target is success; the
-#   screenshot and accessibility-dump artifacts are captured before that leg and stay independent
-#   of it.
+#   target on the three speech screens (report, calendar, day-detail; the natural-day note screen
+#   carries no speech check), TalkBack's VERBOSE `SpeechControllerImpl` utterance log is captured
+#   inside that target's time window, and each speech screen is classified as not-obtained /
+#   fragments-missing / amount-wrong / success. The p806 gate fails unless every ordered speech
+#   target is success; the screenshot and accessibility-dump artifacts are captured before that leg
+#   and stay independent of it.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took

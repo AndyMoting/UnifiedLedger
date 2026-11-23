@@ -174,9 +174,18 @@ P806_REPORT_BALANCE_LABEL = "结余"
 
 # The D-292 behavioural evidence: real TalkBack emits this VERBOSE log line with the spoken
 # fragment text. Only TalkBack's own line can satisfy the speech limb; the focus probe supplies the
-# target and the time window, never the utterance.
-P806_TALKBACK_LOG_SIGNAL = "talkback: SpeechControllerImpl: Speaking fragment text="
+# target and the time window, never the utterance. This is the `-v brief` shape the run reads
+# (`adb logcat -d -v brief`) with BOTH pids elided: the `pid` right after the tag is the logging
+# process's own pid (the padded `(   20):` column), and the one on `SpeechControllerImpl` is the
+# controller's. Both change per run, so the recorded signal names the columns that
+# `_TALKBACK_FRAGMENT` anchors to instead of one run's numbers.
+P806_TALKBACK_LOG_SIGNAL = "V/talkback(pid): SpeechControllerImpl(pid): Speaking fragment text="
 P806_TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
+# The API 33+ POST_NOTIFICATIONS prompt Android Accessibility Suite raises on this AVD is a
+# permissioncontroller grant dialog. The exact package-scoped resource ids and the exact message
+# are both required, so no other app's or permission's dialog is ever touched.
+P806_PERMISSION_CONTROLLER_PACKAGE = "com.android.permissioncontroller"
+P806_NOTIFICATION_PROMPT_MESSAGE = "Allow Android Accessibility Suite to send you notifications?"
 # The exported developer-settings entry point verified in google/talkback source: the preferences
 # activity reads a `FragmentName` extra and instantiates that fragment inside the TalkBack process,
 # so the LogUtils level it sets is the one the service uses.
@@ -529,23 +538,45 @@ def viewport_problems(xml_text: str, marker: str) -> list[str]:
     return [f"marker {marker!r} is clipped by the window bounds {window!r} (node {rect!r})"]
 
 
-# `adb logcat -v brief` renders a tag as `I/ULA11Y( 1234): …`. TalkBack's utterance carries the
-# outer tag `talkback` and names its speaker only in the message: the P7 raw row renders
-# `V talkback: SpeechControllerImpl: Speaking fragment text=…`, while the device's seen form adds
-# the controller's own pid, `V/talkback( 1234): SpeechControllerImpl( 20): Speaking fragment
-# text=…`. Both controller forms are accepted under that exact outer tag. The pattern is anchored
-# to the brief-format priority/tag column: another tag whose message merely quotes this line, or a
-# real-looking line embedded mid-message, is not attributable to TalkBack and contributes no
-# fragment. TalkBack's own format wraps the spoken text in ASCII quotes (`SpeechControllerImpl`
-# does `String.format("\"%s\"", …)`), and the quotes are stripped so a required value matches the
-# words the device actually spoke.
-_ULA11Y_LINE = re.compile(r"ULA11Y\(\s*\d+\):\s*(.*)")
+# AOSP `liblog/logprint.cpp` FORMAT_BRIEF is `%c/%-8.*s(%s%5d): `: the tag is left-justified and
+# padded with ASCII spaces to 8 columns, then `(`, the pid right-justified to 5, and `): `. An
+# 8-column tag such as `talkback` carries no padding; a shorter one does, e.g. the probe's own
+# `I/ULA11Y  (   42): service connected`. Both recognizers anchor to that outer priority/tag
+# column and take only horizontal padding ([ \t]) at the structural separators, so padding never
+# bridges a line break; a different tag whose message merely quotes a real-looking line, at the
+# start of the line or mid-message, is not attributable to the probe or to TalkBack. TalkBack's
+# utterance names its speaker in the message: the P7 raw row renders
+# `V talkback: SpeechControllerImpl: Speaking fragment text=…`, and the device's seen form adds the
+# controller pid, `V/talkback(   20): SpeechControllerImpl( 20): Speaking fragment text=…`. The
+# spoken text is wrapped in ASCII quotes (`String.format("\"%s\"", …)`), and the quotes are
+# stripped so a required value matches the words the device actually spoke.
+_ULA11Y_LINE = re.compile(r"^[VDIWEF]/ULA11Y[ \t]*\([ \t]*\d+\):[ \t]*(.*)", re.MULTILINE)
 _TALKBACK_FRAGMENT = re.compile(
-    r"^[VDIWEF]/talkback\(\s*\d+\):\s*SpeechControllerImpl(?:\(\s*\d+\))?:"
-    r"\s*Speaking fragment text=(.*?), utteranceId=",
+    r"^[VDIWEF]/talkback[ \t]*\([ \t]*\d+\):[ \t]*SpeechControllerImpl(?:\([ \t]*\d+\))?:"
+    r"[ \t]*Speaking fragment text=(.*?), utteranceId=",
     re.MULTILINE,
 )
 _COMMAND_NEEDLE64 = re.compile(r"\bneedle64=([A-Za-z0-9+/=]+)")
+
+
+def notification_permission_dialog_identity(tree: str) -> bool:
+    """True iff `tree` is the exact Accessibility Suite POST_NOTIFICATIONS grant dialog.
+
+    The permissioncontroller package-scoped ids and the exact prompt text must all be present; a
+    differently worded or differently owned permission dialog never matches.
+    """
+    dialog = False
+    message = False
+    for node in _nodes(tree):
+        resource_id = node.get("resource-id") or ""
+        if resource_id == f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/grant_dialog":
+            dialog = True
+        elif (
+            resource_id == f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/permission_message"
+            and (node.get("text") or "").strip() == P806_NOTIFICATION_PROMPT_MESSAGE
+        ):
+            message = True
+    return dialog and message
 
 
 def find_resource_center(xml_text: str, resource_id: str) -> tuple[int, int] | None:
@@ -644,6 +675,19 @@ def _speech_contains(spoken: str, needle: str) -> bool:
 def _ula11y_tokens(line: str) -> set[str] | None:
     match = _ULA11Y_LINE.search(line)
     return None if match is None else set(match.group(1).split())
+
+
+def probe_service_connected(log_text: str) -> bool:
+    """True iff the probe's own outer line records `service connected`.
+
+    Uses the same anchored brief-column recognizer as the command window, so padded tag/pid and a
+    foreign tag or a mid-message mimic are classified identically in both places.
+    """
+    for line in log_text.splitlines():
+        match = _ULA11Y_LINE.search(line)
+        if match is not None and match.group(1).strip() == "service connected":
+            return True
+    return False
 
 
 def _ula11y_event(line: str) -> tuple[str, str] | None:
@@ -1492,6 +1536,8 @@ class Sampler:
     talkback_component: str = ""
     # The image's exported preferences activity, discovered from its package dump.
     talkback_prefs_activity: str = P806_TALKBACK_PREFS_ACTIVITY
+    # P806 only: dismiss the observed Accessibility Suite notification prompt when it appears.
+    notification_dialog_guard: bool = False
 
     def adb(self, *args: str, timeout: int = DEFAULT_TIMEOUT, best_effort: bool = False) -> str:
         command = ["adb"]
@@ -1608,7 +1654,7 @@ class Sampler:
         time.sleep(2)
 
     def _probe_connected(self, log_text: str) -> bool:
-        return re.search(r"ULA11Y\(\s*\d+\):\s*service connected", log_text) is not None
+        return probe_service_connected(log_text)
 
     def _bound_accessibility_section(self, dump: str) -> str:
         start = dump.find("Bound services:")
@@ -1618,13 +1664,26 @@ class Sampler:
         return dump[start : end if end > start else start + 6000]
 
     def wait_probe_connected(self, timeout_s: int = 90) -> bool:
+        """Wait for the probe's own `service connected` acknowledgement.
+
+        Only that exact line decides readiness. An enabled-services entry is not proof of binding,
+        and API 36 renders bound services as `Service[label=…]` without a guaranteed component, so
+        the dumpsys is read alongside as raw context rather than accepted as connection. On a
+        not-obtained verdict the last logcat tail and dumpsys are retained for diagnosis.
+        """
         deadline = time.monotonic() + timeout_s
+        last_log = ""
+        last_dump = ""
         while time.monotonic() < deadline:
-            if self._probe_connected(self.logcat_tail()):
+            last_log = self.logcat_tail()
+            if self._probe_connected(last_log):
                 return True
-            if P806_PROBE_PACKAGE in self._bound_accessibility_section(self.accessibility_dumpsys()):
-                return True
+            last_dump = self.accessibility_dumpsys()
             time.sleep(1)
+        (self.evidence / "readiness-logcat.txt").write_text(last_log + "\n", encoding="utf-8")
+        (self.evidence / "readiness-accessibility.txt").write_text(
+            last_dump + "\n", encoding="utf-8"
+        )
         return False
 
     def wait_accessibility_disabled(self, timeout_s: int = 30) -> bool:
@@ -1711,6 +1770,10 @@ class Sampler:
         bound = False
         dump = ""
         while time.monotonic() < deadline:
+            # Enabling TalkBack starts the service that raises its notification prompt. Dismiss it
+            # in these first seconds, before any focus command exists, or the probe's active window
+            # is the dialog and the command reports found=false.
+            self.handle_notification_permission_dialog()
             dump = self.accessibility_dumpsys()
             if P806_TALKBACK_PACKAGE in self._bound_accessibility_section(dump):
                 bound = True
@@ -1943,6 +2006,9 @@ class Sampler:
             )
             if enabled.get("status") != "success":
                 raise SampleError(str(enabled.get("reason") or "TalkBack could not be enabled"))
+            # The prompt can arrive after the bind wait (TalkBack asks once its process is up), so
+            # the last clear sits between enabling the service and the first focus command.
+            self.handle_notification_permission_dialog()
             for check in screen.speech:
                 self.talkback_sequence += 1
                 command_id = self.talkback_sequence
@@ -2115,6 +2181,47 @@ class Sampler:
         self.dumps.append(f"{stem}.xml")
         return (self.evidence / f"{stem}.xml").read_text(encoding="utf-8")
 
+    def handle_notification_permission_dialog(self) -> bool:
+        """Deny the observed Accessibility Suite POST_NOTIFICATIONS prompt when it is present.
+
+        On the P806 AVD, TalkBack raises the API 33+ notification prompt after it starts; left up
+        it intercepts focus/scroll input. Only the exact permissioncontroller grant dialog whose
+        message is the Accessibility Suite notification prompt is touched, and denying an
+        unnecessary notification permission is the least-privilege action. One bounded readback
+        proves it closed; a prompt that survives raises rather than silently continuing.
+        """
+        if not self.notification_dialog_guard:
+            return False
+        tree = self.dump("permission-dialog")
+        if not notification_permission_dialog_identity(tree):
+            return False
+        center = find_resource_center(
+            tree, f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/permission_deny_button"
+        )
+        if center is None:
+            center = find_resource_center(
+                tree,
+                f"{P806_PERMISSION_CONTROLLER_PACKAGE}:id/permission_deny_and_dont_ask_again_button",
+            )
+        if center is None:
+            raise SampleError(
+                "the Accessibility Suite notification prompt has no deny button; "
+                "see permission-dialog.xml"
+            )
+        self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+        time.sleep(2)
+        after = self.dump("permission-dialog-after")
+        if notification_permission_dialog_identity(after):
+            raise SampleError(
+                "the Accessibility Suite notification prompt did not close after denying it; "
+                "see permission-dialog-after.xml"
+            )
+        (self.evidence / "notification-dialog.txt").write_text(
+            "dismissed the Android Accessibility Suite POST_NOTIFICATIONS prompt (deny)\n",
+            encoding="utf-8",
+        )
+        return True
+
     def save_tree(self, stem: str, tree: str) -> None:
         """Write the frame the sample was taken from under the screen's own name.
 
@@ -2189,6 +2296,9 @@ class Sampler:
         """Swipe the content region until `label` is on screen; each swipe must change the frame."""
         if not label:
             raise SampleError("an empty scroll label would match every screen")
+        # A system permission prompt would swallow the swipes; clear the one observed P806 prompt
+        # before the first frame is read. Other profiles never set the guard.
+        self.handle_notification_permission_dialog()
         tree = self.dump("scroll-probe")
 
         def on_screen(frame: str) -> bool:
@@ -2199,6 +2309,8 @@ class Sampler:
         for _ in range(max_swipes):
             if on_screen(tree):
                 return tree
+            # A prompt raised between two swipes would swallow the next one and freeze the frame.
+            self.handle_notification_permission_dialog()
             x1, y1, x2, y2 = scroll_swipe_points(tree)
             self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
             tree = self.wait_for_change(tree, timeout_s=30)
@@ -2260,6 +2372,17 @@ def run(args: argparse.Namespace) -> int:
         avd_name=args.avd_name,
     )
     sampler.require_owned_avd()
+    # The notification prompt is an Android Accessibility Suite behavior; only the P806 dynamic
+    # profile enables its handler, and only on this session's owned AVD.
+    sampler.notification_dialog_guard = facts is not None
+
+    def dismiss_notification_prompt(context: str) -> None:
+        """Deny the Accessibility Suite prompt, naming what was under way when it fails."""
+        try:
+            sampler.handle_notification_permission_dialog()
+        except SampleError as error:
+            raise SampleError(f"{context}: clearing the notification prompt: {error}") from error
+
     sampler.adb("shell", "mkdir", "-p", Sampler.DUMP_DIR, best_effort=True)
     applied = sampler.apply_font_scale()
     sampler.adb("install", "-r", args.apk, timeout=180)
@@ -2284,6 +2407,7 @@ def run(args: argparse.Namespace) -> int:
     if profile.seeded:
         seed_sha256 = sampler.seed(args.seed)
     sampler.launch()
+    dismiss_notification_prompt("the launch frame")
     # The launch frame is the change-detection baseline for the first tap, and its marker proves
     # the expected ledger state (empty, or the seeded transaction) before any step runs.
     previous = sampler.wait_for(profile.launch_marker)
@@ -2292,6 +2416,9 @@ def run(args: argparse.Namespace) -> int:
     talkback_screens: dict[str, dict[str, object]] = {}
     for screen in screens:
         for index, step in enumerate(screen.steps):
+            dismiss_notification_prompt(
+                f"screen {screen.stem!r} step {index} ({describe_step(step)})"
+            )
             try:
                 previous = sampler.apply_step(step, previous)
             except SampleError as error:
@@ -2300,6 +2427,7 @@ def run(args: argparse.Namespace) -> int:
                     f"to marker {screen.marker!r}: {error}"
                 ) from error
         # Wait for the screen to be the one we are about to photograph, then photograph it.
+        dismiss_notification_prompt(f"screen {screen.stem!r} marker {screen.marker!r}")
         try:
             tree = sampler.wait_for(screen.marker)
         except SampleError as error:
