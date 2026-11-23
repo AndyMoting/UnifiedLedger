@@ -12,6 +12,9 @@ from android_fontscale.sampler import (
     DismissImeStep,
     InputTextStep,
     P806SeedFacts,
+    P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,
+    PERMISSION_DIALOG_READBACK_ATTEMPTS,
+    PERMISSION_DIALOG_READBACK_INTERVAL_S,
     RadioStep,
     SampleError,
     Sampler,
@@ -43,6 +46,8 @@ from android_fontscale.sampler import (
     p806_rollover_problem,
     p806_screens,
     parse_font_scale,
+    permission_deny_tap_delays,
+    permission_dialog_readback_delays,
     profile_by_name,
     profile_screens,
     probe_service_connected,
@@ -1812,6 +1817,121 @@ class TalkbackArtifacts(unittest.TestCase):
         self.assertEqual((540, 800), find_talkback_level_summary(tree))
         self.assertEqual((270, 1850), find_resource_center(tree, "android:id/button1"))
         self.assertIsNone(find_resource_center(tree, "android:id/button2"))
+
+
+class PermissionDialogGesture(unittest.TestCase):
+    """V-12: the deny gesture and its readback follow the accessibility state the device holds.
+
+    Run 45210967652 denied the prompt once while TalkBack was enabled and read the same dialog
+    back; TalkBack's touch exploration makes a lone tap move accessibility focus rather than
+    activate the button.
+    """
+
+    _PROBE = "com.unifiedledger.android.test/com.unifiedledger.android.A11yFocusProbeService"
+    _TALKBACK = "com.google.android.marvin.talkback/.TalkBackService"
+
+    @staticmethod
+    def _prompt_sampler(evidence: Path) -> Sampler:
+        class _PromptSampler(Sampler):
+            def __init__(self) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.talkback_component = PermissionDialogGesture._TALKBACK
+                self.notification_dialog_guard = True
+                self.enabled_services = "null"
+                self.prompt_readbacks: int | None = 0
+                self.readbacks = 0
+                self.commands: list[tuple[str, ...]] = []
+                self.dump_stems: list[str] = []
+
+            def adb(self, *args: str, **kwargs: object) -> str:
+                self.commands.append(args)
+                if args[:5] == (
+                    "shell",
+                    "settings",
+                    "get",
+                    "secure",
+                    "enabled_accessibility_services",
+                ):
+                    return self.enabled_services + "\n"
+                return ""
+
+            def dump(self, stem: str) -> str:
+                self.dump_stems.append(stem)
+                if stem == "permission-dialog":
+                    return _PERMISSION_DIALOG_REAL
+                self.readbacks += 1
+                if self.prompt_readbacks is None or self.readbacks <= self.prompt_readbacks:
+                    return _PERMISSION_DIALOG_REAL
+                return _DIALOG_DISMISSED
+
+        return _PromptSampler()
+
+    def test_an_enabled_talkback_turns_the_deny_into_a_double_tap(self) -> None:
+        import tempfile
+
+        services = f"{self._PROBE}:{self._TALKBACK}"
+        self.assertEqual(
+            (P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,),
+            permission_deny_tap_delays(services, self._TALKBACK),
+        )
+        self.assertLess(P806_TALKBACK_DOUBLE_TAP_INTERVAL_S, 0.15)
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._prompt_sampler(Path(temp))
+            sampler.enabled_services = services
+            self.assertTrue(sampler.handle_notification_permission_dialog())
+        taps = [
+            command for command in sampler.commands if command[:3] == ("shell", "input", "tap")
+        ]
+        self.assertEqual(2, len(taps))
+        self.assertEqual(taps[0], taps[1])
+
+    def test_without_an_enabled_service_the_deny_stays_a_single_tap(self) -> None:
+        import tempfile
+
+        self.assertEqual((), permission_deny_tap_delays("null", self._TALKBACK))
+        # Only the focus probe enabled is still ordinary touch: TalkBack is not the service there.
+        self.assertEqual((), permission_deny_tap_delays(self._PROBE, self._TALKBACK))
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._prompt_sampler(Path(temp))
+            self.assertTrue(sampler.handle_notification_permission_dialog())
+        taps = [
+            command for command in sampler.commands if command[:3] == ("shell", "input", "tap")
+        ]
+        self.assertEqual(1, len(taps))
+
+    def test_the_second_readback_closes_a_prompt_that_survived_the_first(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._prompt_sampler(Path(temp))
+            sampler.enabled_services = f"{self._PROBE}:{self._TALKBACK}"
+            sampler.prompt_readbacks = 1
+            self.assertTrue(sampler.handle_notification_permission_dialog())
+        self.assertEqual(2, sampler.readbacks)
+        self.assertEqual(
+            ["permission-dialog", "permission-dialog-after", "permission-dialog-after"],
+            sampler.dump_stems,
+        )
+
+    def test_a_prompt_that_survives_every_readback_names_both_dumps(self) -> None:
+        import tempfile
+
+        plan = permission_dialog_readback_delays()
+        self.assertEqual(PERMISSION_DIALOG_READBACK_ATTEMPTS, len(plan))
+        self.assertLessEqual(max(plan), PERMISSION_DIALOG_READBACK_INTERVAL_S)
+        self.assertLessEqual(PERMISSION_DIALOG_READBACK_INTERVAL_S, 0.8)
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._prompt_sampler(Path(temp))
+            sampler.enabled_services = f"{self._PROBE}:{self._TALKBACK}"
+            sampler.prompt_readbacks = None
+            with self.assertRaises(SampleError) as raised:
+                sampler.handle_notification_permission_dialog()
+        message = str(raised.exception)
+        self.assertIn("permission-dialog-after.xml", message)
+        self.assertIn("permission-dialog.xml", message)
+        self.assertEqual(PERMISSION_DIALOG_READBACK_ATTEMPTS, sampler.readbacks)
 
 
 if __name__ == "__main__":

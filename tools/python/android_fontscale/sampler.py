@@ -186,6 +186,16 @@ P806_TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
 # are both required, so no other app's or permission's dialog is ever touched.
 P806_PERMISSION_CONTROLLER_PACKAGE = "com.android.permissioncontroller"
 P806_NOTIFICATION_PROMPT_MESSAGE = "Allow Android Accessibility Suite to send you notifications?"
+# TalkBack's touch exploration consumes a lone tap as "move accessibility focus", so its activation
+# gesture is the double tap. Android recognises that gesture when the second touch lands inside its
+# own double-tap window (300 ms); 120 ms keeps one adb round-trip well inside it while staying a
+# distinct second press rather than one coalesced touch.
+P806_TALKBACK_DOUBLE_TAP_INTERVAL_S = 0.12
+# The prompt is dismissed by the app process, so the first frame read back after the tap can still
+# show it. Four readbacks 0.8 s apart cover the ~2 s the observed close needed and bound a stuck
+# prompt at 2.4 s — the old fixed 2 s wait, without failing on one slow frame.
+PERMISSION_DIALOG_READBACK_ATTEMPTS = 4
+PERMISSION_DIALOG_READBACK_INTERVAL_S = 0.8
 # The exported developer-settings entry point verified in google/talkback source: the preferences
 # activity reads a `FragmentName` extra and instantiates that fragment inside the TalkBack process,
 # so the LogUtils level it sets is the one the service uses.
@@ -577,6 +587,38 @@ def notification_permission_dialog_identity(tree: str) -> bool:
         ):
             message = True
     return dialog and message
+
+
+def enabled_accessibility_components(enabled_services: str) -> list[str]:
+    """The colon-separated components `enabled_accessibility_services` currently lists."""
+    return [
+        part.strip()
+        for part in enabled_services.strip().split(":")
+        if part.strip() and part.strip() != "null"
+    ]
+
+
+def permission_deny_tap_delays(
+    enabled_services: str, talkback_component: str = ""
+) -> tuple[float, ...]:
+    """The waits *between* the deny taps; one gap for a double tap, none for a single tap.
+
+    A tap only activates the button when no accessibility service owns touch exploration. With
+    TalkBack enabled the same tap merely moves accessibility focus, so the press has to be repeated
+    inside Android's double-tap window. The exact enabled component decides, because a run that
+    enabled only the focus probe keeps ordinary touch semantics.
+    """
+    components = enabled_accessibility_components(enabled_services)
+    if talkback_component and talkback_component in components:
+        return (P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,)
+    return ()
+
+
+def permission_dialog_readback_delays() -> tuple[float, ...]:
+    """The wait before each readback of the prompt, so one poll cannot disagree with another."""
+    return (0.0,) + (PERMISSION_DIALOG_READBACK_INTERVAL_S,) * (
+        PERMISSION_DIALOG_READBACK_ATTEMPTS - 1
+    )
 
 
 def find_resource_center(xml_text: str, resource_id: str) -> tuple[int, int] | None:
@@ -2187,8 +2229,10 @@ class Sampler:
         On the P806 AVD, TalkBack raises the API 33+ notification prompt after it starts; left up
         it intercepts focus/scroll input. Only the exact permissioncontroller grant dialog whose
         message is the Accessibility Suite notification prompt is touched, and denying an
-        unnecessary notification permission is the least-privilege action. One bounded readback
-        proves it closed; a prompt that survives raises rather than silently continuing.
+        unnecessary notification permission is the least-privilege action. TalkBack owns touch
+        exploration by then (the run enables it), so the deny gesture and its readback are chosen
+        from the services Android actually holds at this instant: a prompt that survives the
+        bounded readbacks raises rather than silently continuing.
         """
         if not self.notification_dialog_guard:
             return False
@@ -2208,19 +2252,42 @@ class Sampler:
                 "the Accessibility Suite notification prompt has no deny button; "
                 "see permission-dialog.xml"
             )
-        self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
-        time.sleep(2)
-        after = self.dump("permission-dialog-after")
-        if notification_permission_dialog_identity(after):
-            raise SampleError(
-                "the Accessibility Suite notification prompt did not close after denying it; "
-                "see permission-dialog-after.xml"
-            )
+        # The enabled set is read now, not remembered: the services change inside this run
+        # (prepare disables them, enable_talkback adds probe plus TalkBack before the prompt shows).
+        enabled_services = self.adb(
+            "shell", "settings", "get", "secure", "enabled_accessibility_services", best_effort=True
+        )
+        self.tap_permission_deny(center, enabled_services)
+        self.wait_permission_dialog_closed()
         (self.evidence / "notification-dialog.txt").write_text(
             "dismissed the Android Accessibility Suite POST_NOTIFICATIONS prompt (deny)\n",
             encoding="utf-8",
         )
         return True
+
+    def tap_permission_deny(self, center: tuple[int, int], enabled_services: str) -> None:
+        """Press the deny button with the activation gesture the a11y state requires."""
+        self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+        for delay in permission_deny_tap_delays(enabled_services, self.talkback_component):
+            time.sleep(delay)
+            self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+
+    def wait_permission_dialog_closed(self) -> str:
+        """Read the prompt back until it is gone, bounded; the last frame stays on disk.
+
+        A prompt still rendered after every readback is a hard failure: continuing would sample a
+        dialog instead of the screen, and the two dumps show what the device actually held.
+        """
+        for delay in permission_dialog_readback_delays():
+            time.sleep(delay)
+            after = self.dump("permission-dialog-after")
+            if not notification_permission_dialog_identity(after):
+                return after
+        raise SampleError(
+            "the Accessibility Suite notification prompt did not close after "
+            f"{PERMISSION_DIALOG_READBACK_ATTEMPTS} readbacks; "
+            "see permission-dialog.xml and permission-dialog-after.xml"
+        )
 
     def save_tree(self, stem: str, tree: str) -> None:
         """Write the frame the sample was taken from under the screen's own name.
