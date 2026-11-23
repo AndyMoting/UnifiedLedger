@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from android_fontscale.sampler import (
     BACK,
@@ -13,6 +14,7 @@ from android_fontscale.sampler import (
     InputTextStep,
     P806SeedFacts,
     P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,
+    PERMISSION_DIALOG_GESTURE_ATTEMPTS,
     PERMISSION_DIALOG_READBACK_ATTEMPTS,
     PERMISSION_DIALOG_READBACK_INTERVAL_S,
     RadioStep,
@@ -47,7 +49,9 @@ from android_fontscale.sampler import (
     p806_rollover_problem,
     p806_screens,
     parse_font_scale,
-    permission_deny_tap_delays,
+    permission_deny_gesture,
+    permission_deny_gesture_sequence,
+    permission_deny_tap_command,
     permission_dialog_readback_delays,
     profile_by_name,
     profile_screens,
@@ -1565,8 +1569,11 @@ class TalkbackArtifacts(unittest.TestCase):
             sampler = self._dialog_sampler(
                 Path(temp), [_PERMISSION_DIALOG, _PERMISSION_DIALOG]
             )
-            with self.assertRaises(SampleError):
-                sampler.handle_notification_permission_dialog()
+            # The alternating retry is part of the path; its real 0.8 s bound is asserted in
+            # PermissionDialogGesture, so the failure here must not spend 3 x 4 x 0.8 s on it.
+            with patch("android_fontscale.sampler.PERMISSION_DIALOG_READBACK_INTERVAL_S", 0.0):
+                with self.assertRaises(SampleError):
+                    sampler.handle_notification_permission_dialog()
 
     def test_the_prompt_is_only_handled_with_the_p806_guard(self) -> None:
         import tempfile
@@ -1958,15 +1965,18 @@ class TalkbackArtifacts(unittest.TestCase):
 
 
 class PermissionDialogGesture(unittest.TestCase):
-    """V-12: the deny gesture and its readback follow the accessibility state the device holds.
+    """V-12: the deny is an on-device gesture with a bounded, alternating retry.
 
-    Run 45210967652 denied the prompt once while TalkBack was enabled and read the same dialog
-    back; TalkBack's touch exploration makes a lone tap move accessibility focus rather than
-    activate the button.
+    Run 45210967652 denied the prompt once while TalkBack was enabled and read the same dialog back;
+    run 45226637611 failed the same way after the double tap had already worked in run 45218212942,
+    so the gesture is timing-sensitive rather than wrong, and a surviving prompt is retried with the
+    other gesture instead of failing on one explanation.
     """
 
     _PROBE = "com.unifiedledger.android.test/com.unifiedledger.android.A11yFocusProbeService"
     _TALKBACK = "com.google.android.marvin.talkback/.TalkBackService"
+    # The deny button's centre in the real rendered prompt (`permission-dialog.xml`).
+    _CENTER = (540, 1517)
 
     @staticmethod
     def _prompt_sampler(evidence: Path) -> Sampler:
@@ -1978,7 +1988,8 @@ class PermissionDialogGesture(unittest.TestCase):
                 self.talkback_component = PermissionDialogGesture._TALKBACK
                 self.notification_dialog_guard = True
                 self.enabled_services = "null"
-                self.prompt_readbacks: int | None = 0
+                # 1-based readback number at which the prompt is gone; None means never.
+                self.closes_on_readback: int | None = 1
                 self.readbacks = 0
                 self.commands: list[tuple[str, ...]] = []
                 self.dump_stems: list[str] = []
@@ -2000,76 +2011,135 @@ class PermissionDialogGesture(unittest.TestCase):
                 if stem == "permission-dialog":
                     return _PERMISSION_DIALOG_REAL
                 self.readbacks += 1
-                if self.prompt_readbacks is None or self.readbacks <= self.prompt_readbacks:
-                    return _PERMISSION_DIALOG_REAL
-                return _DIALOG_DISMISSED
+                if (
+                    self.closes_on_readback is not None
+                    and self.readbacks >= self.closes_on_readback
+                ):
+                    return _DIALOG_DISMISSED
+                return _PERMISSION_DIALOG_REAL
 
         return _PromptSampler()
 
-    def test_an_enabled_talkback_turns_the_deny_into_a_double_tap(self) -> None:
+    def test_a_talkback_service_sends_the_double_tap_as_one_adb_call(self) -> None:
         import tempfile
 
         services = f"{self._PROBE}:{self._TALKBACK}"
-        self.assertEqual(
-            (P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,),
-            permission_deny_tap_delays(services, self._TALKBACK),
-        )
+        self.assertEqual("double", permission_deny_gesture(services, self._TALKBACK))
         self.assertLess(P806_TALKBACK_DOUBLE_TAP_INTERVAL_S, 0.15)
+        expected = (
+            "shell",
+            "input",
+            "tap",
+            "540",
+            "1517",
+            ";",
+            "sleep",
+            str(P806_TALKBACK_DOUBLE_TAP_INTERVAL_S),
+            ";",
+            "input",
+            "tap",
+            "540",
+            "1517",
+        )
+        self.assertEqual(
+            expected, ("shell",) + permission_deny_tap_command(self._CENTER, "double")
+        )
         with tempfile.TemporaryDirectory() as temp:
             sampler = self._prompt_sampler(Path(temp))
             sampler.enabled_services = services
             self.assertTrue(sampler.handle_notification_permission_dialog())
-        taps = [
-            command for command in sampler.commands if command[:3] == ("shell", "input", "tap")
-        ]
-        self.assertEqual(2, len(taps))
-        self.assertEqual(taps[0], taps[1])
+        taps = [command for command in sampler.commands if command[:3] == ("shell", "input", "tap")]
+        # ONE adb call carries both taps, so the 120 ms gap never includes an adb round-trip.
+        self.assertEqual([expected], taps)
 
-    def test_without_an_enabled_service_the_deny_stays_a_single_tap(self) -> None:
+    def test_without_talkback_the_deny_stays_a_single_press(self) -> None:
         import tempfile
 
-        self.assertEqual((), permission_deny_tap_delays("null", self._TALKBACK))
+        self.assertEqual("single", permission_deny_gesture("null", self._TALKBACK))
         # Only the focus probe enabled is still ordinary touch: TalkBack is not the service there.
-        self.assertEqual((), permission_deny_tap_delays(self._PROBE, self._TALKBACK))
-        with tempfile.TemporaryDirectory() as temp:
-            sampler = self._prompt_sampler(Path(temp))
-            self.assertTrue(sampler.handle_notification_permission_dialog())
-        taps = [
-            command for command in sampler.commands if command[:3] == ("shell", "input", "tap")
-        ]
-        self.assertEqual(1, len(taps))
-
-    def test_the_second_readback_closes_a_prompt_that_survived_the_first(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp:
-            sampler = self._prompt_sampler(Path(temp))
-            sampler.enabled_services = f"{self._PROBE}:{self._TALKBACK}"
-            sampler.prompt_readbacks = 1
-            self.assertTrue(sampler.handle_notification_permission_dialog())
-        self.assertEqual(2, sampler.readbacks)
+        self.assertEqual("single", permission_deny_gesture(self._PROBE, self._TALKBACK))
+        expected = ("shell", "input", "tap", "540", "1517")
         self.assertEqual(
-            ["permission-dialog", "permission-dialog-after", "permission-dialog-after"],
-            sampler.dump_stems,
+            expected, ("shell",) + permission_deny_tap_command(self._CENTER, "single")
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = self._prompt_sampler(Path(temp))
+            self.assertTrue(sampler.handle_notification_permission_dialog())
+        taps = [command for command in sampler.commands if command[:3] == ("shell", "input", "tap")]
+        self.assertEqual([expected], taps)
+
+    def test_the_gesture_sequence_alternates_from_either_start(self) -> None:
+        self.assertEqual(3, PERMISSION_DIALOG_GESTURE_ATTEMPTS)
+        self.assertEqual(
+            ("double", "single", "double"), permission_deny_gesture_sequence("double")
+        )
+        self.assertEqual(
+            ("single", "double", "single"), permission_deny_gesture_sequence("single")
         )
 
-    def test_a_prompt_that_survives_every_readback_names_both_dumps(self) -> None:
+    def test_the_other_gesture_closes_a_prompt_that_outlived_the_first(self) -> None:
+        import tempfile
+
+        services = f"{self._PROBE}:{self._TALKBACK}"
+        with patch("android_fontscale.sampler.PERMISSION_DIALOG_READBACK_INTERVAL_S", 0.0):
+            with tempfile.TemporaryDirectory() as temp:
+                evidence = Path(temp)
+                sampler = self._prompt_sampler(evidence)
+                sampler.enabled_services = services
+                sampler.closes_on_readback = PERMISSION_DIALOG_READBACK_ATTEMPTS + 1
+                self.assertTrue(sampler.handle_notification_permission_dialog())
+                diagnostic = (evidence / "permission-dialog-gesture.txt").read_text(
+                    encoding="utf-8"
+                )
+        self.assertEqual(5, sampler.readbacks)
+        self.assertEqual(
+            [
+                f"enabled_accessibility_services={services}",
+                "attempt=1 gesture=double closed=false",
+                "attempt=2 gesture=single closed=true",
+            ],
+            diagnostic.splitlines(),
+        )
+        taps = [command for command in sampler.commands if command[:3] == ("shell", "input", "tap")]
+        self.assertEqual(2, len(taps))
+        self.assertEqual(("shell", "input", "tap", "540", "1517"), taps[1])
+
+    def test_a_prompt_that_survives_every_gesture_names_both_dumps(self) -> None:
         import tempfile
 
         plan = permission_dialog_readback_delays()
         self.assertEqual(PERMISSION_DIALOG_READBACK_ATTEMPTS, len(plan))
         self.assertLessEqual(max(plan), PERMISSION_DIALOG_READBACK_INTERVAL_S)
         self.assertLessEqual(PERMISSION_DIALOG_READBACK_INTERVAL_S, 0.8)
-        with tempfile.TemporaryDirectory() as temp:
-            sampler = self._prompt_sampler(Path(temp))
-            sampler.enabled_services = f"{self._PROBE}:{self._TALKBACK}"
-            sampler.prompt_readbacks = None
-            with self.assertRaises(SampleError) as raised:
-                sampler.handle_notification_permission_dialog()
+        services = f"{self._PROBE}:{self._TALKBACK}"
+        with patch("android_fontscale.sampler.PERMISSION_DIALOG_READBACK_INTERVAL_S", 0.0):
+            with tempfile.TemporaryDirectory() as temp:
+                evidence = Path(temp)
+                sampler = self._prompt_sampler(evidence)
+                sampler.enabled_services = services
+                sampler.closes_on_readback = None
+                with self.assertRaises(SampleError) as raised:
+                    sampler.handle_notification_permission_dialog()
+                diagnostic = (evidence / "permission-dialog-gesture.txt").read_text(
+                    encoding="utf-8"
+                )
         message = str(raised.exception)
         self.assertIn("permission-dialog-after.xml", message)
         self.assertIn("permission-dialog.xml", message)
-        self.assertEqual(PERMISSION_DIALOG_READBACK_ATTEMPTS, sampler.readbacks)
+        self.assertIn("3 gestures", message)
+        self.assertEqual(
+            PERMISSION_DIALOG_GESTURE_ATTEMPTS * PERMISSION_DIALOG_READBACK_ATTEMPTS,
+            sampler.readbacks,
+        )
+        self.assertEqual(
+            [
+                f"enabled_accessibility_services={services}",
+                "attempt=1 gesture=double closed=false",
+                "attempt=2 gesture=single closed=false",
+                "attempt=3 gesture=double closed=false",
+            ],
+            diagnostic.splitlines(),
+        )
 
 
 if __name__ == "__main__":
