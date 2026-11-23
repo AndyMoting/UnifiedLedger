@@ -927,7 +927,15 @@ internal class P807Q2Flow1Ui(
         textPrefix: String,
         timeoutMillis: Long = NODE_TIMEOUT_MILLIS,
     ) {
-        ui.await(timeoutMillis) { ui.has(textPrefix, prefix = true) }
+        try {
+            ui.await(timeoutMillis) { ui.has(textPrefix, prefix = true) }
+        } catch (failure: IllegalStateException) {
+            val dump = dumpUiSnapshot("awaitAppText:$textPrefix")
+            throw IllegalStateException(
+                "awaitAppText('$textPrefix') missed its ${timeoutMillis}ms deadline; ${summarizeDump(dump)}",
+                failure,
+            )
+        }
     }
 
     fun hasAppText(textPrefix: String): Boolean = ui.has(textPrefix, prefix = true)
@@ -955,7 +963,7 @@ internal class P807Q2Flow1Ui(
             if (runCatching { ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls) }.isSuccess) return
             SystemClock.sleep(1_000)
         }
-        ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls)
+        withUiDump("seekApp:$textPrefix") { ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls) }
     }
 
     fun settle() {
@@ -968,7 +976,7 @@ internal class P807Q2Flow1Ui(
             if (runCatching { ui.seekBackToTop("刷新清单", maxSteps = 12) }.isSuccess) return
             SystemClock.sleep(1_000)
         }
-        ui.seekBackToTop("刷新清单", maxSteps = 12)
+        withUiDump("backToImportTop") { ui.seekBackToTop("刷新清单", maxSteps = 12) }
     }
 
     /** Scrolls the current surface back until [marker] is visible again (a top-anchored affordance). */
@@ -977,7 +985,7 @@ internal class P807Q2Flow1Ui(
             if (runCatching { ui.seekBackToTop(marker, maxSteps = 24) }.isSuccess) return
             SystemClock.sleep(1_000)
         }
-        ui.seekBackToTop(marker, maxSteps = 24)
+        withUiDump("scrollBackTo:$marker") { ui.seekBackToTop(marker, maxSteps = 24) }
     }
 
     /** Leaves the current in-app surface through the system back channel (the drawer surfaces' exit). */
@@ -1008,7 +1016,7 @@ internal class P807Q2Flow1Ui(
 
     // ---- import format row + picker
 
-    /** Clicks the 选择文件 button of the self-entry format row (the row is located by its product label). */
+    /** Clicks the 选择文件 button of the self-entry format row and waits for the picker window. */
     fun pickSelfEntryFormat(): Boolean {
         val formatName = P807Q2Flow1Facts.SELF_ENTRY_FORMAT.displayName
         repeat(2) {
@@ -1023,7 +1031,12 @@ internal class P807Q2Flow1Ui(
                 }
             if (choice != null) {
                 tap(choice)
-                return true
+                // The click only staged the platform pick; the REQUIRED effect is the picker
+                // window taking the foreground. Waiting for it turns a refused click into a
+                // bounded false instead of a 60s downstream text timeout with no cause.
+                val pickerShown = awaitPickerWindow(PICKER_WINDOW_TIMEOUT_MILLIS)
+                log("${P807Q2Flow1Facts.PREFIX} formatPick name=$formatName pickerShown=$pickerShown windows=${describePickerWindows()}")
+                return pickerShown
             }
             settle()
         }
@@ -1031,67 +1044,84 @@ internal class P807Q2Flow1Ui(
     }
 
     /**
-     * Drives the REAL system SAF picker to the given fixture name: waits for a documentsui window,
-     * clicks the row whose text contains the file name, and — when the picker opens on a collection
-     * that does not show it — navigates to the Download root first (the AndroidScaleUi precedent,
-     * with both the Chinese and English platform labels).
+     * Drives the REAL system SAF picker to the given fixture file and waits until the pick has
+     * actually RETURNED (the picker released the foreground to the app).
+     *
+     * THE CLICK TARGET MATTERS (run 22:27:27 failure). The row is matched by EXACT text, as
+     * `AndroidScaleUi.selectSafFixtureOnce` does. A substring/contentDescription match could land
+     * on the document's thumbnail, and a tap inside DocumentsUI's preview region runs
+     * `QuickViewIntentBuilder` and starts an ACTION_VIEW: the picker stays foreground, no result is
+     * delivered, the app never resumes, and the next text await dies 60s later with no cause. The
+     * exact-text title node is outside that preview region, so the click is a regular pick.
      */
     fun pickImportFile(
         fileName: String,
         timeoutMillis: Long = PICKER_TIMEOUT_MILLIS,
     ): Boolean {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
-        var navigationSteps = 0
-        while (SystemClock.elapsedRealtime() < deadline) {
-            val roots = pickerRoots()
-            val nodes = roots.flatMap(::collectNodes).filter { it.isVisibleToUser }
-            val file = nodes.firstOrNull { textOf(it).contains(fileName) || descriptionOf(it).contains(fileName) }
-            if (file != null) {
-                tap(file)
-                log("${P807Q2Flow1Facts.PREFIX} picker file=$fileName windows=${roots.size}")
+        if (!awaitPickerWindow(PICKER_WINDOW_TIMEOUT_MILLIS)) {
+            log("${P807Q2Flow1Facts.PREFIX} picker window absent file=$fileName windows=${describePickerWindows()}")
+            dumpUiSnapshot("pickImportFile:window:$fileName")
+            return false
+        }
+        repeat(PICKER_CLICK_ATTEMPTS) { attempt ->
+            val row = awaitPickerRow(fileName, timeoutMillis)
+            if (row == null) {
+                log("${P807Q2Flow1Facts.PREFIX} picker row absent file=$fileName attempt=$attempt windows=${describePickerWindows()}")
+                dumpUiSnapshot("pickImportFile:row:$fileName")
+                return false
+            }
+            log("${P807Q2Flow1Facts.PREFIX} picker row file=$fileName attempt=$attempt ${describeNode(row)}")
+            tap(row)
+            if (awaitPickerReturned(PICKER_RETURN_TIMEOUT_MILLIS)) {
+                log("${P807Q2Flow1Facts.PREFIX} picker returned file=$fileName attempt=$attempt")
                 return true
             }
-            if (navigationSteps < PICKER_NAVIGATION_STEPS) {
-                val downloads = nodes.firstOrNull { textOf(it) in DOWNLOAD_ROOT_LABELS || descriptionOf(it) in DOWNLOAD_ROOT_LABELS }
-                val rootsButton = nodes.firstOrNull { descriptionOf(it) in ROOTS_LABELS }
-                when {
-                    downloads != null -> {
-                        tap(downloads)
-                        navigationSteps++
-                        SystemClock.sleep(800)
-                    }
-                    rootsButton != null -> {
-                        tap(rootsButton)
-                        navigationSteps++
-                        SystemClock.sleep(800)
-                    }
-                    else -> SystemClock.sleep(POLL_MILLIS)
-                }
-            } else {
-                SystemClock.sleep(POLL_MILLIS)
+            log(
+                "${P807Q2Flow1Facts.PREFIX} picker did not return file=$fileName attempt=$attempt " +
+                    "pickerForeground=${pickerForeground()} appForeground=${appForeground()} " +
+                    "windows=${describePickerWindows()}",
+            )
+            // A viewer/quick-view can take the foreground instead of the pick: back out to the
+            // picker (bounded) before the retry, so the retry clicks the picker it can see.
+            if (!pickerForeground()) {
+                runCatching { automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }
+                awaitPickerForeground(PICKER_WINDOW_TIMEOUT_MILLIS)
             }
         }
-        log("${P807Q2Flow1Facts.PREFIX} picker file=$fileName found=false windows=${describePickerWindows()}")
+        dumpUiSnapshot("pickImportFile:return:$fileName")
         return false
     }
 
     /**
      * Confirms the readable export's CreateDocument picker: clicks the platform Save action in the
-     * documentsui window, navigating to the Download root when the picker opens elsewhere. This is
-     * the one system-dialog step with no in-repo precedent (see the file note); the await is
-     * bounded and the failure text names the observed picker windows.
+     * documentsui window and waits until the picker hands the foreground back. This is the one
+     * system-dialog step with no in-repo precedent (see the file note); the waits are bounded and a
+     * failure dumps the whole window picture instead of only a label list.
      */
     fun saveExportFile(timeoutMillis: Long = PICKER_TIMEOUT_MILLIS): Boolean {
+        if (!awaitPickerWindow(PICKER_WINDOW_TIMEOUT_MILLIS)) {
+            log("${P807Q2Flow1Facts.PREFIX} export picker window absent windows=${describePickerWindows()}")
+            dumpUiSnapshot("saveExportFile:window")
+            return false
+        }
         val deadline = SystemClock.elapsedRealtime() + timeoutMillis
         var navigationSteps = 0
         while (SystemClock.elapsedRealtime() < deadline) {
-            val roots = pickerRoots()
-            val nodes = roots.flatMap(::collectNodes).filter { it.isVisibleToUser }
+            val nodes = pickerRoots().flatMap(::collectNodes).filter { it.isVisibleToUser }
             val save = nodes.firstOrNull { textOf(it) in SAVE_LABELS || descriptionOf(it) in SAVE_LABELS }
             if (save != null) {
+                log(
+                    "${P807Q2Flow1Facts.PREFIX} export picker save ${describeNode(save)} " +
+                        "labels=${nodes.map { textOf(it) }.filter { it.isNotBlank() }.take(20)}",
+                )
                 tap(save)
-                log("${P807Q2Flow1Facts.PREFIX} export picker save windows=${roots.size} labels=${nodes.map { textOf(it) }.filter { it.isNotBlank() }.take(20)}")
-                return true
+                if (awaitPickerReturned(PICKER_RETURN_TIMEOUT_MILLIS)) {
+                    log("${P807Q2Flow1Facts.PREFIX} export picker returned")
+                    return true
+                }
+                log("${P807Q2Flow1Facts.PREFIX} export picker still foreground windows=${describePickerWindows()}")
+                dumpUiSnapshot("saveExportFile:return")
+                return false
             }
             if (navigationSteps < PICKER_NAVIGATION_STEPS) {
                 val downloads = nodes.firstOrNull { textOf(it) in DOWNLOAD_ROOT_LABELS || descriptionOf(it) in DOWNLOAD_ROOT_LABELS }
@@ -1114,6 +1144,7 @@ internal class P807Q2Flow1Ui(
             }
         }
         log("${P807Q2Flow1Facts.PREFIX} export picker save found=false windows=${describePickerWindows()}")
+        dumpUiSnapshot("saveExportFile:save")
         return false
     }
 
@@ -1123,9 +1154,10 @@ internal class P807Q2Flow1Ui(
     fun editableFieldCount(): Int = editableNodes().size
 
     /**
-     * Sets one editable field's text through the accessibility SetText action. [fromBottom] counts
-     * from the LAST field upward (1 = the last field), which addresses the two custom-window fields
-     * without depending on the keyword field's position.
+     * Sets one editable field's text through the accessibility SetText action and VERIFIES the
+     * value landed (the action being accepted is not the effect). [fromBottom] counts from the LAST
+     * field upward (1 = the last field), which addresses the two custom-window fields without
+     * depending on the keyword field's position.
      */
     fun setFieldText(
         fromBottom: Int,
@@ -1140,9 +1172,22 @@ internal class P807Q2Flow1Ui(
         val node = fields[index]
         val arguments = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
         val accepted = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-        log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom fields=${fields.size} accepted=$accepted")
-        SystemClock.sleep(400)
-        return accepted
+        val landed = accepted && awaitFieldValue(text, FIELD_SETTLE_TIMEOUT_MILLIS)
+        log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom fields=${fields.size} accepted=$accepted landed=$landed value=$text")
+        return landed
+    }
+
+    /** Waits until ANY editable field carries [expected] (the action's observable effect). */
+    private fun awaitFieldValue(
+        expected: String,
+        timeoutMillis: Long,
+    ): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (editableNodes().any { textOf(it) == expected }) return true
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        return false
     }
 
     private fun editableNodes(): List<AccessibilityNodeInfo> =
@@ -1151,6 +1196,128 @@ internal class P807Q2Flow1Ui(
             .sortedBy { bounds(it).top }
 
     // ---- picker windows
+
+    /** Waits until a documentsui window exists OR the app lost the foreground (the picker took over). */
+    private fun awaitPickerWindow(timeoutMillis: Long): Boolean = runCatching { ui.await(timeoutMillis) { pickerRoots().isNotEmpty() || !appForeground() } }.isSuccess
+
+    /** Waits until the picker released the foreground AND the app owns the active window again. */
+    private fun awaitPickerReturned(timeoutMillis: Long): Boolean = runCatching { ui.await(timeoutMillis) { !pickerForeground() && appForeground() } }.isSuccess
+
+    /** Waits until a documentsui window owns the active window again (after backing out of a viewer). */
+    private fun awaitPickerForeground(timeoutMillis: Long): Boolean = runCatching { ui.await(timeoutMillis) { pickerForeground() } }.isSuccess
+
+    /**
+     * Waits for the picker's fixture row (EXACT text, the `selectSafFixtureOnce` precedent) and
+     * navigates to the Download root when the picker opened on a collection without it.
+     */
+    private fun awaitPickerRow(
+        fileName: String,
+        timeoutMillis: Long,
+    ): AccessibilityNodeInfo? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        var navigationSteps = 0
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val nodes = pickerRoots().flatMap(::collectNodes).filter { it.isVisibleToUser }
+            nodes.firstOrNull { textOf(it) == fileName }?.let { return it }
+            nodes.firstOrNull { descriptionOf(it) == fileName }?.let { return it }
+            if (navigationSteps < PICKER_NAVIGATION_STEPS) {
+                val downloads = nodes.firstOrNull { textOf(it) in DOWNLOAD_ROOT_LABELS || descriptionOf(it) in DOWNLOAD_ROOT_LABELS }
+                val rootsButton = nodes.firstOrNull { descriptionOf(it) in ROOTS_LABELS }
+                when {
+                    downloads != null -> {
+                        tap(downloads)
+                        navigationSteps++
+                        SystemClock.sleep(800)
+                    }
+                    rootsButton != null -> {
+                        tap(rootsButton)
+                        navigationSteps++
+                        SystemClock.sleep(800)
+                    }
+                    else -> SystemClock.sleep(POLL_MILLIS)
+                }
+            } else {
+                SystemClock.sleep(POLL_MILLIS)
+            }
+        }
+        return null
+    }
+
+    private fun pickerForeground(): Boolean = foregroundPackage()?.contains("documentsui") == true
+
+    private fun appForeground(): Boolean = foregroundPackage()?.contains("com.unifiedledger.android") == true
+
+    /** The active window's package (the ImportScaleTraversal `activeWindowPackage` read, plus a window fallback). */
+    private fun foregroundPackage(): String? {
+        runCatching { automation.rootInActiveWindow }.getOrNull()?.packageName?.toString()?.let { return it }
+        return runCatching { automation.windows }
+            .getOrNull()
+            .orEmpty()
+            .firstOrNull { window -> window.isActive || window.isFocused }
+            ?.let { window -> runCatching { window.root?.packageName?.toString() }.getOrNull() }
+    }
+
+    /**
+     * Writes ONE failure-time picture: every window's type/active/focused flags, its package, and
+     * the visible text/contentDescription it exposes (the app's surface AND the picker's, so a
+     * picker that never returned is visible at a glance). The text is chunked for logcat's
+     * per-message bound and returned whole so the caller folds a compact copy into the exception.
+     */
+    fun dumpUiSnapshot(label: String): String {
+        val windows = runCatching { automation.windows }.getOrNull().orEmpty()
+        val parts = mutableListOf("windows=${windows.size}")
+        windows.forEachIndexed { index, window ->
+            val root = runCatching { window.root }.getOrNull()
+            val packageName = root?.packageName?.toString().orEmpty()
+            val texts =
+                if (root == null) {
+                    listOf("root=null")
+                } else {
+                    val collected = mutableListOf<String>()
+                    collectNodes(root).filter { it.isVisibleToUser }.forEach { node ->
+                        val text = textOf(node)
+                        val description = descriptionOf(node)
+                        val label =
+                            when {
+                                text.isNotBlank() -> "T:$text"
+                                description.isNotBlank() -> "D:$description"
+                                else -> null
+                            }
+                        if (label != null && label !in collected) collected += label
+                    }
+                    collected.take(MAX_DUMP_TEXTS)
+                }
+            parts +=
+                "window[$index]{type=${window.type},active=${window.isActive},focused=${window.isFocused},pkg=$packageName," +
+                "texts=[${texts.joinToString(" ¦ ")}]}"
+        }
+        val dump = "${P807Q2Flow1Facts.PREFIX} DUMP $label ${parts.joinToString(" ")}"
+        var offset = 0
+        while (offset < dump.length) {
+            val end = minOf(dump.length, offset + LOGCAT_CHUNK)
+            log(dump.substring(offset, end))
+            offset = end
+        }
+        return dump
+    }
+
+    private fun summarizeDump(dump: String): String = dump.take(DUMP_SUMMARY_CHARS)
+
+    /** Runs one UI step and, when it fails loudly, writes the window picture before rethrowing. */
+    private fun <T> withUiDump(
+        label: String,
+        block: () -> T,
+    ): T =
+        try {
+            block()
+        } catch (failure: IllegalStateException) {
+            val dump = dumpUiSnapshot(label)
+            throw IllegalStateException("$label failed; ${summarizeDump(dump)}", failure)
+        }
+
+    private fun describeNode(node: AccessibilityNodeInfo): String =
+        "class=${node.className} clickable=${node.isClickable} bounds=${bounds(node)} " +
+            "text=[${textOf(node)}] desc=[${descriptionOf(node)}]"
 
     private fun pickerRoots(): List<AccessibilityNodeInfo> =
         runCatching { automation.windows }
@@ -1184,9 +1351,16 @@ internal class P807Q2Flow1Ui(
         const val NODE_TIMEOUT_MILLIS = 60_000L
         const val HOME_TIMEOUT_MILLIS = 120_000L
         const val PICKER_TIMEOUT_MILLIS = 60_000L
+        const val PICKER_WINDOW_TIMEOUT_MILLIS = 30_000L
+        const val PICKER_RETURN_TIMEOUT_MILLIS = 20_000L
+        const val FIELD_SETTLE_TIMEOUT_MILLIS = 10_000L
         const val POLL_MILLIS = 500L
         const val MAX_TREE_NODES = 2_000
+        const val MAX_DUMP_TEXTS = 80
+        const val LOGCAT_CHUNK = 1_000
+        const val DUMP_SUMMARY_CHARS = 700
         const val PICKER_NAVIGATION_STEPS = 6
+        const val PICKER_CLICK_ATTEMPTS = 2
         const val SEEK_ATTEMPTS = 2
 
         val DOWNLOAD_ROOT_LABELS = listOf("下载", "Downloads")
