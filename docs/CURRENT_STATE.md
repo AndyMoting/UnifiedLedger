@@ -36,13 +36,13 @@
 - P8-01a：V-10 证明端口链路与账务不变量，不证明屏渲染与导航。
 - P8-04：V-6 设备链缺确认腿与写出失败类型化；V-7 只取得 1,000 行设备读数，maximum 档未取得。
 - P8-05：已交付但未无条件收口——V-8 TalkBack 语音腿（registry R2）与 V-9 真机 Excel/WPS 打开腿（registry R1）各缺一项设备证据。
-- P8-06：无未完成门槛（19/19 按 `D-364` 收口）；待办只剩 `D-343` 登记的索引与性能阈值，属独立决定。
+- P8-06：无阻断门槛（19/19 按 `D-364` 收口）；残余（索引、快照边界、期间控件歧义、单连接语句数、日历色阶与性能阈值）见 `D-364` 残余段，均不并入 PASS。
 - P8-07：阶段验收待执行；收口条件见 [验收设计](specs/2026-11-22-p8-07-stage-acceptance-design.md)。
 - A-PERF 遗留观察：`OBS-APERF-INPUT-FREEZE` 与 50k 冷读 31.62 s 无闭合记录（见归档「未完成门槛」旧条目）。
 
 ## 唯一下一步
 
-P8-07：按 [验收设计](specs/2026-11-22-p8-07-stage-acceptance-design.md) 与 `D-363` 启动阶段验收（实施与验收未开始）；派发规则见 `docs/PROJECT_STATE.local.md`。
+P8-07：按 [验收设计](specs/2026-11-22-p8-07-stage-acceptance-design.md) 与 `D-363` 启动阶段验收，实施尚未开始；派发规则见 `docs/PROJECT_STATE.local.md`。
 
 ## 历史
 

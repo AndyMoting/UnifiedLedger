@@ -8128,7 +8128,7 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 
 **背景：** P8-06 的产品合同与读面按 `D-343`（2026-11-17）批准，后续设计门按 `D-362` 拆为批 3–7。批 1（typed `returnTo` 账户流水详情往返）、批 2（搜索面往返）、批 3（明细二级面）、批 4（日历二级面）、批 5（报表身份补币种轴）、批 6（设备证据）连同报表区呈现、身份与余额修订、V-12 取证链均已落地。V-12 的四轮设备失败全部归因到采样器而非产品，修复依次在 `#429`、`#432`、`#433`、`#434` 落地。本条即 `D-362` 批次表的第 7 批。
 
-**范围：** 判定只以规格 §4 的验收向量与本地验收向量账（`docs/P806_GOAL.local.md` 的「验收向量账」）为据。每条向量给一条最具体的证据：实际执行的测试类与读数、设备 run id，或落地 PR/SHA；本表不引入账外读数，未取得的读数不补成 PASS。落地链：#413 `021682a6` → #415 `3b65c900` → #417 `c6e4b690` → #418 `808a1349` → #419 `fcab9518` → #420 `3c7882c1` → #421 `36ec7ce4` → #422 `082b7b49` → #423 `7accf08a` → #424 `a3adfd14` → #425 `f4306957` → #426 `c2779fbd`，V-12 取证收于 #434 `412c9dbc`。
+**范围：** 判定只以规格 §4 的验收向量与本地验收向量账（`docs/P806_GOAL.local.md` 的「验收向量账」）为据。每条向量给一条最具体的证据：实际执行的测试类与读数、设备 run id，或落地 PR/SHA；本表不引入账外读数，未取得的读数不补成 PASS。P8-06 落地链按 `--first-parent` 合并序（只列本片落地，故跳过 #427/#428）：#413 `021682a6` → #415 `3b65c900` → #417 `c6e4b690` → #418 `808a1349` → #419 `fcab9518` → #420 `3c7882c1` → #421 `36ec7ce4` → #424 `a3adfd14` → #422 `082b7b49` → #423 `7accf08a` → #426 `c2779fbd` → #425 `f4306957` → #429 `0549dc6c` → #432 `cf67835e` → #433 `ac294f17` → #434 `412c9dbc`（V-12 取证收于此）。
 
 | 向量 | 判定 | 最具体证据 |
 | --- | --- | --- |
@@ -8150,7 +8150,7 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 | V-16 | PASS | `P806ReportSemanticsTest` 17 项（CI `44991256261` 分片 2）用同额 3100 断言 30/31 天日均为 103/100 并排除已过天数作分母；`P806ReportRegionTest` 22 项（同 run 核心）断言自然日说明 |
 | V-17 | PASS | `P806PeriodsTest` 12 项（CI `44991256261` 核心）覆盖规格 9 个有符号舍入例与 `Long.MIN_VALUE / 1`；`P806ReportRegionTest` 22 项断言零、负净支出与极值文字 |
 | V-18 | PASS | `P806ReportSemanticsTest` 17 项（CI `44991256261` 分片 2）证混合普通/特殊计 1、今日较晚不计、仅特殊或本金计 0、未来普通交易归所属月并扩展 ALL；`P806ReportRegionTest` 22 项验证零时无标注与正数量文案 |
-| V-19 | PASS | `P806ReportSemanticsTest` 17 项断言双币种零日与真库三面同源，`P806CoverageTest` 11 项断言下一请求轴增长，`P806CalendarPresentationTest` 13 项断言双币种零金额与 `0 笔`；`SqlDelightP806SnapshotReader.calendar` 在同一事务内查活动币种轴 |
+| V-19 | PASS | `P806ReportSemanticsTest` 17 项（CI `44993726710` 分片 2）断言双币种零日与真库三面同源，`P806CoverageTest` 11 项断言下一请求轴增长，`P806CalendarPresentationTest` 13 项断言双币种零金额与 `0 笔`；`SqlDelightP806SnapshotReader.calendar` 在同一事务内查活动币种轴 |
 
 **交付边界：**
 
