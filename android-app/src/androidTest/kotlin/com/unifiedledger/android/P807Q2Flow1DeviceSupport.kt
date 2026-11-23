@@ -1249,7 +1249,11 @@ internal class P807Q2Flow1Ui(
 
     /** The active window's package (the ImportScaleTraversal `activeWindowPackage` read, plus a window fallback). */
     private fun foregroundPackage(): String? {
-        runCatching { automation.rootInActiveWindow }.getOrNull()?.packageName?.toString()?.let { return it }
+        runCatching { automation.rootInActiveWindow }
+            .getOrNull()
+            ?.packageName
+            ?.toString()
+            ?.let { return it }
         return runCatching { automation.windows }
             .getOrNull()
             .orEmpty()
