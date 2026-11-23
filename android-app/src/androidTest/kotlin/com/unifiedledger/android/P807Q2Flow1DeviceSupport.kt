@@ -13,7 +13,6 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.accessibility.AccessibilityNodeInfo
-import com.unifiedledger.application.AccountTransferIds
 import com.unifiedledger.application.AssetPaidOrdinaryExpenseCommand
 import com.unifiedledger.application.AssetPaidOrdinaryExpenseIds
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
@@ -69,6 +68,7 @@ import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.AccountTransferIds
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.DomainResult
 import com.unifiedledger.domain.LedgerCatalog
@@ -138,10 +138,6 @@ import kotlin.time.Instant
  * `BoundedXlsxReader`. The export's own UI steps stay real; only the artifact read crosses the
  * system-dialog boundary.
  */
-
-// ------------------------------------------------------------------ the shared seed facts
-
-/** The shared seed's frozen values, mirrored from `P807SharedAcceptanceSeedWriterTest`. */
 internal object P807Q2Flow1Facts {
     /** The one grep-able device-evidence prefix of this flow. */
     const val PREFIX = "P807-Q2FLOW1"
@@ -275,11 +271,11 @@ internal fun p807Q2Flow1ReadSnapshot(facade: P503LedgerFacade): P807FormalSnapsh
             }
         transactions +=
             "${row.transactionId.value}|${row.kind}|${detail.occurredAt}|${detail.statisticsAt}|" +
-                "${detail.note.orEmpty()}|legs=${row.postings.size}"
+            "${detail.note.orEmpty()}|legs=${row.postings.size}"
         detail.legs.forEach { leg ->
             legs +=
                 "${row.transactionId.value}|${leg.postingId.value}|${leg.accountId.value}|${leg.accountName}|" +
-                    "${leg.amount.minorUnits}|${leg.amount.currency.code}|${leg.amount.currency.precision}|${leg.categoryName.orEmpty()}"
+                "${leg.amount.minorUnits}|${leg.amount.currency.code}|${leg.amount.currency.precision}|${leg.categoryName.orEmpty()}"
         }
     }
     val reviewRows = checkNotNull(facade.queryImportReviewRows) { "the production graph must wire the import review read" }
@@ -293,14 +289,12 @@ internal fun p807Q2Flow1ReadSnapshot(facade: P503LedgerFacade): P807FormalSnapsh
             .map { row ->
                 "${row.candidateId.value}|${row.candidateStatus}|${row.duplicateStatus?.name.orEmpty()}|" +
                     "${row.amountMinor}|${row.currencyCode.orEmpty()}"
-            }
-            .sorted()
+            }.sorted()
     val balances =
         state.balances
             .map { balance ->
                 "${balance.accountId.value}|${balance.currency.code}|${balance.currency.precision}|${balance.displayMinorUnits}"
-            }
-            .sorted()
+            }.sorted()
     return P807FormalSnapshot(
         transactionTotal = state.transactionTotal,
         transactions = transactions,
@@ -755,6 +749,7 @@ private fun p807Q2Flow1Xlsx(
     sharedStrings.addAll(headerCells)
     rows.forEach { sharedStrings.addAll(it) }
     val index = sharedStrings.withIndex().associate { (position, value) -> value to position }
+
     fun sharedCell(value: String): String = "<c t=\"s\"><v>${index.getValue(value)}</v></c>"
 
     val sheet = StringBuilder(XML_DECLARATION)
@@ -914,8 +909,7 @@ internal class P807Q2Flow1Ui(
         ui.launch()
     }
 
-    fun awaitHomeCapsule(timeoutMillis: Long = HOME_TIMEOUT_MILLIS): Boolean =
-        runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.HOME_SEARCH_CAPSULE) } }.isSuccess
+    fun awaitHomeCapsule(timeoutMillis: Long = HOME_TIMEOUT_MILLIS): Boolean = runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.HOME_SEARCH_CAPSULE) } }.isSuccess
 
     fun openImport() {
         ui.openImportViaDrawer()

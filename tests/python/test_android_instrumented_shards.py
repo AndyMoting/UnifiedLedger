@@ -71,12 +71,12 @@ class ShardManifest(unittest.TestCase):
     def test_repository_split_partitions_the_ordinary_inventory(self):
         cases = instrumented.read_cases(INVENTORY)
         plan = instrumented.check_partition(INVENTORY, SHARDS)
-        self.assertEqual(len(cases), 60)
+        self.assertEqual(len(cases), 61)
         self.assertEqual(sorted(plan), [1, 2])
-        self.assertEqual(sum(len(entries) for entries in plan.values()), 60)
-        self.assertEqual(len({case for entries in plan.values() for case in entries}), 60)
+        self.assertEqual(sum(len(entries) for entries in plan.values()), 61)
+        self.assertEqual(len({case for entries in plan.values() for case in entries}), 61)
         self.assertEqual(sorted(case for entries in plan.values() for case in entries), sorted(cases))
-        self.assertEqual(len({case.split("#")[0] for case in cases}), 16)
+        self.assertEqual(len({case.split("#")[0] for case in cases}), 17)
         self.assertTrue(all(plan[shard] for shard in plan))
 
     def test_fixture_split_resolves_each_shard_subset(self):

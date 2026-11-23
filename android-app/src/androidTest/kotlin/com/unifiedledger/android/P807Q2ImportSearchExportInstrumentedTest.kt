@@ -375,8 +375,7 @@ class P807Q2ImportSearchExportInstrumentedTest {
 
     // ------------------------------------------------------------------ display mirrors (app-ui internal copy)
 
-    private fun candidateAmountText(minorUnits: Long): String =
-        readableExportAmountText(minorUnits, CATALOG_MANAGED_CURRENCY.precision) + " " + CATALOG_MANAGED_CURRENCY.code
+    private fun candidateAmountText(minorUnits: Long): String = readableExportAmountText(minorUnits, CATALOG_MANAGED_CURRENCY.precision) + " " + CATALOG_MANAGED_CURRENCY.code
 
     /** `transactionDetailHeadlineAmount` for a two-leg EXPENSE (the exact signed amount headline). */
     private fun transactionHeadline(detail: TransactionDetail): String {
