@@ -268,6 +268,7 @@ internal fun p807Q2Flow1ReadSnapshot(facade: P503LedgerFacade): P807FormalSnapsh
                 is TransactionDetailResult.Success -> read.detail
                 TransactionDetailResult.NotFound -> error("transaction ${row.transactionId.value} is not in the current set")
                 TransactionDetailResult.InvalidState -> error("transaction ${row.transactionId.value} read as InvalidState")
+                TransactionDetailResult.Unavailable -> error("transaction ${row.transactionId.value} read as Unavailable")
             }
         transactions +=
             "${row.transactionId.value}|${row.kind}|${detail.occurredAt}|${detail.statisticsAt}|" +
@@ -324,6 +325,7 @@ internal fun p807Q2Flow1AddedTransaction(
         is TransactionDetailResult.Success -> read.detail
         TransactionDetailResult.NotFound -> error("the added transaction is not in the current set")
         TransactionDetailResult.InvalidState -> error("the added transaction read as InvalidState")
+        TransactionDetailResult.Unavailable -> error("the added transaction read as Unavailable")
     }
 }
 
