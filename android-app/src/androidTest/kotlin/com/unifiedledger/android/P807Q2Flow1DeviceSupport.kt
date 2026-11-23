@@ -61,6 +61,7 @@ import com.unifiedledger.application.export.readable.readableExportCategoryPath
 import com.unifiedledger.application.export.readable.readableExportKindLabel
 import com.unifiedledger.application.export.readable.readableExportWallClockText
 import com.unifiedledger.application.export.readable.resolveReadableExportPresentation
+import com.unifiedledger.application.import.selfentry.SelfEntrySourceTokens
 import com.unifiedledger.application.import.selfentry.SelfEntryTemplateGenerator
 import com.unifiedledger.data.AndroidLedgerDatabaseHandle
 import com.unifiedledger.data.createAndroidLedgerDatabase
@@ -733,7 +734,14 @@ internal fun p807Q2Flow1CorrectWorkbook(): ByteArray =
                 "支出",
                 P807Q2Flow1Facts.IMPORTED_OCCURRED_AT_TEXT,
                 P807Q2Flow1Facts.IMPORTED_AMOUNT_TEXT,
-                "",
+                // 币种 carries the frozen CNY token, NOT blank. A blank cell raises
+                // REQUIRED_FACT_UNRESOLVED(currency) (SelfEntryXlsxParser), which demotes the record
+                // to VALID_INCOMPLETE; the spine then persists the candidate status as "incomplete"
+                // (pending_confirmation requires VALID_COMPLETE + funding SETTLED), the review
+                // surfaces 来源事实不完整——不可确认, and the row is never selectable. The
+                // generator's own EXAMPLE_ROWS leave this cell blank, so the token is taken from
+                // SelfEntrySourceTokens rather than from the examples.
+                SelfEntrySourceTokens.CURRENCY_CNY,
                 "餐饮",
                 "早餐",
                 "默认支付账户",
