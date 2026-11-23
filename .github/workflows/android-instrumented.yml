@@ -20,7 +20,7 @@
 #               the producer's job, and the action kills the emulator when
 #               `script` ends.
 #   fork path - fork pull request only:
-#     fork-fallback - one runner builds both APKs and runs all 59 ordinary
+#     fork-fallback - one runner builds both APKs and runs all 60 ordinary
 #               cases on one emulator with the same direct-instrumentation
 #               driver. It shares no artifact with the trusted path, because a
 #               fork run can neither produce nor consume a verified bundle.
@@ -42,7 +42,7 @@
 #   and every other command stays on one line.
 # - ImportScaleTraversalInstrumentedTest is excluded: it hardcodes 1080x2400
 #   tab-bar geometry and fallback coordinates, so it is coupled to one device
-#   profile. The ordinary inventory (59 cases over 16 classes) is the explicit
+#   profile. The ordinary inventory (60 cases over 16 classes) is the explicit
 #   allowlist the shards execute.
 # - A trusted APK bundle records the producing repository and run, and
 #   `android-apks.py verify` rejects any run whose `head_repository` is a fork.
@@ -81,16 +81,13 @@ on:
       - 'tests/python/test_android_ci_repair.py'
       - 'tests/python/test_android_instrumented_shards.py'
   workflow_dispatch:
-    # D7-13 on-demand device reading: an ordinary manual run passes nothing and is
-    # byte-identical to a pull-request run. The timing cases accept `ul.p802.timing=1`
-    # (P8-02 V-8) and `ul.p806.timing=1` (P8-06 V-14); the Python driver forwards each
-    # `KEY=VALUE` as one `-e KEY VALUE` pair only to the shard that owns the named
-    # timing class (see tools/python/android_scale/instrumented.py), and the validator
-    # receives the same dispatch argument, recomputes that routing and requires the
-    # host's reading.
+    # D7-13 on-demand device readings. The driver forwards each `KEY=VALUE` only
+    # to its host shard (tools/python/android_scale/instrumented.py). The validator
+    # recomputes that routing and checks the host's readings. `ul.p804.v7=1` enables
+    # the P8-04 V-7 boundary samples at 10,000 and 10,001 rows.
     inputs:
       instrumentation_extra_args:
-        description: 'One KEY=VALUE instrumentation argument, e.g. ul.p802.timing=1 or ul.p806.timing=1 (leave empty for an ordinary run)'
+        description: 'One KEY=VALUE instrumentation argument: ul.p802.timing=1, ul.p804.v7=1, or ul.p806.timing=1 (leave empty for an ordinary run)'
         required: false
         default: ''
         type: string
@@ -282,7 +279,7 @@ jobs:
     # Fork pull requests cannot produce or consume a trusted APK bundle: the
     # bundle records the producing repository and run, and `android-apks.py
     # verify` rejects a fork run. This job keeps the ordinary device coverage
-    # they had before the split: one runner builds both APKs and runs all 59
+    # they had before the split: one runner builds both APKs and runs all 60
     # ordinary cases on one emulator with the same direct-instrumentation
     # driver. It shares no artifact with the trusted shard path.
     name: Android instrumented fork fallback

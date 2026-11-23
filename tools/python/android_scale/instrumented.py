@@ -64,6 +64,7 @@ SHARD_LINE = re.compile(r"([0-9]+)\t([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)")
 # can never be silently dropped. An ordinary run passes no argument and is unaffected.
 ON_DEMAND_HOSTS: dict[str, str] = {
     "ul.p802.timing": "com.unifiedledger.android.P802SearchDeviceTimingInstrumentedTest",
+    "ul.p804.v7": "com.unifiedledger.android.SelfEntryAndroidInstrumentedTest",
     "ul.p806.timing": "com.unifiedledger.android.P806ReportDeviceTimingInstrumentedTest",
 }
 ON_DEMAND_READINGS: dict[str, tuple[str, ...]] = {
@@ -79,6 +80,11 @@ ON_DEMAND_READINGS: dict[str, tuple[str, ...]] = {
 P806_METRIC_LINE = re.compile(
     r"P806-V14DEV reading=(\w+) ms=([0-9]+\.[0-9]{3}) statements=([1-9][0-9]*)"
 )
+P804_READING_LINE = re.compile(r"\bP804-V7DEV rows=(10000|10001)\b([^\r\n]*)")
+P804_EXPECTED_READINGS = {
+    "10000": ("at-limit", "Accepted candidates=10000 sources=10000 evidence=10000 pageSize=10 formalLedgerRows=0"),
+    "10001": ("over-limit", "BatchExceedsLimit actualAcceptedRecords=10001 persistedRows=0 formalLedgerRows=0"),
+}
 # An on-demand instrumentation argument arrives as one `KEY=VALUE` word (the workflow
 # input), and the key half must be safe to hand to `am instrument` as its own token.
 EXTRA_ARG = re.compile(r"[A-Za-z0-9_.]+")
@@ -600,24 +606,34 @@ def execute_fork(*, evidence: Path, inventory: Path, app: Path, test: Path, sha:
 def _reading_problems(logcat_text: str, extra_args: list[str]) -> list[str]:
     """The on-demand reading each argument ROUTED to this shard must have left in logcat.
 
-    A fragment must appear EXACTLY once: a duplicated line (two runs merged into one export) or a
-    truncated one is not evidence. For `ul.p806.timing` the four metric lines must each parse with
-    a three-place millisecond value and a positive real statement count, so a green dispatch can
-    never be read as "four readings were asked for" without the four readings being there.
+    Each requested fragment must appear exactly once. P8-04 V-7 requires both full boundary
+    outcomes and a formatted elapsed time without a duration threshold. P8-06 V-14 requires four
+    metric lines with a three-place millisecond value and a positive statement count.
     """
     problems: list[str] = []
     requested: set[str] = set()
     for word in extra_args:
         key, _, value = word.partition("=")
-        fragments = ON_DEMAND_READINGS.get(key)
-        if fragments is None or value != "1":
+        if value != "1":
             continue
         requested.add(key)
-        for fragment in fragments:
+        for fragment in ON_DEMAND_READINGS.get(key, ()):
             count = logcat_text.count(fragment)
             if count != 1:
                 problems.append(
                     f"{key}: logcat carries {fragment!r} {count} times, expected exactly once"
+                )
+    if "ul.p804.v7" in requested:
+        readings = P804_READING_LINE.findall(logcat_text)
+        for rows, (fixture, outcome) in P804_EXPECTED_READINGS.items():
+            payloads = [payload for row_count, payload in readings if row_count == rows]
+            if len(payloads) != 1:
+                problems.append(f"ul.p804.v7: found {len(payloads)} readings for rows={rows}, expected exactly once")
+                continue
+            expected_payload = rf" fixture={re.escape(fixture)} intakeMs=[0-9]+\.[0-9] outcome={re.escape(outcome)}"
+            if not re.fullmatch(expected_payload, payloads[0]):
+                problems.append(
+                    f"ul.p804.v7: rows={rows} must record fixture={fixture}, a one-place intakeMs and outcome={outcome}"
                 )
     if "ul.p806.timing" in requested:
         matches = P806_METRIC_LINE.findall(logcat_text)

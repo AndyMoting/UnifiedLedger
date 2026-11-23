@@ -78,21 +78,27 @@ PR 范围（D-302, T2）：PR 上设置 `TRACE_BASE_SHA`，三类历史扫描收
 
 ## Android instrumented tests
 
-`.github/workflows/android-instrumented.yml` 在 `ubuntu-latest` 上以硬件加速的模拟器（KVM；GitHub 自 2024-04-02 起对 2 vCPU 的托管 Linux runner 开放）执行设备专属的普通 instrumented 回归：**59 个用例、16 个测试类**，由 `tools/ci/android-instrumented-inventory.txt` 显式列出（`ImportScaleTraversalInstrumentedTest` 不在清单内——它硬编码 1080×2400 的 tab-bar 几何与回退坐标，与单一设备 profile 耦合）。该 workflow 不进入 required checks，属于非阻塞设备信号（D-197）；`ci.yml` 的 job 列表与四个必过检查名不受影响，因为它是独立文件。
+`.github/workflows/android-instrumented.yml` 在 `ubuntu-latest` 上以硬件加速的模拟器（KVM；GitHub 自 2024-04-02 起对 2 vCPU 的托管 Linux runner 开放）执行设备专属的普通 instrumented 回归：**60 个用例、16 个测试类**，由 `tools/ci/android-instrumented-inventory.txt` 显式列出（`ImportScaleTraversalInstrumentedTest` 不在清单内——它硬编码 1080×2400 的 tab-bar 几何与回退坐标，与单一设备 profile 耦合）。该 workflow 不进入 required checks，属于非阻塞设备信号（D-197）；`ci.yml` 的 job 列表与四个必过检查名不受影响，因为它是独立文件。
 
 作业分两条设备路径，收口 job 都叫 `Android instrumented tests`。同仓 PR 与手动触发走可信路径：producer job `Android instrumented APKs` 先用 `tools/ci/android-apks.py reuse` 查找并校验同树（完整 Git tree 相同）的历史双 APK 工件，命中即复用、未命中才构建，随后 `pack` 出本 run 的 `android-apks-<tree>-<run>-<attempt>` 工件并在设备结果之外上传；两个 `Android instrumented shard 1/2` 各自下载并用 `android-apks.py verify` 复核该工件，各自启动一个 AVD，直接 `adb install` 两个 APK 后以 `am instrument -w -r -e class <class#method,...>` 执行 `tools/ci/android-instrumented-shards.txt` 分给该片的用例（模拟器会话内不运行任何 Gradle）。收口 job 等待适用路径全部结束，任一部分失败、跳过或缺证据即红。
 
-fork PR 走单独的 fallback job `Android instrumented fork fallback`：在单个 runner 内自行构建两个 APK，并用同一 direct-instrumentation 驱动器在一个 AVD 上执行全部 59 例；它不共享任何可信工件（可信 APK 工件要求 producing run 与仓库同源，`android-apks.py verify` 拒绝 fork 来源），使用与两片相同的 AVD 固定配置和同一套精确集合校验。
+fork PR 走单独的 fallback job `Android instrumented fork fallback`：在单个 runner 内自行构建两个 APK，并用同一 direct-instrumentation 驱动器在一个 AVD 上执行全部 60 例；它不共享任何可信工件（可信 APK 工件要求 producing run 与仓库同源，`android-apks.py verify` 拒绝 fork 来源），使用与两片相同的 AVD 固定配置和同一套精确集合校验。
 
 模拟器配置：`profile pixel_6`（1080×2400 / density 420，与长测链同一设备）、`api-level 36`、`target google_apis`、`arch x86_64`（对齐本机受管 AVD；API 37 镜像在本机从未达 adb）、`cores 2`、`ram-size 2048M`、`emulator-boot-timeout 300`（默认 600 过长，卡死需快速失败）。**两个 APK 在模拟器会话之外构建**：action 在 `script` 结束后会杀掉模拟器，编译不应占用模拟器在线时间。
 
-fork PR 的 fallback 与同仓两片使用同一 AVD 固定配置，并以同一校验器要求实际执行的 `class#method` 集合等于完整 59 例清单。
+fork PR 的 fallback 与同仓两片使用同一 AVD 固定配置，并以同一校验器要求实际执行的 `class#method` 集合等于完整 60 例清单。
 
 触发条件：`pull_request` 覆盖 `android-app/**`、`app-ui/**`、`ledger-data/**`、`ledger-application/**`、`ledger-domain/**`、根 Gradle 构建/settings/properties、wrapper 脚本与 `gradle/**`，以及本 workflow、普通测试清单、分片清单、APK 来源校验工具及其测试；另支持手动触发，不设定时运行。无关文档变动不启动设备。
 
-`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 59 例 / 16 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
+`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 60 例 / 16 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
 
-手动派发的 `instrumentation_extra_args` 是 D7-13 的按需读数通道：普通 PR 运行不传该输入，行为与一次 PR 运行逐字相同；传入一个 `KEY=VALUE`（`ul.p802.timing=1` 为 P8-02 V-8，`ul.p806.timing=1` 为 P8-06 V-14）时，它作为单个 `-e KEY VALUE` 到达 `am instrument`，对应计时用例才执行，参数缺席时打印 `SKIPPED` 后普通返回，读数只记录基线、不设阈值（D-347）。每个参数在 `tools/python/android_scale/instrumented.py` 的 `ON_DEMAND_HOSTS` 里点名唯一宿主类：只有分片清单把该类分给本片时，参数才转发给 `am instrument`；另一片既不接收也不要求任何读数标记，普通回归同样不要求。分片清单找不到宿主类时在占用设备前失败。`tools/ci/android-instrumented-cloud.py validate` 接收同一派发参数，重算转发集合：`shard.json` 记录的“请求/转发”参数必须与重算一致，托管分片还必须让读数恰好出现一次且可解析——P8-06 的四条 `P806-V14DEV reading=<label> ms=<x.xxx> statements=<n>` 各出现一次、标签齐全、每条语句数 ≥1，覆盖报表期间金额语句、日历桶、明细首页与计数四个分别可归属的读数。这个 `validate` 步骤是唯一的按需门禁，绿色分片本身不能替代读数；值为非 `1` 的 `KEY=VALUE` 或仅在值里包含计时键的其他键不要求任何读数。
+手动派发的 `instrumentation_extra_args` 是 D7-13 的按需读数通道。普通 PR、fork PR 和空参数手动派发均执行普通回归。传入一个 `KEY=VALUE` 时，`tools/python/android_scale/instrumented.py` 的 `ON_DEMAND_HOSTS` 为已登记参数指定唯一宿主类。只有该类所在的分片将参数作为单个 `-e KEY VALUE` 传给 `am instrument`。宿主类缺席时在占用设备前失败。
+
+- `ul.p802.timing=1` 启用 P8-02 V-8 搜索首页计时用例，并要求对应读数。
+- `ul.p804.v7=1` 在 SelfEntry 宿主分片额外运行 10,000 行和 10,001 行两档边界样本。原 1,000 行用例始终执行。宿主分片必须各有一条匹配的 `P804-V7DEV` 读数。`fixture=at-limit` 记录接收和设备账本读回成功，`fixture=over-limit` 记录 `BatchExceedsLimit(actualAcceptedRecords=10001)` 及零写入。两条读数均须记录 `formalLedgerRows=0`。
+- `ul.p806.timing=1` 启用 P8-06 V-14 报表计时用例。四条 `P806-V14DEV reading=<label> ms=<x.xxx> statements=<n>` 须各出现一次，每条语句数 ≥1，分别覆盖报表期间金额语句、日历桶、明细首页与计数。P8-02 和 P8-06 的计时用例在未启用时打印 `SKIPPED` 后正常返回。
+
+`tools/ci/android-instrumented-cloud.py validate` 接收同一派发参数，重算转发集合并核对 `shard.json` 中的请求与转发记录。它是唯一的按需证据门，要求宿主分片的每条预期读数恰好出现一次，并按各通道定义的格式与结果要求校验。非宿主分片、普通回归、值为非 `1` 的参数及仅在值里包含已登记键的其他参数均无需读数。耗时只记录，不设阈值（D-347）。
 
 实测成本（2026-10-01 一次性探针，同一提交三次，拆分前为单 job）：整条 job 407–417 秒，其中构建两个 APK 212–225 秒、模拟器启动 44.6–52.5 秒、7 个 P0 守卫的安装加执行约 122 秒；3/3 全绿。拆分后构建归 producer、两片并行；每片证据工件名为 `android-instrumented-<sha>-shard-<n>`，含 `shard.json`、原始转录、JUnit XML 与 `logcat.txt`。
 
@@ -183,7 +189,7 @@ gh workflow run android-fontscale-sample.yml --ref <branch> -f expected_sha=<完
 
 框架重启后最多 300 秒等待窗口服务、包管理服务及用户 0 的 `RUNNING_UNLOCKED` 状态，安装后核对应用/测试包、instrumentation target、launcher 实际启动结果，并通过 `run-as` 对暂存文件逐个读回校验。应用数据根由 Android 自行管理。设施失败在 JUnit 增记 `setup ERROR`，未执行业务阶段保持 `NOT_RUN`；后续缺证只追加诊断，不覆盖首因。logcat 持续采集，断线重连/可能缺口单独记录；证据保留 7 天，仍不上传数据库或完整输入。
 
-`am start -W` 返回不等于账本初始化完成。两种模式均需在当前剩余执行预算内、最多 180 秒，以每次独立输出路径的新鲜 UI XML 等待本包可见的就绪标记：`tools/python/android_scale/result.py` 的 `READY_MARKERS` 集合覆盖空账本首页、非空流水头，以及流水尚未加载时的当前交易分支，host 记录实际命中的那一个，验证器要求它属于该集合并等于从 `ready-ui.xml` 重新推导的标记。集合由 `tests/python/test_android_scale_result.py` 的守卫测试锚定——每个标记必须逐字出现在 `P503OverviewScreen.kt` 的渲染代码里（注释行不计），首页文案再改时 `Python tests` 先红，而不是设备探针静默失效；同包启动失败/指针恢复提示优先判错，Starting、短暂读取失败、缺失或未知 XML 均不得当作 Ready。失败 dump 的残留、其他包的文本和不可见节点不能通过。只有 Ready 后才正常 force-stop 或启动 instrumentation；失败保留 `setup ERROR`，不点击恢复、不清库、不补写指针，已有的 owned 失败清理仍可停止本包。host 必须保存 `app_ready` 与哈希绑定的 `ready-ui.xml`，预检和 maximum reducer 均强制校验；预检设备 schema 2 还必须包含开前指针观察及三次同一空账本快照，缺字段即失败。普通设备回归清单仍为 59 例，专用预检不混入其中。
+`am start -W` 返回不等于账本初始化完成。两种模式均需在当前剩余执行预算内、最多 180 秒，以每次独立输出路径的新鲜 UI XML 等待本包可见的就绪标记：`tools/python/android_scale/result.py` 的 `READY_MARKERS` 集合覆盖空账本首页、非空流水头，以及流水尚未加载时的当前交易分支，host 记录实际命中的那一个，验证器要求它属于该集合并等于从 `ready-ui.xml` 重新推导的标记。集合由 `tests/python/test_android_scale_result.py` 的守卫测试锚定——每个标记必须逐字出现在 `P503OverviewScreen.kt` 的渲染代码里（注释行不计），首页文案再改时 `Python tests` 先红，而不是设备探针静默失效；同包启动失败/指针恢复提示优先判错，Starting、短暂读取失败、缺失或未知 XML 均不得当作 Ready。失败 dump 的残留、其他包的文本和不可见节点不能通过。只有 Ready 后才正常 force-stop 或启动 instrumentation；失败保留 `setup ERROR`，不点击恢复、不清库、不补写指针，已有的 owned 失败清理仍可停止本包。host 必须保存 `app_ready` 与哈希绑定的 `ready-ui.xml`，预检和 maximum reducer 均强制校验；预检设备 schema 2 还必须包含开前指针观察及三次同一空账本快照，缺字段即失败。普通设备回归清单仍为 60 例，专用预检不混入其中。
 
 最大规模执行全局预算为 19,800 秒（D-346 从 13,800 秒抬高：旧值在 reopen 还没跑满自身段预算时就截断了整轮），设备步骤 330 分钟，设备 job 360 分钟。相位表为六相，顺序固定（D-353）：`prepare` → `chain` → `reopen` → `replay` → `final-reopen` → `traversal`。`prepare` 与 `chain` 共用剩余全局预算；其余四相各有一个 driver 侧上界——`reopen` 18,000 秒、`replay` 480 秒、`final-reopen` 480 秒、`traversal` 3,000 秒（`tools/python/android_scale/runner.py` 的 `PHASE_BUDGETS`）。这些上界是包住对应段字面量的**封套**，不是预留额度：`reopen` 的 18,000 秒包住该相唯一的 1,800 秒段（D-350 从 9,000 秒收回），`traversal` 的 3,000 秒包住走查段的 2,400 秒（D-350 从 14,400 秒收回）再加 instrumentation 启动与证据落盘，`final-reopen` 的 480 秒包住 reducer 对未列名阶段使用的 180 秒默认上界，因此各相封套之和可以超过全局预算，靠后的相位实际受剩余全局时间约束。全部命令和 best-effort 探针受当前阶段/全局剩余时间约束；结束后的采证总预算 120 秒。不宣称准备或主链拥有能提前阻止其耗尽全局时间的独立预算。
 
