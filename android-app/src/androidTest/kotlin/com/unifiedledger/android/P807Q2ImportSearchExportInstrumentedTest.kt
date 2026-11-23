@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -161,13 +162,21 @@ class P807Q2ImportSearchExportInstrumentedTest {
             "${P807Q2Flow1Facts.PREFIX} the prefilled self-entry decision must be complete",
             ui.hasAppText(P807Q2Flow1Facts.CANDIDATE_DECISION_COMPLETE),
         )
-        // The selection row's 「勾选进入批量确认（须先补齐决策）」 is static copy, not a gate: the
-        // checkbox is rendered for every selectable candidate, and 进入批量确认 appears only while
-        // selectedCandidateIds is non-empty (P503ImportReview.kt:1035-1047). A stale-node click on
-        // the checkbox can toggle nothing, so the toggle retries until the ENTRY surfaces.
+        // The detail in front of us must be the IMPORTED row, not the seed candidate: 7.77 CNY and
+        // the ordinary_flow kind are the imported self-entry row's own facts (the seed candidate is
+        // a 12.34 transfer_flow). The selection toggle is anchored on this detail's own row, so a
+        // click can never reach the list's first selectable row behind it.
         assertTrue(
-            "${P807Q2Flow1Facts.PREFIX} the detail's ${P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION} must establish the batch selection",
-            ui.selectCandidateForBatch(),
+            "${P807Q2Flow1Facts.PREFIX} the opened detail must be the imported 7.77 CNY candidate",
+            ui.hasAppText(candidateAmountText(P807Q2Flow1Facts.IMPORTED_AMOUNT_MINOR)),
+        )
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the opened detail must carry the imported row's ordinary_flow kind",
+            ui.hasAppText(P807Q2Flow1Facts.CANDIDATE_IMPORTED_META_PREFIX),
+        )
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the imported candidate's own ${P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION} must establish the batch selection",
+            ui.selectImportedCandidateForBatch(),
         )
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} the selected candidate's batch entry must be clickable",
@@ -178,20 +187,26 @@ class P807Q2ImportSearchExportInstrumentedTest {
             "${P807Q2Flow1Facts.PREFIX} the confirmation page must carry the selected candidate",
             !ui.hasAppText("尚未勾选任何候选。"),
         )
+        // The authorization page lists exactly the selected item: the imported row's amount, and
+        // never the seed candidate's 12.34.
+        assertNotNull(
+            "${P807Q2Flow1Facts.PREFIX} the authorization page must list the imported 7.77 CNY candidate",
+            ui.findAppNode { node -> ui.textOf(node).contains(candidateAmountText(P807Q2Flow1Facts.IMPORTED_AMOUNT_MINOR)) },
+        )
+        assertNull(
+            "${P807Q2Flow1Facts.PREFIX} the authorization page must not carry the seed candidate",
+            ui.findAppNode { node -> ui.textOf(node).contains(candidateAmountText(P807Q2Flow1Facts.SEED_CANDIDATE_AMOUNT_MINOR)) },
+        )
         ui.seekApp(P807Q2Flow1Facts.BATCH_AUTHORIZE_BUTTON)
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} the authorization page must afford the single-item confirmation",
             ui.hasAppText(P807Q2Flow1Facts.BATCH_AUTHORIZE_BUTTON),
         )
         ui.clickApp(P807Q2Flow1Facts.BATCH_AUTHORIZE_BUTTON)
-        ui.seekApp(P807Q2Flow1Facts.BATCH_RESULT_PREFIX)
-        val batchResult = ui.findAppNode { node -> ui.textOf(node).contains(P807Q2Flow1Facts.BATCH_CONFIRMED_ONE) }
-        assertNotNull(
-            "${P807Q2Flow1Facts.PREFIX} the batch result must report exactly one confirmed item",
-            batchResult,
-        )
-
-        val afterConfirmation = ledger.snapshot()
+        // The design gate comes FIRST: the formal ledger gains exactly one transaction. The UI
+        // summary is recorded after the ledger read-back (it is evidence, not the gate: the summary
+        // block renders below the review rows, on the surface the app returns to).
+        val afterConfirmation = awaitConfirmationApplied(ledger)
         assertEquals(
             "${P807Q2Flow1Facts.PREFIX} the confirmation must leave exactly 3 transactions",
             3,
@@ -207,6 +222,10 @@ class P807Q2ImportSearchExportInstrumentedTest {
             listOf("confirmed", "pending_confirmation"),
             afterConfirmation.candidateStatuses(),
         )
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the seed's own import candidate must stay pending — the confirmed row is the imported one",
+            afterConfirmation.candidates.any { row -> row.startsWith("${P807Q2Flow1Facts.SEEDED_CANDIDATE_ID}|pending_confirmation") },
+        )
         assertEquals(
             "${P807Q2Flow1Facts.PREFIX} the confirmed balances must be the seeded amounts plus the imported row",
             p807Q2Flow1Balances(
@@ -216,6 +235,20 @@ class P807Q2ImportSearchExportInstrumentedTest {
                 DEFAULT_HIDDEN_EXPENSE_ACCOUNT_ID to (P807Q2Flow1Facts.REFUNDABLE_EXPENSE_MINOR + P807Q2Flow1Facts.IMPORTED_AMOUNT_MINOR),
             ),
             afterConfirmation.balances,
+        )
+        // UI evidence, after the ledger gate: the retained summary renders on the import review
+        // surface (P503Reducer.leaveImportBatchSubmitting keeps it in the overview's review view,
+        // P503ImportReviewPresentation renders it after the candidate rows), so the review list has
+        // to scroll to reach it.
+        ui.seekApp(P807Q2Flow1Facts.BATCH_RESULT_PREFIX)
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the batch summary must record the authorization on the review surface",
+            ui.hasAppText(P807Q2Flow1Facts.BATCH_RESULT_PREFIX),
+        )
+        val batchResult = ui.findAppNode { node -> ui.textOf(node).contains(P807Q2Flow1Facts.BATCH_CONFIRMED_ONE) }
+        assertNotNull(
+            "${P807Q2Flow1Facts.PREFIX} the batch result must report exactly one confirmed item",
+            batchResult,
         )
         val detail =
             ledger.read { facade -> p807Q2Flow1AddedTransaction(facade, seeded.knownTransactionIds) }
@@ -398,6 +431,26 @@ class P807Q2ImportSearchExportInstrumentedTest {
             leg.amount.currency.code +
             (leg.categoryName?.let { name -> "（分类：$name）" } ?: "（无分类）")
 
+    /**
+     * The design gate: the formal ledger gains exactly one transaction. Polls the live ledger
+     * (bounded) until the new transaction count and posting count land, so the authorize's async
+     * per-item dispatch is not raced; a miss returns the last snapshot for the loud asserts.
+     */
+    private fun awaitConfirmationApplied(
+        ledger: P807Q2Flow1Ledger,
+        timeoutMillis: Long = CONFIRMATION_TIMEOUT_MILLIS,
+    ): P807FormalSnapshot {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        var snapshot = runCatching { ledger.snapshot() }.getOrNull()
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val current = snapshot
+            if (current != null && current.transactionTotal == EXPORTED_ROWS && current.legs.size == EXPORTED_POSTINGS) return current
+            SystemClock.sleep(500)
+            snapshot = runCatching { ledger.snapshot() }.getOrNull() ?: snapshot
+        }
+        return snapshot ?: ledger.snapshot()
+    }
+
     /** One row's cell texts, positionally resolved (numeric cells carry their text in `rawValue`). */
     private fun rowTexts(
         sheet: BoundedXlsxReader.Sheet,
@@ -416,6 +469,12 @@ class P807Q2ImportSearchExportInstrumentedTest {
 
         /** The initial seed's two transactions plus the flow's one confirmed import. */
         const val EXPORTED_ROWS = 3
+
+        /** The same two transactions' four postings plus the imported expense's two legs. */
+        const val EXPORTED_POSTINGS = 6
+
+        /** The ledger poll's bound: the authorize dispatches each item asynchronously. */
+        const val CONFIRMATION_TIMEOUT_MILLIS = 120_000L
 
         /**
          * The exact exported amount column of the shared seed plus this flow's row: the transfer's

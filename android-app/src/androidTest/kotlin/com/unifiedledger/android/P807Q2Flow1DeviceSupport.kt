@@ -175,6 +175,9 @@ internal object P807Q2Flow1Facts {
     const val CORRECT_FILE = "p807-q2-correct.xlsx"
     const val IMPORTED_AMOUNT_TEXT = "7.77"
     const val IMPORTED_AMOUNT_MINOR = 777L
+
+    /** The shared seed's pending import candidate amount; the confirmation page must never carry it. */
+    const val SEED_CANDIDATE_AMOUNT_MINOR = TRANSFER_MINOR
     const val IMPORTED_OCCURRED_AT_TEXT = "2026-11-02 10:00:00"
     const val IMPORTED_OCCURRED_AT_INSTANT = "2026-11-02T02:00:00Z"
 
@@ -201,6 +204,12 @@ internal object P807Q2Flow1Facts {
     const val CANDIDATE_DETAIL_TITLE = "候选详情"
     const val CANDIDATE_DECISION_COMPLETE = "决策已补全。"
     const val CANDIDATE_CHECKBOX_DESCRIPTION = "勾选候选"
+
+    /** The detail-only selection-row copy; the checkbox is the single 勾选候选 node in its Row. */
+    const val CANDIDATE_SELECTION_HINT = "勾选进入批量确认（须先补齐决策）"
+
+    /** The imported self-entry row's structured kind (the seed candidate is transfer_flow). */
+    const val CANDIDATE_IMPORTED_META_PREFIX = "类型 ordinary_flow"
 
     /**
      * The self-entry row names 一级分类 餐饮 + 二级分类 早餐, so the D-18/D-19 basis carries the full
@@ -957,50 +966,84 @@ internal class P807Q2Flow1Ui(
     }
 
     /**
-     * Establishes the candidate-detail batch selection. The postcondition is the BATCH ENTRY, not
-     * the checkbox's own read-back: the client tree can answer a stale "already checked" (D-338),
-     * and a click on a stale node toggles nothing (D-216). `AndroidScaleUi.clickUntil` exists for
-     * exactly this pair and retries the toggle until the entry surfaces.
+     * Establishes the selection of THIS detail's candidate. The click target is NOT the window's
+     * first 勾选候选 node: the review list can stay in the tree behind the detail, and its first
+     * selectable row is the seed's 12.34 transfer_flow candidate — clicking that by description is
+     * how an earlier round confirmed the wrong candidate (run 23:35: dump: 12.34 moved to
+     * 已确认 / 已拒绝, the imported 7.77 still 待确认). The checkbox is instead anchored
+     * STRUCTURALLY on the detail-only hint copy 「勾选进入批量确认（须先补齐决策）」: both sit in
+     * the same Row, so the checkbox is the single 勾选候选 node inside the hint's nearest ancestor
+     * that contains exactly one. The postcondition is the detail's own entry (exact text
+     * 进入批量确认), not the checkbox's read-back (D-338).
      */
-    fun selectCandidateForBatch(): Boolean {
-        if (ui.has(P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY)) {
-            log("${P807Q2Flow1Facts.PREFIX} selection already established (the batch entry is present)")
+    fun selectImportedCandidateForBatch(): Boolean {
+        if (findDetailBatchEntry() != null) {
+            log("${P807Q2Flow1Facts.PREFIX} selection already established (the detail's batch entry is present)")
             return true
         }
-        return try {
-            ui.clickUntil(P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION, P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY)
-            log("${P807Q2Flow1Facts.PREFIX} selection established by ${P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION}")
-            true
-        } catch (failure: IllegalStateException) {
-            log("${P807Q2Flow1Facts.PREFIX} selection never established: ${failure.message}")
-            dumpUiSnapshot("selectCandidateForBatch")
-            false
+        repeat(SELECTION_CLICK_ATTEMPTS) { attempt ->
+            val hint = appNodes().firstOrNull { textOf(it) == P807Q2Flow1Facts.CANDIDATE_SELECTION_HINT }
+            val checkbox = hint?.let(::selectionCheckboxAnchoredOn)
+            if (hint == null || checkbox == null) {
+                log("${P807Q2Flow1Facts.PREFIX} detail selection row absent attempt=$attempt hint=${hint != null}")
+                settle()
+                return@repeat
+            }
+            log("${P807Q2Flow1Facts.PREFIX} detail checkbox attempt=$attempt ${describeNode(checkbox)} hint=${bounds(hint)}")
+            tap(checkbox)
+            if (runCatching { ui.await(PICKER_RETURN_TIMEOUT_MILLIS) { findDetailBatchEntry() != null } }.isSuccess) {
+                log("${P807Q2Flow1Facts.PREFIX} detail selection established attempt=$attempt")
+                return true
+            }
         }
+        log("${P807Q2Flow1Facts.PREFIX} detail selection never established")
+        dumpUiSnapshot("selectImportedCandidateForBatch")
+        return false
     }
 
     /**
-     * Clicks the detail's batch entry, matched by its EXACT text or contentDescription — never a
-     * prefix. The selection row's static copy 「勾选进入批量确认（须先补齐决策）」 is a label, not
-     * the entry, and a prefix match would also shadow any future copy that starts with the token.
-     * The actual node is read back and logged before the click.
+     * The checkbox of the detail's selection Row: structurally the single 勾选候选 node inside the
+     * [anchor]'s nearest ancestor that holds any, else the one in that ancestor sitting on the
+     * anchor's own band and to its left (the Row's checkbox-then-copy order). The detail-only
+     * anchor keeps the list's checkboxes out of the choice.
+     */
+    private fun selectionCheckboxAnchoredOn(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val band = bounds(anchor)
+        var current: AccessibilityNodeInfo? = anchor.parent
+        repeat(5) {
+            val container = current ?: return null
+            val boxes = collectNodes(container).filter { descriptionOf(it) == P807Q2Flow1Facts.CANDIDATE_CHECKBOX_DESCRIPTION }
+            if (boxes.size == 1) return boxes.single()
+            if (boxes.isNotEmpty()) {
+                return boxes
+                    .filter { box ->
+                        val boxBounds = bounds(box)
+                        boxBounds.centerY() in band.top..band.bottom && boxBounds.right <= band.left
+                    }.minByOrNull { box -> kotlin.math.abs(bounds(box).centerY() - band.centerY()) }
+            }
+            current = container.parent
+        }
+        return null
+    }
+
+    /** The detail's own entry: its visible text is exactly the token (the list entry appends a count). */
+    private fun findDetailBatchEntry(): AccessibilityNodeInfo? =
+        appNodes().firstOrNull { node -> textOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY }
+
+    /**
+     * Clicks the detail's batch entry by its EXACT text — never a prefix, and not the list-side
+     * entry (whose text carries 「（N 项）」 while its contentDescription shares the token). The
+     * node is read back and logged before the click, then the batch page is awaited.
      */
     fun enterBatchConfirmation(timeoutMillis: Long = NODE_TIMEOUT_MILLIS): Boolean {
-        val appeared = runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY) } }.isSuccess
-        if (!appeared) {
-            log("${P807Q2Flow1Facts.PREFIX} batch entry absent windows=${describePickerWindows()}")
+        val appeared = runCatching { ui.await(timeoutMillis) { findDetailBatchEntry() != null } }.isSuccess
+        val entry = findDetailBatchEntry()
+        if (!appeared || entry == null) {
+            log("${P807Q2Flow1Facts.PREFIX} detail batch entry absent windows=${describePickerWindows()}")
             dumpUiSnapshot("enterBatchConfirmation:absent")
             return false
         }
-        val entry =
-            appNodes().firstOrNull { node ->
-                textOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY || descriptionOf(node) == P807Q2Flow1Facts.CANDIDATE_BATCH_ENTRY
-            }
-        if (entry == null) {
-            log("${P807Q2Flow1Facts.PREFIX} batch entry not read back by exact text/description")
-            dumpUiSnapshot("enterBatchConfirmation:node")
-            return false
-        }
-        log("${P807Q2Flow1Facts.PREFIX} batch entry ${describeNode(entry)}")
+        log("${P807Q2Flow1Facts.PREFIX} detail batch entry ${describeNode(entry)}")
         tap(entry)
         val opened = runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.BATCH_CONFIRM_TITLE, prefix = true) } }.isSuccess
         if (!opened) {
@@ -1011,29 +1054,31 @@ internal class P807Q2Flow1Ui(
     }
 
     /**
-     * Reaches a target that may sit below the fold: FIRST look on the current surface, and only
-     * scroll when the surface actually exposes a scrollable container. A short surface (the
-     * candidate detail) has none, so a miss there gets one bounded render wait and then fails
-     * loudly with the window dump — the old unconditional scroll died with
-     * "scroll container absent" and hid which surface it was on.
+     * Reaches a target that may sit below the fold, find-or-scroll: `ui.seek` itself looks before
+     * it scrolls, so the list path is unchanged. Only when that fails do we classify the miss — a
+     * surface with a scrollable container gets one final loud seek; a short surface (the candidate
+     * detail) gets one bounded render wait and then fails with the window dump. The old shape
+     * scrolled unconditionally and died with "scroll container absent" before the target was ever
+     * looked for; probing the container up front instead would let a stale tree report a false
+     * "no container" on a scrollable review list.
      */
     fun seekApp(
         textPrefix: String,
         maxScrolls: Int = 40,
     ) {
         if (ui.has(textPrefix, prefix = true)) return
-        if (runCatching { ui.scrollable() }.isFailure) {
-            if (runCatching { ui.await(SEEK_SHORT_SURFACE_TIMEOUT_MILLIS) { ui.has(textPrefix, prefix = true) } }.isSuccess) return
-            withUiDump("seekApp:$textPrefix") {
-                error("seekApp('$textPrefix'): the target is absent and the current surface has no scrollable container")
-            }
-            return
-        }
         repeat(SEEK_ATTEMPTS) {
             if (runCatching { ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls) }.isSuccess) return
             SystemClock.sleep(1_000)
         }
-        withUiDump("seekApp:$textPrefix") { ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls) }
+        if (runCatching { ui.scrollable() }.isSuccess) {
+            withUiDump("seekApp:$textPrefix") { ui.seek(textPrefix, forward = true, maxScrolls = maxScrolls) }
+            return
+        }
+        if (runCatching { ui.await(SEEK_SHORT_SURFACE_TIMEOUT_MILLIS) { ui.has(textPrefix, prefix = true) } }.isSuccess) return
+        withUiDump("seekApp:$textPrefix") {
+            error("seekApp('$textPrefix'): the target is absent and the current surface has no scrollable container")
+        }
     }
 
     fun settle() {
@@ -1436,6 +1481,7 @@ internal class P807Q2Flow1Ui(
         const val DUMP_SUMMARY_CHARS = 700
         const val PICKER_NAVIGATION_STEPS = 6
         const val PICKER_CLICK_ATTEMPTS = 2
+        const val SELECTION_CLICK_ATTEMPTS = 3
         const val SEEK_ATTEMPTS = 2
 
         val DOWNLOAD_ROOT_LABELS = listOf("下载", "Downloads")
