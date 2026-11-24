@@ -327,8 +327,11 @@ class P807Q2ImportSearchExportInstrumentedTest {
             ui.findAppNode { node -> ui.textOf(node).startsWith("${detail.kind} · 统计 ") }
         assertNotNull("${P807Q2Flow1Facts.PREFIX} the single search result row must render", resultRow)
         assertEquals(
-            "${P807Q2Flow1Facts.PREFIX} the result row must carry the confirmed transaction's statistics time",
-            "${detail.kind} · 统计 ${detail.statisticsAt}",
+            "${P807Q2Flow1Facts.PREFIX} the result row must carry the confirmed transaction's statistics time and note",
+            // The row's frozen copy (P503OverviewScreen.kt:308) is kind · 统计 · note, and the note is
+            // nullable ONLY at the domain's edge: the confirmed self-entry row carries the frozen
+            // empty string, which still renders its " · " separator after the statistics time.
+            "${detail.kind} · 统计 ${detail.statisticsAt}" + (detail.note?.let { note -> " · $note" } ?: ""),
             ui.textOf(resultRow!!),
         )
         ui.tap(resultRow!!)

@@ -1403,8 +1403,7 @@ internal class P807Q2Flow1Ui(
     }
 
     /** The keyboard is present exactly while a TYPE_INPUT_METHOD window still renders visible nodes. */
-    private fun imeWindowShown(): Boolean =
-        windows().any { window -> window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && visibleNodeCount(window) > 0 }
+    private fun imeWindowShown(): Boolean = windows().any { window -> window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && visibleNodeCount(window) > 0 }
 
     /**
      * Bounded wait for the IME window to leave the window list (a hide is an asynchronous platform
@@ -1423,8 +1422,7 @@ internal class P807Q2Flow1Ui(
     /** The current accessibility window list; a failed read is an empty list, never a throw. */
     private fun windows(): List<AccessibilityWindowInfo> = runCatching { automation.windows }.getOrNull().orEmpty()
 
-    private fun visibleNodeCount(window: AccessibilityWindowInfo): Int =
-        runCatching { window.root }.getOrNull()?.let { root -> collectNodes(root).count { it.isVisibleToUser } } ?: 0
+    private fun visibleNodeCount(window: AccessibilityWindowInfo): Int = runCatching { window.root }.getOrNull()?.let { root -> collectNodes(root).count { it.isVisibleToUser } } ?: 0
 
     /** One line naming every window: type, its flags, its package and how many nodes it renders visibly. */
     private fun describeWindows(): String =
@@ -1516,8 +1514,7 @@ internal class P807Q2Flow1Ui(
         return null
     }
 
-    private fun searchSubmitNode(): AccessibilityNodeInfo? =
-        appNodes().firstOrNull { node -> descriptionOf(node) == P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION }
+    private fun searchSubmitNode(): AccessibilityNodeInfo? = appNodes().firstOrNull { node -> descriptionOf(node) == P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION }
 
     /**
      * The effect probe: one bounded wait for the result surface, then one bounded forward seek (the
