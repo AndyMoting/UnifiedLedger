@@ -959,7 +959,11 @@ internal class P807Q2Flow1Ui(
     fun hasAppText(textPrefix: String): Boolean = ui.has(textPrefix, prefix = true)
 
     /** The visible lead texts of the current surface (the surface title's evidence on a miss). */
-    fun surfaceTitle(): String = appNodes().map { textOf(it) }.filter { it.isNotBlank() }.take(6).joinToString(" ¦ ")
+    fun surfaceTitle(): String = appNodes()
+        .map { textOf(it) }
+        .filter { it.isNotBlank() }
+        .take(6)
+        .joinToString(" ¦ ")
 
     fun clickApp(text: String) {
         ui.click(text)
