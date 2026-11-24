@@ -361,13 +361,16 @@ class OrdinaryRegressionUntouched(unittest.TestCase):
 
     def test_the_export_class_is_excluded_from_the_ordinary_inventory(self):
         # Turns red if the exclusion is dropped from inventory.py: the CI step
-        # "Check ordinary device source inventory" would then count 61 cases and
-        # the 60-case manifest would mismatch.
+        # "Check ordinary device source inventory" would then count 62 cases and
+        # the 61-case manifest would mismatch.
         inventory = ROOT.joinpath("tools", "python", "android_scale", "inventory.py").read_text(encoding="utf-8")
         self.assertIn('"BackupExportEnospcInstrumentedTest"', inventory)
         manifest = ROOT.joinpath("tools", "ci", "android-instrumented-inventory.txt").read_text(encoding="utf-8")
         self.assertNotIn("Enospc", manifest)
-        self.assertEqual(60, len([line for line in manifest.splitlines() if line.strip()]))
+        # The manifest carries header comments; the case count is the number of non-comment,
+        # non-blank lines (the same lines `read_cases` treats as cases).
+        case_lines = [line for line in manifest.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        self.assertEqual(61, len(case_lines))
 
     def test_the_export_case_is_not_in_the_shard_plan(self):
         # Turns red if the class is added to the ordinary shard split, which would

@@ -1,3 +1,9 @@
+# P8-07 Q2 flow 1 (design section 2): import -> search -> export on the shared seed.
+# ORDER IS LOAD-BEARING: this case seeds the app's OWN stable storage and then launches
+# MainActivity, so it must run before any case that opens or launches the app in the same shard
+# process (the ImportReviewPaging discipline). The shard plan preserves this manifest's order, so
+# the case is listed first and assigned to shard 1 in android-instrumented-shards.txt.
+com.unifiedledger.android.P807Q2ImportSearchExportInstrumentedTest#theSharedSeedFlowsFromImportThroughSearchToTheExactExportRow
 com.unifiedledger.android.AndroidAbsoluteDatabasePathInstrumentedTest#theFreshInstallPlanHandsAnAbsoluteNameToTheDriver
 com.unifiedledger.android.AndroidAbsoluteDatabasePathInstrumentedTest#theLegacyUpgradePlanHandsAnAbsoluteNameToTheDriver
 com.unifiedledger.android.AndroidAbsoluteDatabasePathInstrumentedTest#concurrentProductionOpensAreSerializedByTheProcessWideLock
