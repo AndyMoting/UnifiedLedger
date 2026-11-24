@@ -90,7 +90,7 @@ fork PR 的 fallback 与同仓两片使用同一 AVD 固定配置，并以同一
 
 触发条件：`pull_request` 覆盖 `android-app/**`、`app-ui/**`、`ledger-data/**`、`ledger-application/**`、`ledger-domain/**`、根 Gradle 构建/settings/properties、wrapper 脚本与 `gradle/**`，以及本 workflow、普通测试清单、分片清单、APK 来源校验工具及其测试；另支持手动触发，不设定时运行。无关文档变动不启动设备。
 
-`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 61 例 / 17 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`。
+`tools/ci/android-instrumented-inventory.txt` 是显式用例清单（当前 61 例 / 17 类），`tools/ci/android-instrumented-shards.txt` 是权威分片清单（每行 `shard<TAB>完整类名`；两片并集等于清单、互不重叠）。producer 在构建前核对源码中的类/方法集合与清单一致，并静态证明分片划分；每片跑完后 `tools/ci/android-instrumented-cloud.py validate` 重新解析原始 `am instrument` 转录、该片 JUnit XML、设备配置与导出的 logcat，要求实际执行的 `class#method` 集合精确等于该片清单子集，且无 failure/error/skip/缺失。缺报告、零执行、重复、遗漏、多余用例、失败或跳过均失败；新增、删除或改名用例必须同步清单与分片文件。普通回归排除 `ImportScaleTraversalInstrumentedTest`、`AndroidScaleLongInstrumentedTest` 与专用 `AndroidScalePreflightInstrumentedTest`；`P807Q2Flow2ReconciliationInstrumentedTest` 同样不在清单与分片内，它走下方的专用 Q2 rig。
 
 手动派发的 `instrumentation_extra_args` 是 D7-13 的按需读数通道。普通 PR、fork PR 和空参数手动派发均执行普通回归。传入一个 `KEY=VALUE` 时，`tools/python/android_scale/instrumented.py` 的 `ON_DEMAND_HOSTS` 为已登记参数指定唯一宿主类。只有该类所在的分片将参数作为单个 `-e KEY VALUE` 传给 `am instrument`。宿主类缺席时在占用设备前失败。
 
@@ -141,6 +141,24 @@ gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位S
 ```
 
 **已知边界**：本门不覆盖 `P704GP-D-SCALE-01`（小组不回归需要另一份夹具与另一轮运行），也不对任何未画在屏幕上的层作结论。开发机不再为该门启动模拟器——本机 adb 面归用户的 MuMu 使用，云端托管 runner 是唯一执行环境（显式本地诊断通道不适用于本门）。
+
+### Android P8-07 Q2 验收 rig（导入证据 → 对账 → 审计回看）
+
+`.github/workflows/android-p807-q2.yml` 是**手动触发、非阻塞**的单流程入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于所选 ref 的头）与可选 `flow`（默认 `2`；`tools/python/android_p807_q2.py` 的 `FLOWS` 表当前只有 flow 2，未知 flow 在占用设备前拒跑）；不加入 required checks，不设定时触发，也不因后续推送取消正在执行的手动运行。
+
+该 rig 跑阶段验收设计门的第二条跨切片流程（`docs/P807_DESIGN_GATE.local.md` 的「已批准的跨切片流程」第二行；行为判据是 P8-01a 规格 §2.2–2.7 与 §4 的 V-8 / V-10 / V-11）。同一个用例内先走入口 A（账户流水 → 账户对账队列）读队列与审计，再走入口 B（导入审核候选行的「用于核对既有分录」）完成绑定、候选与确认，最后回导入审核面核对「已用于核对既有分录」标记，并用同源候选再确认一次，要求被 `IMPORT_EVIDENCE_ALREADY_RECONCILED` 拒绝且正式账本零变化。`P807Q2Flow2ReconciliationInstrumentedTest` 不在普通清单内、也不在任何分片里：用例在启动应用之前播种应用自有存储，种子守卫要求它是本进程的第一条用例，而普通两片每片只有一次 `am instrument`、两片首位都已占用，因此它独占一个 rig 与本流程自己的 AVD 名 `ul-p807-q2`（D-365）。
+
+`tools/ci/android-p807-q2.py run` 独占设备交互：单设备所有权断言（`emu avd name` 必须答 `ul-p807-q2`，否则拒跑且不碰别的模拟器）、装机前 `am force-stop com.unifiedledger.android`、两个 APK 安装并计 sha256、**唯一**一次 `am instrument -w -r -e class <class#method>`、原始转录逐字落盘、logcat 与设备配置，然后写 `host.json`（schema 版本、sha、flow、case、avd、serial、api_level、起止时间、status、各证据文件名与 APK 哈希）。两个 APK 在**模拟器会话之外**由本次 checkout 构建，配合 `git rev-parse HEAD` 断言，无需 APK 工件链。设备 profile 与普通设备回归一致：`pixel_6`（1080×2400 / 420）、`api-level 36`、`google_apis`、`x86_64`、2 核、2048M、保留平台动画（程序化滚动依赖动画推进）。
+
+模拟器会话之后另设独立 `gate` 步（`if: always()`）：只从磁盘上的转录重算判据，不读驱动器自己的数字，因此驱动器自解析错误无法让 job 变绿。它对 `host.json` 的自报状态只作**单向**信任：自报非 `PASS` 一律红（一次自报失败不会被重判为绿），自报 `PASS` 仍须由转录证明。判据：sha 绑定、flow/case 身份、`OK (1 test)`、执行集恰为该一条用例（多跑、漏跑、零用例、重复都红）、无 `FAILURES!!!` / `INSTRUMENTATION_FAILED` / `shortMsg=` / `Process crashed`、完成码 `-1`、退出码 0、`api_level == 36`（`host.json` 记录与实际设备配置各核一次）。缺转录、缺 `host.json` 或 sha 不符直接拒判。工件 `android-p807-q2-<sha>-<run-id>-<attempt>` 含 `host-apks.txt`、`host.json`、`instrumentation.txt`、`logcat.txt`、`configuration.txt` 与 `gate.json`，保留 7 天；`gate.json` 的 `reasons` 是红例的唯一清单。
+
+触发命令（仅在该提交已落到目标分支后）：
+
+```bash
+gh workflow run android-p807-q2.yml --ref <branch> -f expected_sha=<完整40位SHA> -f flow=2
+```
+
+**已知边界**：本 rig 只跑 flow 表里的那一条用例，不替代普通设备回归，也不进入 required checks。`import_candidate_status_history` 行数、V-11 同参重放 `NoChange` 与 P8-01a §2.5 的「结果未知」分支在界面不可观测，按设计门 Q5 不计入本流程判据，其服务层设备证据在 `P801AccountReconciliationChainInstrumentedTest`；V-10 的「返回保留滚动位」在单条队列上无可观测滚动，引该链的 `theScrollSlotsRoundTripThroughTheReducer` 读面证据。
 
 ### Android font-scale sample（P8-00 V-8 / P8-01a i3b / P8-02 V-9 / P8-03 V-14 / P8-06 V-12）
 

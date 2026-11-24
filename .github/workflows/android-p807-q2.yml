@@ -1,0 +1,150 @@
+# P8-07 Q2 flow-2 device evidence on a hosted cloud AVD (manual, non-blocking).
+#
+# WHAT ONE GREEN RUN PROVES
+# -------------------------
+# The stage-acceptance design gate's second cross-slice flow
+# (`docs/P807_DESIGN_GATE.local.md`, 「已批准的跨切片流程」 row 2) on the pinned emulator profile:
+# the ONE instrumented case named by `tools/python/android_p807_q2.py`'s flow table runs end to end
+# and passes. The case itself carries the flow's assertions (import evidence -> reconciliation ->
+# audit re-read, both entry points); this workflow only binds that run to one exact commit and one
+# owned emulator, and re-derives the verdict from the transcript on disk.
+#
+# WHY A DEDICATED RIG (D-365)
+# ---------------------------
+# The flow seeds the app's own stable storage before any activity launch, so its process must be
+# the FIRST case of its instrumentation run. The ordinary two-shard regression runs exactly one
+# `am instrument` per shard (`tools/python/android_scale/instrumented.py:484`) and both shard-heads
+# are already taken (shard 1 `P807Q2ImportSearchExportInstrumentedTest`, shard 2
+# `ImportReviewPagingInstrumentedTest`), so this flow gets its own dispatch-only workflow and its
+# own exclusively named emulator. No ordinary manifest, shard file or required check changes.
+#
+# WHY CLOUD
+# ---------
+# The development host's adb surface belongs to the user's MuMu/ALas automation, so this chain must
+# never boot a local emulator. `tools/ci/android-p807-q2.py` refuses to run outside a
+# GitHub-hosted Linux runner, and the first two steps bind the run to one exact commit, so no APK
+# bundle is needed: the pair this job builds is the pair it installs.
+#
+# Facts this file depends on:
+# - `tools/ci/android-p807-q2.py run` owns every device interaction: single-owner AVD assertion
+#   (`emu avd name` must answer `ul-p807-q2`), the pre-install `am force-stop`, both APK installs
+#   with their sha256, the ONE `am instrument -w -r -e class` call, the raw transcript, logcat and
+#   the pinned configuration, then `host.json`. The workflow must not duplicate any of it.
+# - The `gate` step re-derives the verdict from the transcript and the recorded configuration on
+#   disk and never accepts the driver's own PASS claim; a run that reported failure stays red. It
+#   runs with `always()`: a red measurement must not be able to leave the job green.
+# - Builds stay outside the emulator session: the action kills the emulator when `script` ends, so
+#   compilation cannot sit inside it.
+# - `profile: pixel_6` pins 1080x2400 at density 420, the geometry the ordinary device regression
+#   uses; `cores: 2` / `ram-size: 2048M` mirror it.
+# - Animations stay enabled (`disable-animations: false`): the ordinary device regression reads on
+#   the same profile with platform animations on, and this flow drives scrolls.
+# - The action runs `script` with /usr/bin/sh (dash): no `set -o pipefail` and no backslash line
+#   continuations there. The driver command therefore stays one line.
+name: Android P8-07 Q2 flow-2 device evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to run the flow at
+        required: true
+        type: string
+      flow:
+        description: Flow number from tools/python/android_p807_q2.py's table (2 = import evidence -> reconciliation -> audit)
+        required: false
+        default: '2'
+        type: string
+
+permissions:
+  contents: read
+
+# One manual round per run: a later push never cancels evidence tied to a chosen SHA, and two
+# dispatches of the same SHA stay tellable apart because each owns its own runner and its own
+# exclusive `ul-p807-q2` emulator.
+concurrency:
+  group: android-p807-q2-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  p807-q2:
+    name: P8-07 Q2 flow-2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
+    steps:
+      - name: Check the requested SHA is the selected ref's head
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          # `[[ ... =~ ... ]]` is required: the POSIX test builtin has no `=~` operator.
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          selected_ref="${GITHUB_REF#refs/heads/}"
+          selected_sha="$(git ls-remote "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" "refs/heads/${selected_ref}" | awk '{print $1}')"
+          test -n "${selected_sha}" && test "${selected_sha}" = "${EXPECTED_SHA}"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - name: Assert the checkout is the requested commit
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.expected_sha }}"
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - name: Build both APKs outside the emulator session
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug :android-app:assembleDebugAndroidTest --warning-mode all
+      - name: Record the APK hashes this run installs
+        run: |
+          set -euo pipefail
+          mkdir -p p807-q2-evidence
+          sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk | tee p807-q2-evidence/host-apks.txt
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record outer deadline before emulator boot
+        run: echo "ANDROID_CI_OUTER_DEADLINE_EPOCH=$(( $(date +%s) + 5400 ))" >> "$GITHUB_ENV"
+      - name: Run the flow on the pinned emulator
+        timeout-minutes: 45
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          FLOW: ${{ inputs.flow }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-p807-q2
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -u
+            python3 tools/ci/android-p807-q2.py run --app android-app/build/outputs/apk/debug/android-app-debug.apk --test android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --evidence p807-q2-evidence --sha "${EXPECTED_SHA}" --flow "${FLOW}" --avd-name ul-p807-q2 --outer-deadline-epoch "$ANDROID_CI_OUTER_DEADLINE_EPOCH"
+      - name: Re-derive the gate from the evidence on disk
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          FLOW: ${{ inputs.flow }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci/android-p807-q2.py gate --evidence p807-q2-evidence --sha "${EXPECTED_SHA}" --flow "${FLOW}"
+      - name: Upload the device evidence
+        # Partial evidence still uploads by design: the gate step above is the verdict, and a red
+        # run is worth reading.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-p807-q2-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p807-q2-evidence/**
+          if-no-files-found: error
+          retention-days: 7
