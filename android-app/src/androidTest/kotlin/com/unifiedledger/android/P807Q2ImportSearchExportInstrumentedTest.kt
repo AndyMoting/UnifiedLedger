@@ -507,8 +507,7 @@ class P807Q2ImportSearchExportInstrumentedTest {
      * note, where a null note contributes nothing and the ledger's frozen empty-string note still
      * renders its separator.
      */
-    private fun searchRowText(detail: TransactionDetail): String =
-        "${detail.kind} · 统计 ${detail.statisticsAt}" + (detail.note?.let { note -> " · $note" } ?: "")
+    private fun searchRowText(detail: TransactionDetail): String = "${detail.kind} · 统计 ${detail.statisticsAt}" + (detail.note?.let { note -> " · $note" } ?: "")
 
     /** `transactionDetailHeadlineAmount` for a two-leg EXPENSE (the exact signed amount headline). */
     private fun transactionHeadline(detail: TransactionDetail): String {
