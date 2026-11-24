@@ -220,6 +220,8 @@ internal object P807Q2Flow1Facts {
     const val CANDIDATE_MATCH_BASIS_ACCOUNT = "资金账户：默认支付账户 → 默认支付账户"
     const val CANDIDATE_BATCH_ENTRY = "进入批量确认"
     const val BATCH_CONFIRM_TITLE = "批量确认"
+    const val BATCH_BACK_BUTTON = "返回"
+    const val REVIEW_SURFACE_MARKER = "最近导入："
     const val BATCH_AUTHORIZE_BUTTON = "确认入账（1 项）"
     const val BATCH_RESULT_PREFIX = "最近批量结果（授权时间 "
     const val RESOLVED_GROUP_ONE = "已确认 / 已拒绝（1）"
@@ -957,6 +959,36 @@ internal class P807Q2Flow1Ui(
     }
 
     fun hasAppText(textPrefix: String): Boolean = ui.has(textPrefix, prefix = true)
+
+    /**
+     * Leaves the batch confirmation surface back to the import review surface. The authorize does
+     * not reliably bounce the client back on its own (the run that failed here still showed the
+     * authorization page's 返回 + 确认入账（1 项） after the ledger had already committed), so the
+     * return is explicit and bounded: a visible 返回 is clicked, a bare 批量确认 title falls back to
+     * the system back action, and the review surface's own record marker is awaited after each
+     * attempt (either landing — the review top or the list — renders 最近导入).
+     */
+    fun returnToReviewSurface(timeoutMillis: Long = NODE_TIMEOUT_MILLIS): Boolean {
+        if (ui.has(P807Q2Flow1Facts.REVIEW_SURFACE_MARKER, prefix = true)) return true
+        repeat(2) { attempt ->
+            val backButton = appNodes().firstOrNull { textOf(it) == P807Q2Flow1Facts.BATCH_BACK_BUTTON }
+            if (backButton != null) {
+                log("${P807Q2Flow1Facts.PREFIX} batch page ${P807Q2Flow1Facts.BATCH_BACK_BUTTON} attempt=$attempt ${describeNode(backButton)}")
+                tap(backButton)
+            } else if (ui.has(P807Q2Flow1Facts.BATCH_CONFIRM_TITLE, prefix = true)) {
+                log("${P807Q2Flow1Facts.PREFIX} batch page without a ${P807Q2Flow1Facts.BATCH_BACK_BUTTON} node, system back attempt=$attempt")
+                back()
+            }
+            if (runCatching { ui.await(timeoutMillis) { ui.has(P807Q2Flow1Facts.REVIEW_SURFACE_MARKER, prefix = true) } }.isSuccess) {
+                log("${P807Q2Flow1Facts.PREFIX} review surface reached attempt=$attempt")
+                return true
+            }
+            settle()
+        }
+        log("${P807Q2Flow1Facts.PREFIX} review surface never reached; surface=${surfaceTitle()}")
+        dumpUiSnapshot("returnToReviewSurface")
+        return false
+    }
 
     /** The visible lead texts of the current surface (the surface title's evidence on a miss). */
     fun surfaceTitle(): String =

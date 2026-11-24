@@ -238,9 +238,13 @@ class P807Q2ImportSearchExportInstrumentedTest {
         )
         // UI evidence for the SAME fact, recorded but not a render-position gate: the resolved
         // group must carry the imported candidate — its unique 7.77 CNY row and the ordinary_flow
-        // kind (the seed candidate is a 12.34 transfer_flow). The retained batch summary below is
-        // observed only, because where it renders depends on the review list's scrolled state while
-        // the acceptance fact is already established by the ledger read-back above.
+        // kind (the seed candidate is a 12.34 transfer_flow). The authorize does not reliably
+        // return the client to the review surface (the failing run still showed the batch page
+        // after the ledger had committed), so the return is explicit before any scrolling.
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the batch surface must return to the import review surface",
+            ui.returnToReviewSurface(),
+        )
         ui.scrollBackTo(P807Q2Flow1Facts.RESOLVED_GROUP_ONE)
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} exactly one candidate may sit in the resolved group",
