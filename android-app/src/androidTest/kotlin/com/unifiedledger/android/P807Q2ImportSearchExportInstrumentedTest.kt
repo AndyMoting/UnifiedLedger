@@ -286,7 +286,12 @@ class P807Q2ImportSearchExportInstrumentedTest {
             Instant.parse(P807Q2Flow1Facts.IMPORTED_OCCURRED_AT_INSTANT),
             detail.occurredAt,
         )
-        assertNull("${P807Q2Flow1Facts.PREFIX} the self-entry row carries no persisted note", detail.note)
+        assertEquals(
+            "${P807Q2Flow1Facts.PREFIX} the self-entry import confirm persists the domain's frozen empty-string note " +
+                "(AssetPaidOrdinaryExpenseCommand.note defaults to \"\", and OrdinaryFlowFormalFactory passes none)",
+            "",
+            detail.note,
+        )
         assertEquals("${P807Q2Flow1Facts.PREFIX} the imported expense carries exactly two legs", 2, detail.legs.size)
         val expected = ledger.read { facade -> p807Q2Flow1ExpectedExportRow(facade, detail) }
         log("${P807Q2Flow1Facts.PREFIX} confirmed ${afterConfirmation.logLine()} ${expected.logLine()}")
