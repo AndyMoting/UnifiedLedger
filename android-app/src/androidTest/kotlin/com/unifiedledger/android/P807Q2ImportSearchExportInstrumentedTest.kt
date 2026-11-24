@@ -50,7 +50,11 @@ import kotlin.time.Instant
  *    the imported row falls in is typed into the two custom fields, and 提交搜索 must answer
  *    exactly one row. Opening it must show the ledger-consistent detail (发生/统计 time, 备注,
  *    类型, the exact signed amount and every leg line derived from the ledger's own detail read),
- *    and 返回 must land back on the same result surface (原路返回).
+ *    and 返回 must land back on the same result surface (原路返回). A SECOND window
+ *    (2026-10-01T00:00:00Z .. 2026-10-20T00:00:00Z) then brackets both seeded rows and excludes
+ *    the imported one: its 共 2 笔 is the only observation that can prove the window's upper end is
+ *    applied, because a surface that ignored it would also carry the November row (共 3 笔) while
+ *    the first window's single row lies inside every plausible bound.
  * 5. Export the whole ledger: the drawer's 导出账目 surface's 开始导出 starts the REAL SAF
  *    CreateDocument picker; the platform save is confirmed; the app must report 已导出 3 笔. The
  *    committed file is read back and parsed with the PRODUCTION `BoundedXlsxReader`: the frozen
@@ -331,7 +335,7 @@ class P807Q2ImportSearchExportInstrumentedTest {
             // The row's frozen copy (P503OverviewScreen.kt:308) is kind · 统计 · note, and the note is
             // nullable ONLY at the domain's edge: the confirmed self-entry row carries the frozen
             // empty string, which still renders its " · " separator after the statistics time.
-            "${detail.kind} · 统计 ${detail.statisticsAt}" + (detail.note?.let { note -> " · $note" } ?: ""),
+            searchRowText(detail),
             ui.textOf(resultRow!!),
         )
         ui.tap(resultRow!!)
@@ -359,6 +363,39 @@ class P807Q2ImportSearchExportInstrumentedTest {
         ui.clickApp(P807Q2Flow1Facts.BACK_LABEL)
         ui.awaitAppText(P807Q2Flow1Facts.SEARCH_RESULTS_ONE)
         log("${P807Q2Flow1Facts.PREFIX} search rows=1 detail=${detail.transactionId.value}")
+
+        // ---- the UPPER bound must be OBSERVED, not inferred. The first window's single row lies
+        // inside every plausible bound, so a surface that ignored the upper end would answer 共 1 笔
+        // all the same. This second window brackets both seeded October rows and excludes the
+        // imported November row, so only an applied upper end can answer 共 2 笔 (ignoring it would
+        // answer 共 3 笔); the seed row is matched by the ledger's OWN row copy and the imported row
+        // by the same text prefix as a bounded negative assertion.
+        val seedExpense =
+            ledger.read { facade -> p807Q2Flow1TransactionDetail(facade, P807Q2Flow1Facts.REFUNDABLE_EXPENSE_TRANSACTION_ID) }
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the seed window's lower bound must be typeable",
+            ui.setFieldText(2, P807Q2Flow1Facts.SEARCH_SEED_WINDOW_START),
+        )
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the seed window's upper bound must be typeable",
+            ui.setFieldText(1, P807Q2Flow1Facts.SEARCH_SEED_WINDOW_END),
+        )
+        ui.submitSearch(P807Q2Flow1Facts.SEARCH_RESULTS_TWO)
+        val seedRowText = searchRowText(seedExpense)
+        ui.seekApp(seedRowText)
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the seed window must carry the seeded expense row [$seedRowText]",
+            ui.hasAppText(seedRowText),
+        )
+        assertNull(
+            "${P807Q2Flow1Facts.PREFIX} the seed window's exclusive upper bound must exclude the imported November row",
+            ui.awaitNoAppText(searchRowText(detail)),
+        )
+        log(
+            "${P807Q2Flow1Facts.PREFIX} search rows=2 seed=${seedExpense.transactionId.value} " +
+                "row=[$seedRowText] excluded=[${searchRowText(detail)}]",
+        )
+
         ui.backToHome()
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} closing the search surface must return to the home overview",
@@ -444,14 +481,10 @@ class P807Q2ImportSearchExportInstrumentedTest {
         )
         val row = matches.single()
         assertEquals(
-            "${P807Q2Flow1Facts.PREFIX} the imported transaction's exported row must equal the exporter's own contract cells",
-            expected.cells(),
-            row.take(expected.cells().size),
-        )
-        assertEquals(
-            "${P807Q2Flow1Facts.PREFIX} the exported note cell must be the ledger's note face",
-            detail.note.orEmpty(),
-            row[8],
+            "${P807Q2Flow1Facts.PREFIX} the imported transaction's exported row must equal the exporter's own A..J cells " +
+                "(the ledger's note face and the J source label included)",
+            expected.rowCells(detail.note.orEmpty()),
+            row,
         )
         Log.i(TAG, "${P807Q2Flow1Facts.PREFIX} export rows=$EXPORTED_ROWS row=${row.joinToString("|")}")
     }
@@ -459,6 +492,14 @@ class P807Q2ImportSearchExportInstrumentedTest {
     // ------------------------------------------------------------------ display mirrors (app-ui internal copy)
 
     private fun candidateAmountText(minorUnits: Long): String = readableExportAmountText(minorUnits, CATALOG_MANAGED_CURRENCY.precision) + " " + CATALOG_MANAGED_CURRENCY.code
+
+    /**
+     * The product's own result-row copy for [detail] (`P503OverviewScreen.kt:308`): kind · 统计 ·
+     * note, where a null note contributes nothing and the ledger's frozen empty-string note still
+     * renders its separator.
+     */
+    private fun searchRowText(detail: TransactionDetail): String =
+        "${detail.kind} · 统计 ${detail.statisticsAt}" + (detail.note?.let { note -> " · $note" } ?: "")
 
     /** `transactionDetailHeadlineAmount` for a two-leg EXPENSE (the exact signed amount headline). */
     private fun transactionHeadline(detail: TransactionDetail): String {

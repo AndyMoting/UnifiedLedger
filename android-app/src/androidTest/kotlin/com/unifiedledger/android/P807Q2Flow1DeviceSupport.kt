@@ -59,11 +59,13 @@ import com.unifiedledger.application.ManualTransferTransactionFactory
 import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailResult
+import com.unifiedledger.application.export.readable.READABLE_EXPORT_SUGGESTED_NAME_PREFIX
 import com.unifiedledger.application.export.readable.ReadableExportLegFacts
 import com.unifiedledger.application.export.readable.readableExportAccountName
 import com.unifiedledger.application.export.readable.readableExportAmountText
 import com.unifiedledger.application.export.readable.readableExportCategoryPath
 import com.unifiedledger.application.export.readable.readableExportKindLabel
+import com.unifiedledger.application.export.readable.readableExportSourceLabel
 import com.unifiedledger.application.export.readable.readableExportWallClockText
 import com.unifiedledger.application.export.readable.resolveReadableExportPresentation
 import com.unifiedledger.application.import.selfentry.SelfEntrySourceTokens
@@ -190,6 +192,16 @@ internal object P807Q2Flow1Facts {
     const val SEARCH_WINDOW_START = "2026-11-01T00:00:00Z"
     const val SEARCH_WINDOW_END = "2026-11-03T00:00:00Z"
 
+    /**
+     * The seed-only window. It brackets BOTH seeded rows (2026-10-14T04:00:00Z and
+     * 2026-10-15T02:00:00Z) and excludes the imported 2026-11-02T02:00:00Z row, so its result count
+     * can only be 2 when the window's upper end is APPLIED — a surface that ignored it would answer
+     * 共 3 笔. The first window cannot observe that end: its single row sits inside every plausible
+     * bound, so an ignored upper end would still answer 共 1 笔.
+     */
+    const val SEARCH_SEED_WINDOW_START = "2026-10-01T00:00:00Z"
+    const val SEARCH_SEED_WINDOW_END = "2026-10-20T00:00:00Z"
+
     /** The self-entry format row and its picker MIME filter (the product matrix is the source). */
     val SELF_ENTRY_FORMAT = ImportFormatCapabilities.SELF_ENTRY_XLSX
     val SELF_ENTRY_MIME: String = ImportFormatCapabilities.SELF_ENTRY_XLSX.mimeFilters.first()
@@ -240,6 +252,7 @@ internal object P807Q2Flow1Facts {
     /** The product's own unresolvable-custom-range copy (app-ui `P8_SEARCH_CUSTOM_INVALID_TEXT`). */
     const val SEARCH_CUSTOM_INVALID_TEXT = "自定义起止无效：开始必须早于结束。"
     const val SEARCH_RESULTS_ONE = "搜索结果 · 共 1 笔"
+    const val SEARCH_RESULTS_TWO = "搜索结果 · 共 2 笔"
     const val TRANSACTION_DETAIL_TITLE = "交易详情"
     const val EXPORT_START_BUTTON = "开始导出"
     const val EXPORT_SUCCESS_PREFIX_3 = "已导出 3 笔"
@@ -350,6 +363,20 @@ internal fun p807Q2Flow1AddedTransaction(
     }
 }
 
+/** One transaction's detail by its stable id (the same production read the added-row helper uses). */
+internal fun p807Q2Flow1TransactionDetail(
+    facade: P503LedgerFacade,
+    transactionId: String,
+): TransactionDetail {
+    val detailQuery = checkNotNull(facade.queryTransactionDetail) { "the production graph must wire the transaction detail read" }
+    return when (val read = detailQuery.query(TransactionId(transactionId))) {
+        is TransactionDetailResult.Success -> read.detail
+        TransactionDetailResult.NotFound -> error("transaction $transactionId is not in the current set")
+        TransactionDetailResult.InvalidState -> error("transaction $transactionId read as InvalidState")
+        TransactionDetailResult.Unavailable -> error("transaction $transactionId read as Unavailable")
+    }
+}
+
 /** The added transaction's formal posting row, used to derive the expected export cells. */
 internal fun p807Q2Flow1AddedPostingRow(
     facade: P503LedgerFacade,
@@ -380,6 +407,7 @@ internal data class P807ExpectedExportRow(
     val account1Name: String,
     val account2Name: String,
     val categoryPathText: String,
+    val sourceLabel: String,
 ) {
     fun cells(): List<String> =
         listOf(
@@ -392,6 +420,9 @@ internal data class P807ExpectedExportRow(
             account2Name,
             categoryPathText,
         )
+
+    /** The complete A..J row: the eight derived cells, the ledger's note face and the J source cell. */
+    fun rowCells(note: String): List<String> = cells() + note + sourceLabel
 
     fun logLine(): String = "exportRow[${cells().joinToString("|")}]"
 }
@@ -423,6 +454,7 @@ internal fun p807Q2Flow1ExpectedExportRow(
         account1Name = readableExportAccountName(catalog, presentation.account1).orEmpty(),
         account2Name = readableExportAccountName(catalog, presentation.account2).orEmpty(),
         categoryPathText = readableExportCategoryPath(catalog, presentation.categoryAnchorAccountId).orEmpty(),
+        sourceLabel = readableExportSourceLabel(detail.creationEntry),
     )
 }
 
@@ -925,22 +957,51 @@ private val EXPORT_ROOTS =
     )
 
 /**
- * Removes every export file an earlier run left in [EXPORT_ROOTS] before the picker writes the new
- * one, so the byte read can never return a stale same-named workbook. `find` needs no shell: the
- * name glob is find's own argument, `-print` records what was removed, and out/err are logged per
- * root.
+ * One listing pass over [EXPORT_ROOTS]: every absolute export path the command channel can see,
+ * with one log line per root (argv, the paths found, stderr). It is the freshness gate's and the
+ * pinned read's single source of truth, and it never reads file bytes.
+ */
+internal fun p807Q2Flow1ExportFiles(
+    automation: UiAutomation,
+    log: (String) -> Unit,
+): List<String> {
+    val files = mutableListOf<String>()
+    for (root in EXPORT_ROOTS) {
+        val argv = "find $root -maxdepth 1 -name ${READABLE_EXPORT_SUGGESTED_NAME_PREFIX}*.xlsx -print"
+        val (out, err) = p807Q2Flow1Command(automation, argv)
+        val paths = p807Q2Flow1CommandText(out).lines().map { it.trim() }.filter { it.isNotEmpty() }
+        log(
+            "${P807Q2Flow1Facts.PREFIX} exportList root=$root argv=[$argv] found=${paths.size} " +
+                "paths=[${paths.joinToString(" ¦ ")}] err=[${p807Q2Flow1CommandText(err)}]",
+        )
+        files += paths
+    }
+    return files
+}
+
+/**
+ * Removes every export file an earlier run left in [EXPORT_ROOTS] and then PROVES the removal: a
+ * second listing pass must be empty, or the run stops here. Freshness is a precondition of the
+ * pinned read, so a failed cleanup cannot stay a log line that a successful read papers over.
+ * `find` needs no shell. This device write belongs to the ONE-SHOT CI AVD: the flow owns the whole
+ * device and deletes nothing but files carrying the product's own export-name prefix.
  */
 internal fun p807Q2Flow1ClearExportFiles(
     automation: UiAutomation,
     log: (String) -> Unit,
 ) {
     for (root in EXPORT_ROOTS) {
-        val argv = "find $root -maxdepth 1 -name ${EXPORT_NAME_PREFIX}*.xlsx -print -delete"
+        val argv = "find $root -maxdepth 1 -name ${READABLE_EXPORT_SUGGESTED_NAME_PREFIX}*.xlsx -print -delete"
         val (out, err) = p807Q2Flow1Command(automation, argv)
         log(
             "${P807Q2Flow1Facts.PREFIX} exportReset root=$root argv=[$argv] " +
                 "removed=[${p807Q2Flow1CommandText(out)}] err=[${p807Q2Flow1CommandText(err)}]",
         )
+    }
+    val leftovers = p807Q2Flow1ExportFiles(automation, log)
+    check(leftovers.isEmpty()) {
+        "the export roots must hold no export file after the freshness cleanup, got ${leftovers.size}:\n" +
+            leftovers.joinToString("\n")
     }
 }
 
@@ -957,8 +1018,10 @@ private data class P807ExportMediaRow(
 
 /**
  * Every Downloads row, newest first, with the five columns that make a miss attributable. The
- * selection is empty on purpose: this app's collection was empty on the last device run, so the
- * reader must observe "no rows" instead of filtering the evidence away with a SQL LIKE.
+ * selection is empty on purpose and the prefix filter runs in Kotlin: this case inserts its two
+ * fixture files into the same Download collection before the app starts, so a row count here is
+ * evidence about the collection, never proof about the export file. The collection is therefore
+ * logged only — see [p807Q2Flow1LogExportMediaRows] — and no bytes are taken from it.
  */
 private fun p807Q2Flow1ExportMediaRows(resolver: ContentResolver): List<P807ExportMediaRow> {
     val projection =
@@ -999,14 +1062,44 @@ private fun p807Q2Flow1ExportMediaRows(resolver: ContentResolver): List<P807Expo
 }
 
 /**
- * The workbook the picker just wrote, read as bytes without relying on a shell. Three
- * discriminating probes run first — is the channel alive (`ls -d /sdcard`), is the directory
- * readable (`ls -d /sdcard/Download`), is any file there (`find … -print`) — so a dead channel, an
- * unreadable root and an absent file cannot look alike. The read itself is
- * `find <root> … -exec cat {} +`: find hands each match to cat as its OWN argument, so a platform
- * duplicate-counter name with a space still reads correctly. The first non-empty read wins and is
- * logged with its root and size. The platform Downloads collection stays a diagnostic channel with
- * a client-side prefix filter, and only rows that actually exist are opened.
+ * The Downloads collection as EVIDENCE ONLY: five columns, no SQL LIKE, a client-side prefix
+ * filter, one line per matching row and the open attempt. This case inserts its two fixture rows
+ * into the same collection before the app starts, so rows here can neither prove nor disprove the
+ * export file's presence; the pinned listing/read below is the only positive channel, and nothing
+ * is returned from here even when a row exists.
+ */
+private fun p807Q2Flow1LogExportMediaRows(
+    resolver: ContentResolver,
+    record: (String) -> Unit,
+) {
+    val query = runCatching { p807Q2Flow1ExportMediaRows(resolver) }
+    val rows = query.getOrNull()
+    if (rows == null) {
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media query failed error=${query.exceptionOrNull()}")
+        return
+    }
+    record("${P807Q2Flow1Facts.PREFIX} exportRead media query rows=${rows.size}")
+    val matches = rows.filter { row -> row.name.startsWith(READABLE_EXPORT_SUGGESTED_NAME_PREFIX) }
+    record("${P807Q2Flow1Facts.PREFIX} exportRead media prefixMatches=${matches.size}")
+    for (row in matches) {
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media row ${row.logText()}")
+        val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, row.id)
+        val opened = runCatching { resolver.openInputStream(uri)?.use { stream -> stream.readBytes().size } ?: 0 }
+        val detail = opened.getOrNull()?.let { size -> "bytes=$size" } ?: "error=${opened.exceptionOrNull()}"
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media open uri=$uri $detail")
+    }
+}
+
+/**
+ * The workbook the picker just wrote, read from ONE positively identified path. The read is
+ * fail-closed: a listing pass must name exactly ONE export file across [EXPORT_ROOTS] — a stale,
+ * duplicated or absent file stops the run instead of being papered over — that file's own root is
+ * the only root read, and the bytes must be non-empty. The alias roots can spell the same physical
+ * file twice, so identity is the file NAME and the first root in [EXPORT_ROOTS] order owns it; the
+ * other spellings are logged. `find <root> … -exec cat {} +` hands each match to cat as its OWN
+ * argument, so a platform duplicate-counter name with a space stays whole. The three probes
+ * (channel alive, directory readable, any file) and the Downloads collection are DIAGNOSTICS: what
+ * they can see is never evidence that the pinned read may proceed.
  */
 internal fun p807Q2Flow1NewestExportFile(
     automation: UiAutomation,
@@ -1034,50 +1127,41 @@ internal fun p807Q2Flow1NewestExportFile(
     // ---- discriminating probes: channel alive, directory readable, file present
     probe("probe sdcard", "ls -d /sdcard")
     probe("probe download", "ls -d /sdcard/Download")
-    probe("probe listing", "find /sdcard/Download -maxdepth 1 -name ${EXPORT_NAME_PREFIX}*.xlsx -print")
+    probe("probe listing", "find /sdcard/Download -maxdepth 1 -name ${READABLE_EXPORT_SUGGESTED_NAME_PREFIX}*.xlsx -print")
+    p807Q2Flow1LogExportMediaRows(resolver) { line -> record(line) }
 
-    // ---- the byte read: find expands the name glob and hands each match to cat as its own argv
-    for (root in EXPORT_ROOTS) {
-        val argv = "find $root -maxdepth 1 -name ${EXPORT_NAME_PREFIX}*.xlsx -exec cat {} +"
-        val (out, err) = p807Q2Flow1Command(automation, argv)
-        record("${P807Q2Flow1Facts.PREFIX} exportRead read root=$root argv=[$argv] err=[${p807Q2Flow1CommandText(err)}]")
-        if (out.isEmpty()) {
-            record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=find-cat root=$root bytes=0")
-        } else {
-            record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=find-cat root=$root bytes=${out.size}")
-            return out
-        }
+    // ---- the pinned read: exactly one file name must be listed, and only its own root is read
+    val files = p807Q2Flow1ExportFiles(automation) { line -> record(line) }
+    val names = files.map { path -> path.substringAfterLast('/') }.distinct()
+    if (names.size != 1) {
+        error(
+            "the export listing must carry exactly one file after the save, got ${files.size} paths / ${names.size} names; " +
+                "one line per diagnostic:\n" + diagnostics.joinToString("\n"),
+        )
     }
-
-    // ---- diagnostic channel: the platform's own Downloads collection
-    val query = runCatching { p807Q2Flow1ExportMediaRows(resolver) }
-    val rows = query.getOrNull()
-    if (rows == null) {
-        record("${P807Q2Flow1Facts.PREFIX} exportRead media query failed error=${query.exceptionOrNull()}")
-    } else {
-        record("${P807Q2Flow1Facts.PREFIX} exportRead media query rows=${rows.size}")
-        val matches = rows.filter { row -> row.name.startsWith(EXPORT_NAME_PREFIX) }
-        record("${P807Q2Flow1Facts.PREFIX} exportRead media prefixMatches=${matches.size}")
-        for (row in matches) {
-            record("${P807Q2Flow1Facts.PREFIX} exportRead media row ${row.logText()}")
-            val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, row.id)
-            val bytes = runCatching { resolver.openInputStream(uri)?.use { stream -> stream.readBytes() } ?: ByteArray(0) }
-            val read = bytes.getOrNull()
-            if (read == null) {
-                record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=media uri=$uri error=${bytes.exceptionOrNull()}")
-            } else if (read.isEmpty()) {
-                record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=media uri=$uri bytes=0")
-            } else {
-                record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=media uri=$uri bytes=${read.size}")
-                return read
-            }
-        }
+    val name = names.single()
+    val root = EXPORT_ROOTS.firstOrNull { candidate -> files.any { path -> path == "$candidate/$name" } }
+    if (root == null) {
+        error(
+            "the listed export file [$name] sits under none of $EXPORT_ROOTS; " +
+                "one line per diagnostic:\n" + diagnostics.joinToString("\n"),
+        )
     }
-
-    error(
-        "no readable exported file was found; one line per channel:\n" +
-            diagnostics.joinToString("\n"),
+    val path = "$root/$name"
+    record(
+        "${P807Q2Flow1Facts.PREFIX} exportRead pinned name=$name root=$root " +
+            "aliases=[${files.filter { listed -> listed != path }.joinToString(" ¦ ")}]",
     )
+    val argv = "find $root -maxdepth 1 -name ${READABLE_EXPORT_SUGGESTED_NAME_PREFIX}*.xlsx -exec cat {} +"
+    val (out, err) = p807Q2Flow1Command(automation, argv)
+    if (out.isEmpty()) {
+        error(
+            "the listed export file [$path] read back empty via [$argv] err=[${p807Q2Flow1CommandText(err)}]; " +
+                "one line per diagnostic:\n" + diagnostics.joinToString("\n"),
+        )
+    }
+    record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=find-cat root=$root path=$path bytes=${out.size}")
+    return out
 }
 
 // ------------------------------------------------------------------ the UI driver
@@ -1132,6 +1216,24 @@ internal class P807Q2Flow1Ui(
     fun hasAppText(textPrefix: String): Boolean = ui.has(textPrefix, prefix = true)
 
     /**
+     * A BOUNDED negative assertion over the visible app tree: no node carries a text starting with
+     * [prefix]. The tree is sampled [ABSENCE_SAMPLES] times with [POLL_MILLIS] between passes, so a
+     * half-rendered list cannot pass by luck; the first offending text is returned (and logged) so
+     * the caller's assertNull fails with the row that leaked instead of a bare false. Never waits
+     * for an absence that will not become observable: the sample count is fixed.
+     */
+    fun awaitNoAppText(prefix: String): String? {
+        repeat(ABSENCE_SAMPLES) { sample ->
+            appNodes().firstOrNull { node -> textOf(node).startsWith(prefix) }?.let { node ->
+                log("${P807Q2Flow1Facts.PREFIX} absence violated prefix=[$prefix] sample=$sample text=[${textOf(node)}]")
+                return textOf(node)
+            }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        return null
+    }
+
+    /**
      * Leaves the batch confirmation surface back to the import review surface. The authorize does
      * not reliably bounce the client back on its own (the run that failed here still showed the
      * authorization page's 返回 + 确认入账（1 项） after the ledger had already committed), so the
@@ -1177,7 +1279,7 @@ internal class P807Q2Flow1Ui(
      * Establishes the selection of THIS detail's candidate. The click target is NOT the window's
      * first 勾选候选 node: the review list can stay in the tree behind the detail, and its first
      * selectable row is the seed's 12.34 transfer_flow candidate — clicking that by description is
-     * how an earlier round confirmed the wrong candidate (run 23:35: dump: 12.34 moved to
+     * how an earlier attempt confirmed the wrong candidate (the observed dump: 12.34 moved to
      * 已确认 / 已拒绝, the imported 7.77 still 待确认). The checkbox is instead anchored
      * STRUCTURALLY on the detail-only hint copy 「勾选进入批量确认（须先补齐决策）」: both sit in
      * the same Row, so the checkbox is the single 勾选候选 node inside the hint's nearest ancestor
@@ -1369,7 +1471,7 @@ internal class P807Q2Flow1Ui(
      * Drives the REAL system SAF picker to the given fixture file and waits until the pick has
      * actually RETURNED (the picker released the foreground to the app).
      *
-     * THE CLICK TARGET MATTERS (run 22:27:27 failure). The row is matched by EXACT text, as
+     * THE CLICK TARGET MATTERS (an observed failure). The row is matched by EXACT text, as
      * `AndroidScaleUi.selectSafFixtureOnce` does. A substring/contentDescription match could land
      * on the document's thumbnail, and a tap inside DocumentsUI's preview region runs
      * `QuickViewIntentBuilder` and starts an ACTION_VIEW: the picker stays foreground, no result is
@@ -1883,6 +1985,7 @@ internal class P807Q2Flow1Ui(
         const val PICKER_CLICK_ATTEMPTS = 2
         const val SELECTION_CLICK_ATTEMPTS = 3
         const val SEEK_ATTEMPTS = 2
+        const val ABSENCE_SAMPLES = 3
         const val KEYBOARD_HIDE_TIMEOUT_MILLIS = 10_000L
         const val SEARCH_SUBMIT_TIMEOUT_MILLIS = 10_000L
         const val SEARCH_RESULT_TIMEOUT_MILLIS = 15_000L
@@ -1978,6 +2081,3 @@ private const val WORKBOOK_RELS_XML =
         "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>" +
         "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>" +
         "</Relationships>"
-
-/** The product's suggested export name prefix; the platform appends the date and any duplicate counter. */
-private const val EXPORT_NAME_PREFIX = "unifiedledger-export-"
