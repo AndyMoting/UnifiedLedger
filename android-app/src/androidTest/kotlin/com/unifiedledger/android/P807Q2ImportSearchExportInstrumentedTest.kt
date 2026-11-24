@@ -318,10 +318,11 @@ class P807Q2ImportSearchExportInstrumentedTest {
             "${P807Q2Flow1Facts.PREFIX} the custom window's upper bound must be typeable",
             ui.setFieldText(1, P807Q2Flow1Facts.SEARCH_WINDOW_END),
         )
-        ui.hideKeyboardIfShown()
-        ui.seekApp(P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION)
-        ui.clickAppDescription(P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION)
-        ui.seekApp(P807Q2Flow1Facts.SEARCH_RESULTS_ONE)
+        // The submit's own effect criterion is the result surface, with one logged retry (see
+        // P807Q2Flow1Ui.submitSearch): the keyboard is dismissed by the window list, the button is
+        // clicked only while it self-reports enabled and visible, and a miss never becomes an
+        // unbounded wait.
+        ui.submitSearch()
         val resultRow =
             ui.findAppNode { node -> ui.textOf(node).startsWith("${detail.kind} · 统计 ") }
         assertNotNull("${P807Q2Flow1Facts.PREFIX} the single search result row must render", resultRow)

@@ -234,6 +234,9 @@ internal object P807Q2Flow1Facts {
     const val SEARCH_CUSTOM_END_LABEL = "结束（不含）"
     const val SEARCH_KEYWORD_LABEL = "关键词（备注 / 商家名 / 分类名）"
     const val SEARCH_SUBMIT_DESCRIPTION = "提交搜索"
+
+    /** The product's own unresolvable-custom-range copy (app-ui `P8_SEARCH_CUSTOM_INVALID_TEXT`). */
+    const val SEARCH_CUSTOM_INVALID_TEXT = "自定义起止无效：开始必须早于结束。"
     const val SEARCH_RESULTS_ONE = "搜索结果 · 共 1 笔"
     const val TRANSACTION_DETAIL_TITLE = "交易详情"
     const val EXPORT_START_BUTTON = "开始导出"
@@ -1005,10 +1008,6 @@ internal class P807Q2Flow1Ui(
         ui.click(text)
     }
 
-    fun clickAppDescription(description: String) {
-        ui.click(description)
-    }
-
     /**
      * Establishes the selection of THIS detail's candidate. The click target is NOT the window's
      * first 勾选候选 node: the review list can stay in the tree behind the detail, and its first
@@ -1374,23 +1373,66 @@ internal class P807Q2Flow1Ui(
     /** Injects [text] as hardware key events (the platform's virtual keyboard map); no IME needed. */
     private fun typeTextEvents(text: String): Boolean =
         runCatching {
-            KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
+            KeyCharacterMap
+                .load(KeyCharacterMap.VIRTUAL_KEYBOARD)
                 .getEvents(text.toCharArray())
                 .forEach { event -> instrumentation.sendKeySync(event) }
             true
         }.getOrDefault(false)
 
-    /** Hides the soft keyboard when it owns the active window (the platform BACK hide gesture). */
-    fun hideKeyboardIfShown() {
-        val imeShown =
-            runCatching {
-                automation.windows.any { window -> window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && window.isActive }
-            }.getOrDefault(false)
-        if (!imeShown) return
-        runCatching { automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }
-        SystemClock.sleep(POLL_MILLIS)
-        log("${P807Q2Flow1Facts.PREFIX} keyboard hidden")
+    /**
+     * Hides the soft keyboard while the platform still holds one. The test is the WINDOW LIST — a
+     * TYPE_INPUT_METHOD window whose tree renders a visible node — never the window's `isActive`
+     * flag: the device run behind this fix had the IME window in the list (its keys were readable
+     * in the failure dump) with active=false, so the old gate answered "no keyboard" and the
+     * keyboard covering the submit button was never dismissed, while the log carried no line at
+     * all. One BACK, then a bounded wait for the window to leave the list; one line before and one
+     * after carry the window list and the verdict, so the next run separates "no keyboard" from
+     * "hide missed" without a dump. Returns whether the IME window is gone.
+     */
+    fun hideKeyboardIfShown(timeoutMillis: Long = KEYBOARD_HIDE_TIMEOUT_MILLIS): Boolean {
+        val shown = imeWindowShown()
+        log("${P807Q2Flow1Facts.PREFIX} keyboard hide before shown=$shown windows=[${describeWindows()}]")
+        if (shown) {
+            runCatching { automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }
+            awaitImeWindowGone(timeoutMillis)
+        }
+        val hidden = !imeWindowShown()
+        log("${P807Q2Flow1Facts.PREFIX} keyboard hide after hidden=$hidden windows=[${describeWindows()}]")
+        return hidden
     }
+
+    /** The keyboard is present exactly while a TYPE_INPUT_METHOD window still renders visible nodes. */
+    private fun imeWindowShown(): Boolean =
+        windows().any { window -> window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && visibleNodeCount(window) > 0 }
+
+    /**
+     * Bounded wait for the IME window to leave the window list (a hide is an asynchronous platform
+     * animation). A miss stays a miss: the caller's retry owns the next step and its after-line
+     * names the outcome instead of an unbounded sleep standing in for one.
+     */
+    private fun awaitImeWindowGone(timeoutMillis: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (!imeWindowShown()) return true
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        return !imeWindowShown()
+    }
+
+    /** The current accessibility window list; a failed read is an empty list, never a throw. */
+    private fun windows(): List<AccessibilityWindowInfo> = runCatching { automation.windows }.getOrNull().orEmpty()
+
+    private fun visibleNodeCount(window: AccessibilityWindowInfo): Int =
+        runCatching { window.root }.getOrNull()?.let { root -> collectNodes(root).count { it.isVisibleToUser } } ?: 0
+
+    /** One line naming every window: type, its flags, its package and how many nodes it renders visibly. */
+    private fun describeWindows(): String =
+        windows().joinToString(" | ") { window ->
+            val root = runCatching { window.root }.getOrNull()
+            "type=${window.type} active=${window.isActive} focused=${window.isFocused} pkg=${root?.packageName} " +
+                "visibleNodes=${if (root == null) 0 else collectNodes(root).count { node -> node.isVisibleToUser }}"
+        }
 
     /** Waits until ANY editable field carries [expected] (the action's observable effect). */
     private fun awaitFieldValue(
@@ -1409,6 +1451,101 @@ internal class P807Q2Flow1Ui(
         appNodes()
             .filter { it.isEditable || it.className?.toString()?.contains("EditText") == true }
             .sortedBy { bounds(it).top }
+
+    // ---- search: submit and its observable effect
+
+    /**
+     * Submits the search condition form and PROVES the submit took effect, instead of clicking a
+     * description and trusting a later text to fail loudly. The click target is the 提交搜索 node
+     * itself, and only while that node self-reports enabled and visible: a disabled submit (an
+     * unresolvable custom window) fails here with the node's own shape, the two custom field values
+     * the tree carries and whether the product's invalid-range copy is on screen — the three facts
+     * that decide the cause — rather than a click the app cannot receive followed by a timeout that
+     * names nothing. The effect criterion is the result surface, which the product renders only for
+     * a successful read. One bounded retry dismisses the keyboard again, re-locates the node and
+     * clicks it again; a second miss dumps the windows and fails. No path waits unboundedly.
+     */
+    fun submitSearch(
+        resultPrefix: String = P807Q2Flow1Facts.SEARCH_RESULTS_ONE,
+        timeoutMillis: Long = SEARCH_RESULT_TIMEOUT_MILLIS,
+    ) {
+        repeat(SEARCH_SUBMIT_ATTEMPTS) { attempt ->
+            hideKeyboardIfShown()
+            val node = awaitSearchSubmitNode()
+            if (node == null || !node.isEnabled || !node.isVisibleToUser) {
+                val dump = dumpUiSnapshot(if (node == null) "submitSearch:absent" else "submitSearch:disabled")
+                error(
+                    "submitSearch attempt=$attempt: ${P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION} is not clickable as-is " +
+                        "(node=${node?.let(::describeSearchSubmit) ?: "absent on this surface"}); " +
+                        "${describeSearchCustomWindow()} invalidText=${hasAppText(P807Q2Flow1Facts.SEARCH_CUSTOM_INVALID_TEXT)} " +
+                        "surface=${surfaceTitle()} ${summarizeDump(dump)}",
+                )
+            }
+            log("${P807Q2Flow1Facts.PREFIX} search submit attempt=$attempt ${describeSearchSubmit(node)}")
+            tap(node)
+            if (awaitSearchResults(resultPrefix, timeoutMillis)) {
+                log("${P807Q2Flow1Facts.PREFIX} search submit attempt=$attempt took effect results=[$resultPrefix]")
+                return
+            }
+            log(
+                "${P807Q2Flow1Facts.PREFIX} search submit attempt=$attempt took no effect: no result surface; " +
+                    "surface=${surfaceTitle()} windows=[${describeWindows()}]",
+            )
+            dumpUiSnapshot("submitSearch:attempt$attempt")
+        }
+        val dump = dumpUiSnapshot("submitSearch")
+        error(
+            "submitSearch: the result surface [$resultPrefix] never appeared after $SEARCH_SUBMIT_ATTEMPTS bounded attempts; " +
+                "${describeSearchCustomWindow()} ${summarizeDump(dump)}",
+        )
+    }
+
+    /**
+     * Bounded wait for the submit node. The effect probe may leave the condition form scrolled away,
+     * so a miss first makes one bounded backward seek instead of the unbounded await the shared
+     * click path performs.
+     */
+    private fun awaitSearchSubmitNode(timeoutMillis: Long = SEARCH_SUBMIT_TIMEOUT_MILLIS): AccessibilityNodeInfo? {
+        searchSubmitNode()?.let { return it }
+        runCatching { ui.seek(P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION, forward = false, maxScrolls = SEARCH_RESULT_SCROLLS) }
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        while (SystemClock.elapsedRealtime() < deadline) {
+            searchSubmitNode()?.let { return it }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        return null
+    }
+
+    private fun searchSubmitNode(): AccessibilityNodeInfo? =
+        appNodes().firstOrNull { node -> descriptionOf(node) == P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION }
+
+    /**
+     * The effect probe: one bounded wait for the result surface, then one bounded forward seek (the
+     * results header renders BELOW the condition form, so a successful submit can land it outside
+     * the viewport). A surface whose tree carries no scrollable container misses both of them; the
+     * caller's retry owns the next move.
+     */
+    private fun awaitSearchResults(
+        resultPrefix: String,
+        timeoutMillis: Long,
+    ): Boolean {
+        if (runCatching { ui.await(timeoutMillis) { ui.has(resultPrefix, prefix = true) } }.isSuccess) return true
+        runCatching { ui.seek(resultPrefix, forward = true, maxScrolls = SEARCH_RESULT_SCROLLS) }
+        return ui.has(resultPrefix, prefix = true)
+    }
+
+    /** What the submit node says about itself: the facts a refusal is judged by. */
+    private fun describeSearchSubmit(node: AccessibilityNodeInfo): String =
+        "class=${node.className} enabled=${node.isEnabled} visible=${node.isVisibleToUser} " +
+            "clickable=${node.isClickable} bounds=${bounds(node)} actions=${node.actionList.map { action -> action.id }} " +
+            "text=[${textOf(node)}] desc=[${descriptionOf(node)}]"
+
+    /** The custom window's two bounds as the TREE carries them (the last two editable fields). */
+    private fun describeSearchCustomWindow(): String {
+        val fields = editableNodes()
+        return "fields=${fields.size} start=[${fields.getOrNull(fields.size - 2)?.let(::textOf).orEmpty()}] " +
+            "end=[${fields.getOrNull(fields.size - 1)?.let(::textOf).orEmpty()}]"
+    }
 
     // ---- picker windows
 
@@ -1584,6 +1721,11 @@ internal class P807Q2Flow1Ui(
         const val PICKER_CLICK_ATTEMPTS = 2
         const val SELECTION_CLICK_ATTEMPTS = 3
         const val SEEK_ATTEMPTS = 2
+        const val KEYBOARD_HIDE_TIMEOUT_MILLIS = 10_000L
+        const val SEARCH_SUBMIT_TIMEOUT_MILLIS = 10_000L
+        const val SEARCH_RESULT_TIMEOUT_MILLIS = 15_000L
+        const val SEARCH_RESULT_SCROLLS = 8
+        const val SEARCH_SUBMIT_ATTEMPTS = 2
 
         val DOWNLOAD_ROOT_LABELS = listOf("下载", "Downloads")
         val ROOTS_LABELS = listOf("显示根目录", "Show roots", "打开导航抽屉", "Open navigation drawer")
