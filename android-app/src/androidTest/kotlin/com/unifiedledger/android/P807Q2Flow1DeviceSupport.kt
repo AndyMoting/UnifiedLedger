@@ -873,33 +873,48 @@ internal class P807Q2Flow1Downloads(
     }
 }
 
-// ------------------------------------------------------------------ shell + exported-file read
-
-/** One shell command through the instrumentation's shell identity (`UiAutomation.executeShellCommand`). */
-internal fun p807Q2Flow1Shell(
-    automation: UiAutomation,
-    command: String,
-): ByteArray {
-    val descriptor = automation.executeShellCommand(command)
-    return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
-}
+// ------------------------------------------------------------------ command + exported-file read
 
 /**
- * One DIAGNOSTIC shell command: stdout, stderr and the exit status ride back verbatim (stderr is
- * folded into the stream, the status is appended as a trailing `exit=<code>`). The round-3 export
- * read missed with no cause because every probe was `2>/dev/null`, so a refused path read as an
- * empty success and the miss looked like a silent one; this helper exists so a refusal names
- * Permission denied / No such file the moment it happens.
+ * One device command through the instrumentation's shell identity. THE PLATFORM RUNS NO SHELL:
+ * sdk 36's `UiAutomationConnection` hands the string to `Runtime.getRuntime().exec(command)`
+ * (`UiAutomationConnection.java:552`), and `Runtime.exec(String)` splits it with a `StringTokenizer`
+ * (`Runtime.java:530`). Quotes are literal characters, `2>`/`;`/`$?` are argv tokens and nothing
+ * expands `*`, so every command below is a bare argv with no shell syntax and the glob characters
+ * belong to the invoked command (`find`). This is also why an earlier read missed: its quoted paths
+ * reached `ls` as literal text and its `echo "exit=$?"` never ran.
+ *
+ * stdout and stderr ride separate descriptors. `executeShellCommandRwe` is public API in the sdk 37
+ * stubs (`android-37.0/android-stubs-src.jar`, `android/app/UiAutomation.java`:
+ * `@NonNull ParcelFileDescriptor[] executeShellCommandRwe(String)`), returning (out, in, err), so
+ * the call is compiled directly — no reflection, because the stub proves the method is not hidden —
+ * and a refusal lands on its own line instead of being lost. The public API exposes no exit status,
+ * so none is invented. Bytes come back untouched (the workbook read needs them); a failed call
+ * becomes the stderr text so the diagnostic chain survives.
  */
-internal fun p807Q2Flow1ShellDiagnostics(
+internal fun p807Q2Flow1Command(
     automation: UiAutomation,
-    command: String,
-): String = String(p807Q2Flow1Shell(automation, "$command 2>&1; echo \"exit=\$?\""), Charsets.UTF_8).trim()
+    argv: String,
+): Pair<ByteArray, ByteArray> {
+    val result =
+        runCatching {
+            val descriptors = automation.executeShellCommandRwe(argv)
+            // Closing the write side immediately gives the child EOF on stdin; nothing reads it.
+            runCatching { descriptors[1].close() }
+            val stdout = ParcelFileDescriptor.AutoCloseInputStream(descriptors[0]).use { stream -> stream.readBytes() }
+            val stderr = ParcelFileDescriptor.AutoCloseInputStream(descriptors[2]).use { stream -> stream.readBytes() }
+            stdout to stderr
+        }
+    return result.getOrElse { failure -> ByteArray(0) to "executeShellCommandRwe failed: $failure".toByteArray(Charsets.UTF_8) }
+}
+
+/** The text face of one command stream; diagnostics only, never the export file's bytes. */
+private fun p807Q2Flow1CommandText(bytes: ByteArray): String = String(bytes, Charsets.UTF_8).trim()
 
 /**
  * The roots a SAF `CreateDocument` save can land in on this platform: the two logical roots in both
- * alias spellings, because the shell's `/sdcard` and `/storage/emulated/0` views can differ in what
- * they expose — the per-path diagnostics below report that difference instead of assuming it away.
+ * alias spellings, because the shell identity's `/sdcard` and `/storage/emulated/0` views need not
+ * expose the same thing.
  */
 private val EXPORT_ROOTS =
     listOf(
@@ -909,44 +924,89 @@ private val EXPORT_ROOTS =
         "/storage/emulated/0/Documents",
     )
 
-/** One MediaStore Downloads row that names an export file (the resolver fallback's candidates). */
+/**
+ * Removes every export file an earlier run left in [EXPORT_ROOTS] before the picker writes the new
+ * one, so the byte read can never return a stale same-named workbook. `find` needs no shell: the
+ * name glob is find's own argument, `-print` records what was removed, and out/err are logged per
+ * root.
+ */
+internal fun p807Q2Flow1ClearExportFiles(
+    automation: UiAutomation,
+    log: (String) -> Unit,
+) {
+    for (root in EXPORT_ROOTS) {
+        val argv = "find $root -maxdepth 1 -name ${EXPORT_NAME_PREFIX}*.xlsx -print -delete"
+        val (out, err) = p807Q2Flow1Command(automation, argv)
+        log(
+            "${P807Q2Flow1Facts.PREFIX} exportReset root=$root argv=[$argv] " +
+                "removed=[${p807Q2Flow1CommandText(out)}] err=[${p807Q2Flow1CommandText(err)}]",
+        )
+    }
+}
+
+/** One MediaStore Downloads row, carried as a diagnostic channel rather than the expected reader. */
 private data class P807ExportMediaRow(
     val id: Long,
     val name: String,
-)
+    val relativePath: String,
+    val pending: Int,
+    val owner: String,
+) {
+    fun logText(): String = "id=$id name=$name relativePath=$relativePath pending=$pending owner=$owner"
+}
 
-/** The Downloads rows naming an export file, newest first (the collection the picker saves through). */
+/**
+ * Every Downloads row, newest first, with the five columns that make a miss attributable. The
+ * selection is empty on purpose: this app's collection was empty on the last device run, so the
+ * reader must observe "no rows" instead of filtering the evidence away with a SQL LIKE.
+ */
 private fun p807Q2Flow1ExportMediaRows(resolver: ContentResolver): List<P807ExportMediaRow> {
-    val projection = arrayOf(BaseColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
+    val projection =
+        arrayOf(
+            BaseColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH,
+            MediaStore.MediaColumns.IS_PENDING,
+            MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
+        )
     val rows = mutableListOf<P807ExportMediaRow>()
     val cursor =
         resolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             projection,
-            "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
-            arrayOf(EXPORT_NAME_LIKE),
+            null,
+            null,
             "${MediaStore.MediaColumns.DATE_ADDED} DESC",
         )
     cursor?.use { open ->
         val idColumn = open.getColumnIndexOrThrow(BaseColumns._ID)
         val nameColumn = open.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+        val pathColumn = open.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+        val pendingColumn = open.getColumnIndexOrThrow(MediaStore.MediaColumns.IS_PENDING)
+        val ownerColumn = open.getColumnIndexOrThrow(MediaStore.MediaColumns.OWNER_PACKAGE_NAME)
         while (open.moveToNext()) {
-            rows += P807ExportMediaRow(id = open.getLong(idColumn), name = open.getString(nameColumn).orEmpty())
+            rows +=
+                P807ExportMediaRow(
+                    id = open.getLong(idColumn),
+                    name = open.getString(nameColumn).orEmpty(),
+                    relativePath = open.getString(pathColumn).orEmpty(),
+                    pending = open.getInt(pendingColumn),
+                    owner = open.getString(ownerColumn).orEmpty(),
+                )
         }
     }
     return rows
 }
 
 /**
- * The newest readable export file, read as bytes from every channel this device offers, with one
- * diagnostic line per strategy. Name discovery and byte acquisition are separate steps on purpose:
- * the saved file's NAME proves nothing about the path the shell can read (round 3 listed the name
- * and then failed to read either root), so every candidate path reports `ls -l`, `stat` and `wc -c`
- * — stdout, stderr and exit status verbatim — before a `cat` attempt reports its byte count. The
- * `find` output's own absolute paths are tried after the four alias roots, and the platform's
- * Downloads collection is the last channel (the picker wrote through it). The first non-empty read
- * wins and is logged with its strategy, path and size; a miss is a named line, never a silence,
- * and the final failure carries every line it collected.
+ * The workbook the picker just wrote, read as bytes without relying on a shell. Three
+ * discriminating probes run first — is the channel alive (`ls -d /sdcard`), is the directory
+ * readable (`ls -d /sdcard/Download`), is any file there (`find … -print`) — so a dead channel, an
+ * unreadable root and an absent file cannot look alike. The read itself is
+ * `find <root> … -exec cat {} +`: find hands each match to cat as its OWN argument, so a platform
+ * duplicate-counter name with a space still reads correctly. The first non-empty read wins and is
+ * logged with its root and size. The platform Downloads collection stays a diagnostic channel with
+ * a client-side prefix filter, and only rows that actually exist are opened.
  */
 internal fun p807Q2Flow1NewestExportFile(
     automation: UiAutomation,
@@ -962,76 +1022,60 @@ internal fun p807Q2Flow1NewestExportFile(
 
     fun probe(
         label: String,
-        command: String,
-    ): String {
-        val output = p807Q2Flow1ShellDiagnostics(automation, command)
-        record("${P807Q2Flow1Facts.PREFIX} exportRead probe $label cmd=[$command] output=[$output]")
-        return output
+        argv: String,
+    ) {
+        val (out, err) = p807Q2Flow1Command(automation, argv)
+        record(
+            "${P807Q2Flow1Facts.PREFIX} exportRead $label argv=[$argv] " +
+                "out=[${p807Q2Flow1CommandText(out)}] err=[${p807Q2Flow1CommandText(err)}]",
+        )
     }
 
-    fun recordBytes(
-        strategy: String,
-        path: String,
-        bytes: ByteArray,
-    ): ByteArray? {
-        if (bytes.isEmpty()) {
-            record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=$strategy path=$path bytes=0")
-            return null
+    // ---- discriminating probes: channel alive, directory readable, file present
+    probe("probe sdcard", "ls -d /sdcard")
+    probe("probe download", "ls -d /sdcard/Download")
+    probe("probe listing", "find /sdcard/Download -maxdepth 1 -name ${EXPORT_NAME_PREFIX}*.xlsx -print")
+
+    // ---- the byte read: find expands the name glob and hands each match to cat as its own argv
+    for (root in EXPORT_ROOTS) {
+        val argv = "find $root -maxdepth 1 -name ${EXPORT_NAME_PREFIX}*.xlsx -exec cat {} +"
+        val (out, err) = p807Q2Flow1Command(automation, argv)
+        record("${P807Q2Flow1Facts.PREFIX} exportRead read root=$root argv=[$argv] err=[${p807Q2Flow1CommandText(err)}]")
+        if (out.isEmpty()) {
+            record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=find-cat root=$root bytes=0")
+        } else {
+            record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=find-cat root=$root bytes=${out.size}")
+            return out
         }
-        record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=$strategy path=$path bytes=${bytes.size}")
-        return bytes
     }
 
-    // ---- discovery: the name list keeps the newest-first order, `find` supplies the real paths
-    val names =
-        EXPORT_ROOTS
-            .flatMap { root ->
-                probe("ls -t $root", "ls -t '$root'")
-                    .lines()
-                    .map { it.trim() }
-                    .filter { EXPORT_FILE_NAME.matches(it) }
-            }.distinct()
-    EXPORT_ROOTS.forEach { root -> probe("ls -la $root", "ls -la '$root'") }
-    val foundPaths =
-        probe("find", "find /sdcard -maxdepth 3 -iname 'unifiedledger-export-*'")
-            .lines()
-            .map { it.trim() }
-            .filter { it.startsWith("/") }
-            .distinct()
-    record("${P807Q2Flow1Facts.PREFIX} exportRead discovery names=$names foundPaths=$foundPaths")
-
-    // ---- byte strategies in order: the four alias roots for every discovered name, then the
-    // `find` output's own paths as the shell-side backstop.
-    val candidates = (names.flatMap { name -> EXPORT_ROOTS.map { root -> "$root/$name" } } + foundPaths).distinct()
-    for (path in candidates) {
-        probe("ls -l $path", "ls -l '$path'")
-        probe("stat $path", "stat '$path'")
-        probe("wc -c $path", "wc -c '$path'")
-        recordBytes("cat", path, p807Q2Flow1Shell(automation, "cat '$path' 2>/dev/null"))?.let { return it }
-    }
-
-    // ---- last channel: the platform's own Downloads collection
-    val rows = runCatching { p807Q2Flow1ExportMediaRows(resolver) }
-    val mediaRows = rows.getOrNull()
-    if (mediaRows == null) {
-        record("${P807Q2Flow1Facts.PREFIX} exportRead media query failed error=${rows.exceptionOrNull()}")
+    // ---- diagnostic channel: the platform's own Downloads collection
+    val query = runCatching { p807Q2Flow1ExportMediaRows(resolver) }
+    val rows = query.getOrNull()
+    if (rows == null) {
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media query failed error=${query.exceptionOrNull()}")
     } else {
-        record("${P807Q2Flow1Facts.PREFIX} exportRead media query rows=${mediaRows.size}")
-        for (row in mediaRows) {
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media query rows=${rows.size}")
+        val matches = rows.filter { row -> row.name.startsWith(EXPORT_NAME_PREFIX) }
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media prefixMatches=${matches.size}")
+        for (row in matches) {
+            record("${P807Q2Flow1Facts.PREFIX} exportRead media row ${row.logText()}")
             val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, row.id)
-            record("${P807Q2Flow1Facts.PREFIX} exportRead media row name=${row.name} uri=$uri")
             val bytes = runCatching { resolver.openInputStream(uri)?.use { stream -> stream.readBytes() } ?: ByteArray(0) }
             val read = bytes.getOrNull()
             if (read == null) {
                 record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=media uri=$uri error=${bytes.exceptionOrNull()}")
+            } else if (read.isEmpty()) {
+                record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=media uri=$uri bytes=0")
             } else {
-                recordBytes("media", uri.toString(), read)?.let { return it }
+                record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=media uri=$uri bytes=${read.size}")
+                return read
             }
         }
     }
 
     error(
-        "no readable exported file was found; one line per strategy:\n" +
+        "no readable exported file was found; one line per channel:\n" +
             diagnostics.joinToString("\n"),
     )
 }
@@ -1935,8 +1979,5 @@ private const val WORKBOOK_RELS_XML =
         "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>" +
         "</Relationships>"
 
-/** The product's suggested export name shape, accepting the platform's duplicate counter. */
-private val EXPORT_FILE_NAME = Regex("unifiedledger-export-[0-9]{8}( \\([0-9]+\\))?\\.xlsx")
-
-/** The same name family as a MediaStore `DISPLAY_NAME LIKE` pattern (the resolver fallback's filter). */
-private const val EXPORT_NAME_LIKE = "unifiedledger-export-%"
+/** The product's suggested export name prefix; the platform appends the date and any duplicate counter. */
+private const val EXPORT_NAME_PREFIX = "unifiedledger-export-"

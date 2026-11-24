@@ -368,6 +368,10 @@ class P807Q2ImportSearchExportInstrumentedTest {
         // ---------------------------------------------------------------- leg 4: full-ledger export
         ui.openDrawerRow(P807Q2Flow1Facts.DRAWER_EXPORT_ROW)
         ui.awaitAppText(P807Q2Flow1Facts.EXPORT_START_BUTTON)
+        // Freshness before the write: the byte read must return THIS run's workbook, so every
+        // earlier export file is removed before the picker creates the new one. The read channel is
+        // find/cat argv, never a shell (see P807Q2Flow1Command), so the name glob is find's own.
+        p807Q2Flow1ClearExportFiles(instrumentation.uiAutomation, log)
         ui.clickApp(P807Q2Flow1Facts.EXPORT_START_BUTTON)
         assertTrue(
             "${P807Q2Flow1Facts.PREFIX} the real system CreateDocument picker must accept the save",
