@@ -318,6 +318,7 @@ class P807Q2ImportSearchExportInstrumentedTest {
             "${P807Q2Flow1Facts.PREFIX} the custom window's upper bound must be typeable",
             ui.setFieldText(1, P807Q2Flow1Facts.SEARCH_WINDOW_END),
         )
+        ui.hideKeyboardIfShown()
         ui.seekApp(P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION)
         ui.clickAppDescription(P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION)
         ui.seekApp(P807Q2Flow1Facts.SEARCH_RESULTS_ONE)

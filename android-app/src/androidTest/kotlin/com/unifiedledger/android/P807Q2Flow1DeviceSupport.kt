@@ -12,7 +12,10 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.CatalogCommandResult
 import com.unifiedledger.application.ConfirmationId
@@ -918,7 +921,7 @@ internal fun p807Q2Flow1NewestExportFile(
  * a user action.
  */
 internal class P807Q2Flow1Ui(
-    instrumentation: Instrumentation,
+    private val instrumentation: Instrumentation,
     private val log: (String) -> Unit,
 ) {
     val ui = AndroidScaleUi(instrumentation) {}
@@ -1309,8 +1312,11 @@ internal class P807Q2Flow1Ui(
     fun editableFieldCount(): Int = editableNodes().size
 
     /**
-     * Sets one editable field's text through the accessibility SetText action and VERIFIES the
-     * value landed (the action being accepted is not the effect). [fromBottom] counts from the LAST
+     * Sets one editable field's text and VERIFIES the value landed. On these Compose fields
+     * ACTION_SET_TEXT can be accepted without writing anything (observed accepted=true /
+     * landed=false), so the path escalates inside the same attempt: focus + SetText, then
+     * tap-to-focus, clear and inject the characters as key events; only a read-back of the value
+     * counts. Every attempt logs the field's real node shape. [fromBottom] counts from the LAST
      * field upward (1 = the last field), which addresses the two custom-window fields without
      * depending on the keyword field's position.
      */
@@ -1318,18 +1324,72 @@ internal class P807Q2Flow1Ui(
         fromBottom: Int,
         text: String,
     ): Boolean {
-        val fields = editableNodes()
-        val index = fields.size - fromBottom
-        if (index < 0 || index >= fields.size) {
-            log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom fields=${fields.size} accepted=false")
-            return false
+        repeat(FIELD_INPUT_ATTEMPTS) { attempt ->
+            val fields = editableNodes()
+            val index = fields.size - fromBottom
+            if (index < 0 || index >= fields.size) {
+                log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom fields=${fields.size} index=$index attempt=$attempt absent")
+                return false
+            }
+            val node = fields[index]
+            log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom index=$index fields=${fields.size} attempt=$attempt ${describeField(node)}")
+            runCatching { node.performAction(AccessibilityNodeInfo.ACTION_FOCUS) }
+            val arguments = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+            val accepted = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+            if (awaitFieldValue(text, FIELD_SETTLE_TIMEOUT_MILLIS)) {
+                log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom accepted=$accepted landed=true via=action attempt=$attempt value=$text")
+                return true
+            }
+            // The Compose field can accept ACTION_SET_TEXT without writing the value (observed:
+            // accepted=true, landed=false), so the retry drives the editor the way a user does:
+            // tap for focus, clear what is there, then inject the characters as key events.
+            log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom accepted=$accepted landed=false via=action attempt=$attempt; typing into the field")
+            tap(node)
+            SystemClock.sleep(POLL_MILLIS)
+            clearFocusedField(textOf(node).length)
+            val typed = typeTextEvents(text)
+            log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom typed=$typed attempt=$attempt value=$text")
+            if (awaitFieldValue(text, FIELD_SETTLE_TIMEOUT_MILLIS)) {
+                log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom landed=true via=keys attempt=$attempt value=$text")
+                return true
+            }
         }
-        val node = fields[index]
-        val arguments = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
-        val accepted = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-        val landed = accepted && awaitFieldValue(text, FIELD_SETTLE_TIMEOUT_MILLIS)
-        log("${P807Q2Flow1Facts.PREFIX} setField fromBottom=$fromBottom fields=${fields.size} accepted=$accepted landed=$landed value=$text")
-        return landed
+        dumpUiSnapshot("setField:$text")
+        return false
+    }
+
+    /** The three facts the input path needs: what the node is, what it shows, and what it accepts. */
+    private fun describeField(node: AccessibilityNodeInfo): String =
+        "class=${node.className} editable=${node.isEditable} focusable=${node.isFocusable} focused=${node.isFocused} " +
+            "clickable=${node.isClickable} text=[${textOf(node)}] hint=[${node.hintText}] bounds=${bounds(node)} " +
+            "actions=${node.actionList.map { action -> action.id }}"
+
+    /** Empties the focused editor: move the caret to the end, then delete [length] characters. */
+    private fun clearFocusedField(length: Int) {
+        if (length <= 0) return
+        runCatching { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MOVE_END) }
+        repeat(length) { runCatching { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL) } }
+    }
+
+    /** Injects [text] as hardware key events (the platform's virtual keyboard map); no IME needed. */
+    private fun typeTextEvents(text: String): Boolean =
+        runCatching {
+            KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
+                .getEvents(text.toCharArray())
+                .forEach { event -> instrumentation.sendKeySync(event) }
+            true
+        }.getOrDefault(false)
+
+    /** Hides the soft keyboard when it owns the active window (the platform BACK hide gesture). */
+    fun hideKeyboardIfShown() {
+        val imeShown =
+            runCatching {
+                automation.windows.any { window -> window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && window.isActive }
+            }.getOrDefault(false)
+        if (!imeShown) return
+        runCatching { automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }
+        SystemClock.sleep(POLL_MILLIS)
+        log("${P807Q2Flow1Facts.PREFIX} keyboard hidden")
     }
 
     /** Waits until ANY editable field carries [expected] (the action's observable effect). */
@@ -1513,6 +1573,7 @@ internal class P807Q2Flow1Ui(
         const val PICKER_WINDOW_TIMEOUT_MILLIS = 30_000L
         const val PICKER_RETURN_TIMEOUT_MILLIS = 20_000L
         const val FIELD_SETTLE_TIMEOUT_MILLIS = 10_000L
+        const val FIELD_INPUT_ATTEMPTS = 3
         const val SEEK_SHORT_SURFACE_TIMEOUT_MILLIS = 10_000L
         const val POLL_MILLIS = 500L
         const val MAX_TREE_NODES = 2_000
