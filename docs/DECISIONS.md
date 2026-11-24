@@ -8163,3 +8163,13 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 **边界：** 入 = 本条、规格头状态句、`D-343` 状态行、`docs/CURRENT_STATE.md` 与 `docs/ROADMAP.md` 的 P8-06 状态同步。出 = 产品代码／测试／schema／迁移／workflow／设备执行／`docs/*.local.md`；不改 `.external`。
 
 **关联决定：** `D-300`、`D-343`、`D-359`、`D-360`、`D-361`、`D-362`、`D-363`。
+
+## D-365 P8-07 批 B 取证拓扑（Q1–Q5 裁决）
+
+**状态：** 已登记（2026-11-25）。本批为取证批：新增一个设备用例（阶段验收流程二「导入证据 → 对账 → 审计回看」）、一个专用 rig 与相应登记／文档，零产品代码、零 schema、零迁移、零 DDL。本条登记批 B 的取证拓扑与不覆盖项，不构成阶段验收授权。
+
+**范围：** 流程判据沿用 P8-01a 规格 §2.2–2.7 与 §4 的 V-8 / V-10 / V-11，以及 `docs/P807_DESIGN_GATE.local.md`「已批准的跨切片流程」第二行；使用同一固定 Android 候选与同一小型匿名初态夹具（设备侧种子与流程一共用 `P807Q2Flow1Seed`），从可重放的独立初态开始。**Q1 拓扑**：选专用 rig `.github/workflows/android-p807-q2.yml`（dispatch-only、`expected_sha` 必须等于所选 ref 的头、自有 AVD `ul-p807-q2`、只跑本流程一条用例）。被否两条：①普通清单扩到 3–4 分片——关键约束是「种子守卫要求进程内首条」，加片只挪动了位置竞争而没有消除它，并且会改动普通清单与分片、牵连非阻塞设备信号及 61 例 / 17 类计数；②把共享驱动器改成「每个 seed-first 用例一次独立 `am instrument`」——那会改变所有既有用例的执行形状，回归面远超本批。专用 rig 是 b6／scale／fontscale 的既有惯例，不进 required checks。**Q2**：fork fallback 的潜在红（同一进程先跑播种用例、再跑要求应用未启动的用例）登记为独立缺陷批，本批不碰；本批新类不在普通清单内，现有 fallback 行为不变。**Q3**：两入口同用例——入口 A（账户流水 → 账户对账队列）与入口 B（候选 → 用于核对既有分录）在同一 `@Test` 内都走，共用同一绑定、确认与审计用例（规格 §2.2），V-10 的「全部可达」由同一次运行覆盖。**Q4**：「重进审计」取页面级重进（离开审计面再进入），不做 force-stop：判据只要求重进后仍能定位原证据，force-stop 会连运行态一并销毁，代价不换判据。**Q5**：界面不可观测项明写不覆盖并引用服务层设备证据——`import_candidate_status_history` 行数零增（读面只有计数、无行列表）、V-11 同参重放 `NoChange`（本流程只绑定一次，界面无可达的第二次同参绑定）、规格 §2.5「结果未知」分支（UI-only 驱动器无法中断在途调用）；三项既有设备证据在 `P801AccountReconciliationChainInstrumentedTest`（#430／`2fb90f16` 链）。V-10 的「返回保留滚动位」在单条队列上无可观测滚动（该账户只有一条待对账腿），登记为不可观测并引该链 `theScrollSlotsRoundTripThroughTheReducer` 的读面证据。本批不加产品读端口：加读端口属产品改动，另批。
+
+**边界：** 入 = 本条、新增的 `P807Q2Flow2ReconciliationInstrumentedTest.kt` 与 `P807Q2Flow2DeviceSupport.kt`、`tools/python/android_p807_q2.py` 与 `tools/ci/android-p807-q2.py`、`tests/python/test_android_p807_q2.py`、`.github/workflows/android-p807-q2.yml`、`tools/ci/python-shards.txt` 的一行、`android_scale/inventory.py` 的 `EXCLUDED` 一项、`docs/CONTRIBUTING.md` 的 rig 小节。出 = 产品代码／schema／迁移／DDL／既有测试期望／普通设备清单与分片／冻结的 `P807Q2Flow1*` 文件／`docs/PROJECT_STATE.local.md`、`docs/PROGRESS_LOG.local.md`／`.external`。本批新类不进普通清单，故 `61 例 / 17 类` 与两片划分不变。
+
+**关联决定：** `D-300`、`D-303`、`D-308`、`D-363`。
