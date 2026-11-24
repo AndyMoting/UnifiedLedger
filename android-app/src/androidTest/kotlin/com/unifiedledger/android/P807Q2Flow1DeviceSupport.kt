@@ -222,6 +222,7 @@ internal object P807Q2Flow1Facts {
     const val BATCH_CONFIRM_TITLE = "批量确认"
     const val BATCH_AUTHORIZE_BUTTON = "确认入账（1 项）"
     const val BATCH_RESULT_PREFIX = "最近批量结果（授权时间 "
+    const val RESOLVED_GROUP_ONE = "已确认 / 已拒绝（1）"
     const val BATCH_CONFIRMED_ONE = "已入账 1 项"
     const val SEARCH_WINDOW_CUSTOM = "自定义起止"
     const val SEARCH_CUSTOM_START_LABEL = "开始（含）"
@@ -956,6 +957,9 @@ internal class P807Q2Flow1Ui(
     }
 
     fun hasAppText(textPrefix: String): Boolean = ui.has(textPrefix, prefix = true)
+
+    /** The visible lead texts of the current surface (the surface title's evidence on a miss). */
+    fun surfaceTitle(): String = appNodes().map { textOf(it) }.filter { it.isNotBlank() }.take(6).joinToString(" ¦ ")
 
     fun clickApp(text: String) {
         ui.click(text)
