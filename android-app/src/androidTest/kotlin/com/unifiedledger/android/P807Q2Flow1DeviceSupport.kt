@@ -243,6 +243,7 @@ internal object P807Q2Flow1Facts {
     const val BATCH_RESULT_PREFIX = "最近批量结果（授权时间 "
     const val RESOLVED_GROUP_ONE = "已确认 / 已拒绝（1）"
     const val BATCH_CONFIRMED_ONE = "已入账 1 项"
+    const val SEARCH_WINDOW_HEADER = "时间窗"
     const val SEARCH_WINDOW_CUSTOM = "自定义起止"
     const val SEARCH_CUSTOM_START_LABEL = "开始（含）"
     const val SEARCH_CUSTOM_END_LABEL = "结束（不含）"
@@ -1216,11 +1217,15 @@ internal class P807Q2Flow1Ui(
     fun hasAppText(textPrefix: String): Boolean = ui.has(textPrefix, prefix = true)
 
     /**
-     * A BOUNDED negative assertion over the visible app tree: no node carries a text starting with
+     * A BOUNDED negative assertion over the VISIBLE app tree: no node carries a text starting with
      * [prefix]. The tree is sampled [ABSENCE_SAMPLES] times with [POLL_MILLIS] between passes, so a
-     * half-rendered list cannot pass by luck; the first offending text is returned (and logged) so
-     * the caller's assertNull fails with the row that leaked instead of a bare false. Never waits
-     * for an absence that will not become observable: the sample count is fixed.
+     * row that is still on screen — or still inside the list's composed window — is caught. It is a
+     * SECOND guard, not the judgement: the result-surface count (共 N 笔) is the primary evidence,
+     * because a LazyColumn composes rows ahead of the viewport and a fixed sample count cannot see
+     * everything, so this helper only reports what leaks into the sampled tree. The first offending
+     * text is returned and logged, so the caller's assertNull fails with the row that leaked instead
+     * of a bare false; the sample count is fixed, so it never waits for an absence that will not
+     * become observable.
      */
     fun awaitNoAppText(prefix: String): String? {
         repeat(ABSENCE_SAMPLES) { sample ->

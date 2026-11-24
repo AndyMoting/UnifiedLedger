@@ -307,7 +307,7 @@ class P807Q2ImportSearchExportInstrumentedTest {
             ui.awaitHomeCapsule(),
         )
         ui.clickApp(P807Q2Flow1Facts.HOME_SEARCH_CAPSULE)
-        ui.awaitAppText("时间窗")
+        ui.awaitAppText(P807Q2Flow1Facts.SEARCH_WINDOW_HEADER)
         ui.clickApp(P807Q2Flow1Facts.SEARCH_WINDOW_CUSTOM)
         ui.seekApp(P807Q2Flow1Facts.SEARCH_CUSTOM_END_LABEL)
         assertTrue(
@@ -369,7 +369,16 @@ class P807Q2ImportSearchExportInstrumentedTest {
         // all the same. This second window brackets both seeded October rows and excludes the
         // imported November row, so only an applied upper end can answer 共 2 笔 (ignoring it would
         // answer 共 3 笔); the seed row is matched by the ledger's OWN row copy and the imported row
-        // by the same text prefix as a bounded negative assertion.
+        // by the same text prefix as a bounded negative assertion. The detail return restores the
+        // TAP-TIME scroll position, so the condition form (both custom fields) can sit outside the
+        // LazyColumn's composed window: the form is scrolled back into the viewport and its presence
+        // is asserted BEFORE anything is typed into it, so a missing field fails with that cause
+        // instead of a silent setFieldText false.
+        ui.scrollBackTo(P807Q2Flow1Facts.SEARCH_WINDOW_HEADER)
+        assertTrue(
+            "${P807Q2Flow1Facts.PREFIX} the seed window's form must be back in the viewport",
+            ui.editableFieldCount() >= 2,
+        )
         val seedExpense =
             ledger.read { facade -> p807Q2Flow1TransactionDetail(facade, P807Q2Flow1Facts.REFUNDABLE_EXPENSE_TRANSACTION_ID) }
         assertTrue(
