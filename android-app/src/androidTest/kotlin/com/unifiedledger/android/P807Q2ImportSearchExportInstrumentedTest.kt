@@ -374,7 +374,7 @@ class P807Q2ImportSearchExportInstrumentedTest {
             ui.saveExportFile(),
         )
         ui.awaitAppText(P807Q2Flow1Facts.EXPORT_SUCCESS_PREFIX_3)
-        val exportedBytes = p807Q2Flow1NewestExportFile(instrumentation.uiAutomation, log)
+        val exportedBytes = p807Q2Flow1NewestExportFile(instrumentation.uiAutomation, targetContext.contentResolver, log)
         assertExportedWorkbook(exportedBytes, expected, detail)
         val afterExport = ledger.snapshot()
         assertEquals(

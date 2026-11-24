@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.app.Instrumentation
 import android.app.UiAutomation
 import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Rect
@@ -11,6 +12,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.BaseColumns
 import android.provider.MediaStore
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -883,36 +885,155 @@ internal fun p807Q2Flow1Shell(
 }
 
 /**
- * The newest readable export file the platform wrote into the Download/Documents roots, read as
- * bytes. The suggested name is the product's `unifiedledger-export-<yyyyMMdd>.xlsx`; a repeated
- * run appends a platform counter, so the pattern accepts both.
+ * One DIAGNOSTIC shell command: stdout, stderr and the exit status ride back verbatim (stderr is
+ * folded into the stream, the status is appended as a trailing `exit=<code>`). The round-3 export
+ * read missed with no cause because every probe was `2>/dev/null`, so a refused path read as an
+ * empty success and the miss looked like a silent one; this helper exists so a refusal names
+ * Permission denied / No such file the moment it happens.
+ */
+internal fun p807Q2Flow1ShellDiagnostics(
+    automation: UiAutomation,
+    command: String,
+): String = String(p807Q2Flow1Shell(automation, "$command 2>&1; echo \"exit=\$?\""), Charsets.UTF_8).trim()
+
+/**
+ * The roots a SAF `CreateDocument` save can land in on this platform: the two logical roots in both
+ * alias spellings, because the shell's `/sdcard` and `/storage/emulated/0` views can differ in what
+ * they expose — the per-path diagnostics below report that difference instead of assuming it away.
+ */
+private val EXPORT_ROOTS =
+    listOf(
+        "/sdcard/Download",
+        "/storage/emulated/0/Download",
+        "/sdcard/Documents",
+        "/storage/emulated/0/Documents",
+    )
+
+/** One MediaStore Downloads row that names an export file (the resolver fallback's candidates). */
+private data class P807ExportMediaRow(
+    val id: Long,
+    val name: String,
+)
+
+/** The Downloads rows naming an export file, newest first (the collection the picker saves through). */
+private fun p807Q2Flow1ExportMediaRows(resolver: ContentResolver): List<P807ExportMediaRow> {
+    val projection = arrayOf(BaseColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
+    val rows = mutableListOf<P807ExportMediaRow>()
+    val cursor =
+        resolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            projection,
+            "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
+            arrayOf(EXPORT_NAME_LIKE),
+            "${MediaStore.MediaColumns.DATE_ADDED} DESC",
+        )
+    cursor?.use { open ->
+        val idColumn = open.getColumnIndexOrThrow(BaseColumns._ID)
+        val nameColumn = open.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+        while (open.moveToNext()) {
+            rows += P807ExportMediaRow(id = open.getLong(idColumn), name = open.getString(nameColumn).orEmpty())
+        }
+    }
+    return rows
+}
+
+/**
+ * The newest readable export file, read as bytes from every channel this device offers, with one
+ * diagnostic line per strategy. Name discovery and byte acquisition are separate steps on purpose:
+ * the saved file's NAME proves nothing about the path the shell can read (round 3 listed the name
+ * and then failed to read either root), so every candidate path reports `ls -l`, `stat` and `wc -c`
+ * — stdout, stderr and exit status verbatim — before a `cat` attempt reports its byte count. The
+ * `find` output's own absolute paths are tried after the four alias roots, and the platform's
+ * Downloads collection is the last channel (the picker wrote through it). The first non-empty read
+ * wins and is logged with its strategy, path and size; a miss is a named line, never a silence,
+ * and the final failure carries every line it collected.
  */
 internal fun p807Q2Flow1NewestExportFile(
     automation: UiAutomation,
+    resolver: ContentResolver,
     log: (String) -> Unit,
 ): ByteArray {
-    val directories = listOf("/sdcard/Download", "/sdcard/Documents")
-    val listing =
-        directories
-            .map { directory -> String(p807Q2Flow1Shell(automation, "ls -t $directory 2>/dev/null"), Charsets.UTF_8) }
-            .joinToString("\n")
-    val names = listing.lines().map { it.trim() }.filter { EXPORT_FILE_NAME.matches(it) }
-    check(names.isNotEmpty()) {
-        "no readable-export file was found under $directories; listing=[$listing]"
+    val diagnostics = mutableListOf<String>()
+
+    fun record(line: String) {
+        log(line)
+        diagnostics += line
     }
-    for (name in names) {
-        for (directory in directories) {
-            val quoted = "'$directory/$name'"
-            val probe = String(p807Q2Flow1Shell(automation, "ls $quoted 2>/dev/null"), Charsets.UTF_8).trim()
-            if (probe == "$directory/$name") {
-                val bytes = p807Q2Flow1Shell(automation, "cat $quoted")
-                log("${P807Q2Flow1Facts.PREFIX} exportFile path=$directory/$name bytes=${bytes.size}")
-                check(bytes.isNotEmpty()) { "the exported file [$directory/$name] read back empty" }
-                return bytes
+
+    fun probe(
+        label: String,
+        command: String,
+    ): String {
+        val output = p807Q2Flow1ShellDiagnostics(automation, command)
+        record("${P807Q2Flow1Facts.PREFIX} exportRead probe $label cmd=[$command] output=[$output]")
+        return output
+    }
+
+    fun recordBytes(
+        strategy: String,
+        path: String,
+        bytes: ByteArray,
+    ): ByteArray? {
+        if (bytes.isEmpty()) {
+            record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=$strategy path=$path bytes=0")
+            return null
+        }
+        record("${P807Q2Flow1Facts.PREFIX} exportRead hit via=$strategy path=$path bytes=${bytes.size}")
+        return bytes
+    }
+
+    // ---- discovery: the name list keeps the newest-first order, `find` supplies the real paths
+    val names =
+        EXPORT_ROOTS
+            .flatMap { root ->
+                probe("ls -t $root", "ls -t '$root'")
+                    .lines()
+                    .map { it.trim() }
+                    .filter { EXPORT_FILE_NAME.matches(it) }
+            }.distinct()
+    EXPORT_ROOTS.forEach { root -> probe("ls -la $root", "ls -la '$root'") }
+    val foundPaths =
+        probe("find", "find /sdcard -maxdepth 3 -iname 'unifiedledger-export-*'")
+            .lines()
+            .map { it.trim() }
+            .filter { it.startsWith("/") }
+            .distinct()
+    record("${P807Q2Flow1Facts.PREFIX} exportRead discovery names=$names foundPaths=$foundPaths")
+
+    // ---- byte strategies in order: the four alias roots for every discovered name, then the
+    // `find` output's own paths as the shell-side backstop.
+    val candidates = (names.flatMap { name -> EXPORT_ROOTS.map { root -> "$root/$name" } } + foundPaths).distinct()
+    for (path in candidates) {
+        probe("ls -l $path", "ls -l '$path'")
+        probe("stat $path", "stat '$path'")
+        probe("wc -c $path", "wc -c '$path'")
+        recordBytes("cat", path, p807Q2Flow1Shell(automation, "cat '$path' 2>/dev/null"))?.let { return it }
+    }
+
+    // ---- last channel: the platform's own Downloads collection
+    val rows = runCatching { p807Q2Flow1ExportMediaRows(resolver) }
+    val mediaRows = rows.getOrNull()
+    if (mediaRows == null) {
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media query failed error=${rows.exceptionOrNull()}")
+    } else {
+        record("${P807Q2Flow1Facts.PREFIX} exportRead media query rows=${mediaRows.size}")
+        for (row in mediaRows) {
+            val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, row.id)
+            record("${P807Q2Flow1Facts.PREFIX} exportRead media row name=${row.name} uri=$uri")
+            val bytes = runCatching { resolver.openInputStream(uri)?.use { stream -> stream.readBytes() } ?: ByteArray(0) }
+            val read = bytes.getOrNull()
+            if (read == null) {
+                record("${P807Q2Flow1Facts.PREFIX} exportRead miss via=media uri=$uri error=${bytes.exceptionOrNull()}")
+            } else {
+                recordBytes("media", uri.toString(), read)?.let { return it }
             }
         }
     }
-    error("no readable exported file was found; listing=[$listing]")
+
+    error(
+        "no readable exported file was found; one line per strategy:\n" +
+            diagnostics.joinToString("\n"),
+    )
 }
 
 // ------------------------------------------------------------------ the UI driver
@@ -1816,3 +1937,6 @@ private const val WORKBOOK_RELS_XML =
 
 /** The product's suggested export name shape, accepting the platform's duplicate counter. */
 private val EXPORT_FILE_NAME = Regex("unifiedledger-export-[0-9]{8}( \\([0-9]+\\))?\\.xlsx")
+
+/** The same name family as a MediaStore `DISPLAY_NAME LIKE` pattern (the resolver fallback's filter). */
+private const val EXPORT_NAME_LIKE = "unifiedledger-export-%"
