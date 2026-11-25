@@ -1061,7 +1061,11 @@ internal class P807Q2Flow3Ui(
      *
      * The pre-check follows [homeMonthStepPrevious]'s `already-first-month` rule: when the target face
      * is ALREADY showing, no click is sent (`already-on-target`), because a click there would pop a
-     * surface the caller never asked to leave. [backStepReport] carries the face before the tap,
+     * surface the caller never asked to leave. It reads a FORCED-CURRENT tree — the same
+     * [refreshTreeForRead] the wait loop pays every poll — because run `45717583573` showed this
+     * stack's client tree answering a surface it had already left for over two seconds, and a stale
+     * "already-on-target" would skip the ONE call this step is allowed and go red.
+     * [backStepReport] carries the face before the tap,
      * whether the action was sent, the face read at the end and every distinct face seen while waiting
      * — the readings that tell "no click", "one surface too far" and "the product did not move" apart.
      */
@@ -1070,6 +1074,7 @@ internal class P807Q2Flow3Ui(
         expect: String,
         effect: () -> Boolean,
     ): Boolean {
+        refreshTreeForRead()
         val before = faceMarkers()
         if (effect()) {
             lastBackReport = "channel=activate sent=[false] faceBefore=[$before] expect=[$expect] faceAfter=[$before] reason=[already-on-target]"
@@ -1090,7 +1095,7 @@ internal class P807Q2Flow3Ui(
             refreshTreeForRead()
             if (effect()) {
                 val elapsedMs = SystemClock.elapsedRealtime() - started
-                lastBackReport = "channel=activate sent=[true] faceBefore=[$before] expect=[$expect] faceAfter=[$expect] elapsed=[$elapsedMs]ms"
+                lastBackReport = "channel=activate sent=[true] faceBefore=[$before] expect=[$expect] faceAfter=[${faceMarkers()}] elapsed=[$elapsedMs]ms"
                 log("$tag back step=$step channel=activate effect=true after=${elapsedMs}ms")
                 return true
             }
