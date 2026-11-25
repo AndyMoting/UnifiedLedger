@@ -1,8 +1,12 @@
 package com.unifiedledger.android
 
 import android.content.Context
+import android.graphics.Rect
 import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.platform.app.InstrumentationRegistry
 import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.LedgerCurrentStateResult
@@ -520,35 +524,52 @@ internal class P807Q2Flow2Ui(
     }
 
     /**
-     * Selects [accountName] as the bind target and binds. The account radios carry only their
-     * state (`P503ReconciliationScreen.kt:391-395`), so the radio is the nearest enabled clickable
-     * sibling on the label's own band, to its left (the Row's radio-then-label order). The bind
-     * action must be UNAVAILABLE before the pick (`reconciliationBindEnabled`,
+     * Selects [accountName] as the bind target and binds. The account row is
+     * `Row { RadioButton(...); Text(choice.name) }` (`P503ReconciliationScreen.kt:390-397`), so the
+     * radio is named by the row's own structure first and by the Row's fixed radio-then-label
+     * geometry only when the tree will not expose it ([selectRadio]). The bind action must be
+     * UNAVAILABLE before the pick (`reconciliationBindEnabled`,
      * `P503ReconciliationPresentation.kt:583`) and enabled after it; both states are read off the
-     * button node itself, never inferred.
+     * button node itself, never inferred. Every failure dumps the surface first and carries the
+     * anchor report in its message, so the next run names its own cause instead of costing a round.
      */
     fun bindToAccount(accountName: String): Boolean {
         if (!awaitButtonVisible(P807Q2Flow2Facts.BIND_BUTTON)) {
             flow.dumpUiSnapshot("bindToAccount:button")
             return false
         }
-        check(!bindButtonEnabled()) { "the bind button must be unavailable before an account is selected" }
+        if (bindButtonEnabled()) {
+            flow.dumpUiSnapshot("bindToAccount:initial-enabled")
+            error(
+                "the bind button must be unavailable before an account is selected; " +
+                    anchorReport("bind-initial", accountName, null),
+            )
+        }
         if (!flow.hasAppText(accountName)) flow.scrollBackTo(accountName)
         val label =
-            checkNotNull(flow.findAppNode { node -> flow.textOf(node) == accountName }) {
-                "the bind step must offer the account [$accountName]"
-            }
-        val radio = checkNotNull(radioLeftOf(label)) { "no radio button sits on [$accountName]'s row band" }
-        log("$tag bind account=$accountName radio=" + describe(radio))
-        flow.tap(radio)
+            flow.findAppNode { node -> flow.textOf(node) == accountName }
+                ?: run {
+                    val report = anchorReport("bind-label", accountName, null)
+                    flow.dumpUiSnapshot("bindToAccount:label")
+                    log("$tag bind label=absent account=$accountName bindEnabledBefore=false $report")
+                    error("the bind step must offer the account [$accountName]; $report")
+                }
+        val path = selectRadio(label, "bindToAccount:radio", accountName)
+        log(
+            "$tag bind anchor account=$accountName $path label=" + describe(label) +
+                " bindEnabledBefore=false",
+        )
         // The bind button's own text is a PREFIX of 绑定到账户, so the seek uses the unique warning
         // copy that sits between the radios and the button; the section fits one screen, so this is
         // normally a no-op.
         runCatching { flow.seekApp(P807Q2Flow2Facts.BIND_IRREVERSIBLE_WARNING) }
         if (!awaitEnabledButton(P807Q2Flow2Facts.BIND_BUTTON)) {
+            val report = anchorReport("bind-not-selected", accountName, label)
             flow.dumpUiSnapshot("bindToAccount:enabled")
-            return false
+            log("$tag bind selected=false account=$accountName $path bindEnabledAfter=false $report")
+            error("the account pick did not enable 绑定 for [$accountName] ($path); $report")
         }
+        log("$tag bind selected account=$accountName $path bindEnabledAfter=true")
         flow.clickApp(P807Q2Flow2Facts.BIND_BUTTON)
         flow.awaitAppText(P807Q2Flow2Facts.BOUND_NOTICE)
         return true
@@ -563,20 +584,25 @@ internal class P807Q2Flow2Ui(
     // ---------------------------------------------------------------- candidates + confirm (entry B)
 
     /**
-     * Selects the single proposed candidate. Its radio has no label either, so it is anchored on
-     * the candidate's own line ([P807Q2Flow2Facts.CANDIDATE_LINE]). The postcondition is the
-     * four-element block, which only renders for a valid selection (`reconciliationSelectedPair`,
-     * `P503ReconciliationScreen.kt:459-464`).
+     * Selects the single proposed candidate. Its radio carries no text of its own, so it is named by
+     * the candidate row's structure, anchored on the candidate's own line
+     * ([P807Q2Flow2Facts.CANDIDATE_LINE]) exactly as [bindToAccount] names the account radio. The
+     * postcondition is the four-element block, which only renders for a valid selection
+     * (`reconciliationSelectedPair`, `P503ReconciliationScreen.kt:459-464`).
      */
     fun selectCandidate(): Boolean {
         flow.seekApp(P807Q2Flow2Facts.CANDIDATE_LINE)
+        val anchorText = P807Q2Flow2Facts.CANDIDATE_LINE
         val label =
-            checkNotNull(flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow2Facts.CANDIDATE_LINE }) {
-                "the proposal must render its candidate line [" + P807Q2Flow2Facts.CANDIDATE_LINE + "]"
-            }
-        val radio = checkNotNull(radioLeftOf(label)) { "no radio button sits on the candidate's row band" }
-        log("$tag select candidate radio=" + describe(radio))
-        flow.tap(radio)
+            flow.findAppNode { node -> flow.textOf(node) == anchorText }
+                ?: run {
+                    val report = anchorReport("candidate-label", anchorText, null)
+                    flow.dumpUiSnapshot("selectCandidate:label")
+                    log("$tag select candidate label=absent line=[$anchorText] $report")
+                    error("the proposal must render its candidate line [$anchorText]; $report")
+                }
+        val path = selectRadio(label, "selectCandidate:radio", anchorText)
+        log("$tag select candidate $path label=" + describe(label))
         return runCatching { flow.awaitAppText(P807Q2Flow2Facts.ELEMENT_EXTERNAL_EVIDENCE) }.isSuccess
     }
 
@@ -655,9 +681,11 @@ internal class P807Q2Flow2Ui(
      * (`P503ImportReview.kt:1035-1047`).
      */
     fun selectForBatch(): Boolean {
+        var lastHint: AccessibilityNodeInfo? = null
         repeat(SELECTION_ATTEMPTS) { attempt ->
             flow.seekApp(P807Q2Flow2Facts.SELECTION_HINT)
             val hint = flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow2Facts.SELECTION_HINT }
+            lastHint = hint
             val checkbox = hint?.let(::checkboxLeftOfHint)
             if (hint == null || checkbox == null) {
                 log("$tag selection row absent attempt=$attempt hint=${hint != null}")
@@ -668,7 +696,9 @@ internal class P807Q2Flow2Ui(
             flow.tap(checkbox)
             if (runCatching { flow.awaitAppText(P807Q2Flow2Facts.BATCH_ENTRY) }.isSuccess) return true
         }
+        val report = anchorReport("selectForBatch", P807Q2Flow2Facts.SELECTION_HINT, lastHint)
         flow.dumpUiSnapshot("selectForBatch")
+        log("$tag selection row not selectable attempts=$SELECTION_ATTEMPTS $report")
         return false
     }
 
@@ -756,10 +786,12 @@ internal class P807Q2Flow2Ui(
         section: String,
         accountName: String,
     ): Boolean {
+        var lastLabel: AccessibilityNodeInfo? = null
         repeat(SELECTION_ATTEMPTS) { attempt ->
             runCatching { flow.seekApp(section) }
-            val label = flow.findAppNode { node -> flow.textOf(node) == section } ?: return@repeat
-            val band = flow.bounds(label)
+            val anchor = flow.findAppNode { node -> flow.textOf(node) == section }
+            lastLabel = anchor
+            val band = flow.bounds(anchor ?: return@repeat)
             val options =
                 flow
                     .appNodes()
@@ -781,35 +813,170 @@ internal class P807Q2Flow2Ui(
                 return true
             }
         }
+        val report = anchorReport("pickDecisionOption:$section", section, lastLabel)
         flow.dumpUiSnapshot("pickDecisionOption:$section")
+        log("$tag decision option not selected section=$section account=$accountName attempts=$SELECTION_ATTEMPTS $report")
         return false
     }
 
-    /** The bind/candidate radio: the enabled clickable node on [anchor]'s band, to its LEFT. */
-    private fun radioLeftOf(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val band = flow.bounds(anchor)
-        var current: AccessibilityNodeInfo? = anchor.parent
+    /**
+     * The radio that belongs to [label]'s own row, found by STRUCTURE. Both radio rows in this
+     * product are `Row { RadioButton(...); Text(...) }` (`P503ReconciliationScreen.kt:390-397` for
+     * the account choice, `:433-440` for a candidate), so the radio is the label's sibling inside the
+     * nearest ancestor that holds a checkable node, and no coordinate is needed to name it. The
+     * previous anchor demanded `radio.right <= label.left` on the same band, which loses the radio
+     * whenever the client tree reports a bounds rectangle the layout no longer has (this stack
+     * documents stale client trees, `AndroidScaleUi.kt:137-163`); a row whose label was composed has
+     * its radio beside it.
+     */
+    private fun radioOfRow(label: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val band = flow.bounds(label)
+        var current: AccessibilityNodeInfo? = label.parent
         repeat(ANCESTOR_DEPTH) {
             val container = current ?: return null
-            val clickable =
+            val radios =
                 collectNodes(container).filter { node ->
-                    node.isVisibleToUser && node.isEnabled && node.isClickable && flow.bounds(node).right <= band.left
+                    node != label && node.isVisibleToUser && isRadioNode(node) && onBand(node, band)
                 }
-            val onBand =
-                clickable.filter { node ->
-                    val candidate = flow.bounds(node)
-                    candidate.centerY() in band.top..band.bottom && candidate.width() > 0
-                }
-            if (onBand.size == 1) return onBand.single()
-            if (onBand.isNotEmpty()) {
-                return onBand.minByOrNull { node -> abs(flow.bounds(node).centerY() - band.centerY()) }
+            if (radios.size == 1) return radios.single()
+            if (radios.isNotEmpty()) {
+                return radios
+                    .minByOrNull { node -> abs(flow.bounds(node).centerY() - band.centerY()) }
             }
             current = container.parent
         }
         return null
     }
 
-    /** The detail's selection checkbox: the single 勾选候选 node inside the hint's nearest container. */
+    /** Whether [node] is radio-like: checkable, selected, or the platform's radio/check class. */
+    private fun isRadioNode(node: AccessibilityNodeInfo): Boolean {
+        val className = node.className?.toString().orEmpty()
+        return node.isCheckable || node.isChecked || node.isSelected ||
+            className.endsWith("RadioButton") || className.endsWith("CheckBox")
+    }
+
+    /** Whether [node]'s centre sits on [band]'s row, with the slack a re-measured row needs. */
+    private fun onBand(
+        node: AccessibilityNodeInfo,
+        band: Rect,
+    ): Boolean {
+        val candidate = flow.bounds(node)
+        return candidate.centerY() in (band.top - BAND_SLACK_PX)..(band.bottom + BAND_SLACK_PX) && candidate.width() > 0
+    }
+
+    /**
+     * The radio's screen point derived from [label]'s own bounds: one radio column left of the label,
+     * on the label's vertical centre. WHY THE COORDINATE IS SOUND HERE: the Row's child order is
+     * fixed radio-then-label with no horizontal arrangement (`P503ReconciliationScreen.kt:390-396`),
+     * and a Material3 radio's touch target is [RADIO_SLOT_DP] dp wide, so the radio's centre sits
+     * exactly that far left of the label's left edge. This is the fallback for a tree that will not
+     * name the radio node at all; it is never trusted on its own — the caller accepts it only when the
+     * action it enables (绑定 / 确认核对) flips from unavailable to available, so a tap on the wrong
+     * pixel fails the leg instead of passing it.
+     */
+    private fun radioSlotLeftOf(label: AccessibilityNodeInfo): Pair<Int, Int>? {
+        val band = flow.bounds(label)
+        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        val x = band.left - (RADIO_SLOT_DP * density).toInt()
+        return if (x > 0) x to band.centerY() else null
+    }
+
+    /** Injects one touchscreen tap at [point] (the D-217 coordinate path `AndroidScaleUi.clickNode` uses). */
+    private fun tapAt(point: Pair<Int, Int>) {
+        val (x, y) = point
+        val down = SystemClock.uptimeMillis()
+        val events =
+            listOf(
+                MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
+                    .apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+                MotionEvent.obtain(down, down + TOUCH_HOLD_MILLIS, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
+                    .apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+            )
+        try {
+            events.forEach { event ->
+                check(InstrumentationRegistry.getInstrumentation().uiAutomation.injectInputEvent(event, true)) {
+                    "coordinate tap injection refused at ($x, $y)"
+                }
+            }
+        } finally {
+            events.forEach { event -> event.recycle() }
+        }
+        SystemClock.sleep(180)
+    }
+
+    /**
+     * Selects the radio of [label]'s row and returns the path it used. Structure first
+     * ([radioOfRow]); coordinates second ([radioSlotLeftOf]), because a radio the tree will not name
+     * still has exactly one place it can be. A failure dumps the surface and throws with the anchor
+     * report, so the run names its own cause instead of costing another round.
+     */
+    private fun selectRadio(
+        label: AccessibilityNodeInfo,
+        step: String,
+        anchorText: String,
+    ): String {
+        val radio = radioOfRow(label)
+        if (radio != null) {
+            flow.tap(radio)
+            return "path=row radio=" + describe(radio)
+        }
+        log("$tag radio search step=$step anchor=[$anchorText] row=none")
+        val slot = radioSlotLeftOf(label)
+        if (slot == null) {
+            flow.dumpUiSnapshot(step)
+            error("no radio node and no derivable slot for [$anchorText]; " + anchorReport(step, anchorText, label))
+        }
+        tapAt(slot)
+        log("$tag radio tap step=$step anchor=[$anchorText] path=coordinate slot=(" + slot.first + "," + slot.second + ")")
+        return "path=coordinate slot=(" + slot.first + "," + slot.second + ")"
+    }
+
+    /**
+     * The self-evidence of a failed anchor: the label itself, every node of its parent subtree with
+     * the accessibility facts that decide radio-ness (class, text, enabled, clickable, checkable,
+     * selected, bounds), and the screen's own visible texts. Truncation is MARKED: a report that says
+     * it was cut is evidence; a report that silently stops is not.
+     */
+    private fun anchorReport(
+        step: String,
+        anchorText: String,
+        label: AccessibilityNodeInfo?,
+    ): String {
+        val lines = ArrayList<String>()
+        lines.add("anchor-report step=$step anchor=[$anchorText]")
+        if (label == null) {
+            lines.add("anchor=ABSENT (no visible node carries that exact text)")
+        } else {
+            lines.add("anchor=" + describe(label))
+            val parent = label.parent
+            if (parent == null) {
+                lines.add("parent=ABSENT (the client tree answered no parent for the anchor)")
+            } else {
+                val subtree = collectNodes(parent)
+                lines.add("parent-subtree nodes=" + subtree.size)
+                subtree.forEach { node -> lines.add("  " + describe(node)) }
+            }
+        }
+        val texts =
+            flow.appNodes().map { node -> flow.textOf(node) }.filter { text -> text.isNotBlank() }.distinct()
+        lines.add("visible-texts count=" + texts.size + " [" + texts.joinToString(" ¦ ") + "]")
+        return reportOf(lines)
+    }
+
+    /** Joins [lines], cutting at [MAX_REPORT_LINES] with an explicit marker instead of stopping silently. */
+    private fun reportOf(lines: List<String>): String {
+        if (lines.size <= MAX_REPORT_LINES) return lines.joinToString("\n")
+        val kept = lines.take(MAX_REPORT_LINES)
+        return (kept + "… truncated at " + MAX_REPORT_LINES + " of " + lines.size + " lines").joinToString("\n")
+    }
+
+    /**
+     * The detail's selection checkbox: the 勾选候选 node that belongs to the hint's row. The checkbox
+     * carries its own description (`P503ImportReview.kt:1064-1071`), so the description names it and
+     * the row's band only breaks a tie between several checkboxes; the previous tie-break also
+     * demanded `checkbox.right <= hint.left`, which is the same geometric assumption that lost the
+     * account radio and is not needed once the description already names the control.
+     */
     private fun checkboxLeftOfHint(hint: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val band = flow.bounds(hint)
         var current: AccessibilityNodeInfo? = hint.parent
@@ -822,10 +989,8 @@ internal class P807Q2Flow2Ui(
             if (boxes.size == 1) return boxes.single()
             if (boxes.isNotEmpty()) {
                 return boxes
-                    .filter { node ->
-                        val candidate = flow.bounds(node)
-                        candidate.centerY() in band.top..band.bottom && candidate.right <= band.left
-                    }.minByOrNull { node -> abs(flow.bounds(node).centerY() - band.centerY()) }
+                    .filter { node -> onBand(node, band) }
+                    .minByOrNull { node -> abs(flow.bounds(node).centerY() - band.centerY()) }
             }
             current = container.parent
         }
@@ -882,6 +1047,7 @@ internal class P807Q2Flow2Ui(
 
     private fun describe(node: AccessibilityNodeInfo): String =
         "class=" + node.className + " clickable=" + node.isClickable + " enabled=" + node.isEnabled +
+            " checkable=" + node.isCheckable + " checked=" + node.isChecked + " selected=" + node.isSelected +
             " bounds=" + flow.bounds(node) + " text=[" + flow.textOf(node) + "] desc=[" + flow.descriptionOf(node) + "]"
 
     /** Breadth-first walk of [root], bounded (the flow-1 collector's shape; no new UI discipline). */
@@ -905,6 +1071,18 @@ internal class P807Q2Flow2Ui(
 
         /** The bounded tree walk of one anchor lookup. */
         const val MAX_TREE_NODES = 2_000
+
+        /** The vertical slack one anchor tolerates around its row band (px). */
+        const val BAND_SLACK_PX = 16
+
+        /** The radio centre's offset from its label's left edge, in dp (a Material3 radio touch target). */
+        const val RADIO_SLOT_DP = 24
+
+        /** How long one injected tap holds the touch down. */
+        const val TOUCH_HOLD_MILLIS = 60L
+
+        /** The most lines one anchor report may carry before it is cut with a marker. */
+        const val MAX_REPORT_LINES = 60
 
         /** The selection/decision click retries (the frozen flow-1 `SELECTION_CLICK_ATTEMPTS` value). */
         const val SELECTION_ATTEMPTS = 3
