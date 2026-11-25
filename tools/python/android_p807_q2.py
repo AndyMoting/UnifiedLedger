@@ -74,6 +74,8 @@ PASS_MARKER = "OK (1 test)"
 # are checked verbatim in addition to the parsed records.
 FAILURE_MARKERS = ("FAILURES!!!", "INSTRUMENTATION_FAILED", "INSTRUMENTATION_ABORTED",
                    "Process crashed", "shortMsg=")
+# The STATUS keys whose presence is itself a failure; each is recorded as `<key>=` in `markers`.
+STATUS_FAILURE_KEYS = ("shortMsg", "Error")
 
 STATUS_FIELD = "INSTRUMENTATION_STATUS: "
 STATUS_CODE = "INSTRUMENTATION_STATUS_CODE: "
@@ -177,6 +179,10 @@ def parse_instrumentation(text: str) -> dict:
             key, _, value = line[len(STATUS_FIELD):].partition("=")
             if key:
                 fields[key] = value
+                # This branch consumes the whole STATUS line, so the raw-marker scan below never
+                # sees it: a failure token that only rides a STATUS field is recorded here.
+                if key in STATUS_FAILURE_KEYS and key + "=" not in markers:
+                    markers.append(key + "=")
             continue
         if line.startswith(STATUS_CODE):
             try:

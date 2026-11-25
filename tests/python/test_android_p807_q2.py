@@ -128,6 +128,7 @@ class Parsing(unittest.TestCase):
         parsed = parse_instrumentation(SHORT_MSG)
         self.assertIn("INSTRUMENTATION_FAILED", parsed["markers"])
         self.assertIn("shortMsg=", parsed["markers"])
+        self.assertIn("Error=", parsed["markers"])
 
     def test_a_process_crash_transcript_is_a_failure_not_a_pass(self) -> None:
         parsed = parse_instrumentation(CRASHED)
