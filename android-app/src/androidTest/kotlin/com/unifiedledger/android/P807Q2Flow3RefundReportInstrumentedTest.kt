@@ -61,11 +61,12 @@ import org.junit.runner.RunWith
  *    unchanged, and the four balances equal to the seeded ones plus the new legs' exact minor units.
  * 6. The candidate empty state: a fresh refund draft reads 暂无可退交易 (the full refund consumed the
  *    structural cap).
- * 7. The arrival month's report: the November custom window lands its exact period line, net expense
- *    -21.00, ordinary income 0.00, balance 21.00 and 普通收支笔数：1, each line EQUAL to the line the
- *    authoritative payload produces.
- * 8. The original expense's month: the October custom window still reads 净支出（含退款） 21.00 and
- *    普通收支笔数：1, and its whole port face equals the pre-flow face item by item.
+ * 7. The arrival month's report: both custom-window bounds read back from ONE tree BEFORE the commit,
+ *    then the November window lands its exact period line, net expense -21.00, ordinary income 0.00,
+ *    balance 21.00 and 普通收支笔数：1, each line EQUAL to the line the authoritative payload produces.
+ * 8. The original expense's month: the October window's two bounds read back the same way, it still
+ *    reads 净支出（含退款） 21.00 and 普通收支笔数：1, and its whole port face equals the pre-flow face
+ *    item by item.
  * 9. The calendar and the day detail: one previous step pins the HOME cursor to the domain's first
  *    month 2026-10, the calendar opens there, one forward step reaches 2026年11月, the arrival day's
  *    cell carries its exact accessibility text, and that cell opens 报表明细 with 共 1 笔明细, the
@@ -344,6 +345,12 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "${facts.PREFIX} the custom window's upper bound must be typeable",
             ui.setFieldByLabel(facts.CUSTOM_END_LABEL, facts.NOVEMBER_END.toString()),
         )
+        assertCustomWindowBounds(
+            ui,
+            facts.NOVEMBER_START.toString(),
+            facts.NOVEMBER_END.toString(),
+            "the arrival month's custom window",
+        )
         val november = ledger.report(facts.novemberPeriod())
         val novemberCny = cnyRow(november)
         assertEquals("${facts.PREFIX} the arrival month must count exactly the one refund", 1, november.transactionCount)
@@ -373,6 +380,12 @@ class P807Q2Flow3RefundReportInstrumentedTest {
         assertTrue(
             "${facts.PREFIX} the custom window's upper bound must be re-typeable",
             ui.setFieldByLabel(facts.CUSTOM_END_LABEL, facts.OCTOBER_END.toString()),
+        )
+        assertCustomWindowBounds(
+            ui,
+            facts.OCTOBER_START.toString(),
+            facts.OCTOBER_END.toString(),
+            "the original expense month's custom window",
         )
         val octoberAfter = ledger.report(facts.octoberPeriod())
         val octoberAfterFace = p807Q2Flow3ReportLines(octoberAfter)
@@ -554,20 +567,49 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             SystemClock.sleep(LEDGER_POLL_MILLIS)
         }
         val elapsed = SystemClock.elapsedRealtime() - started
-        val dump = ui.dump("confirmLegal:no-ledger-write")
-        val truncation =
-            if (dump.length > FAILURE_DUMP_CHARS) {
-                "…(dump truncated at $FAILURE_DUMP_CHARS of ${dump.length} chars; the whole DUMP is in logcat)"
-            } else {
-                ""
-            }
         throw AssertionError(
             "${P807Q2Flow3Facts.PREFIX} the confirmed refund must add exactly ONE ledger transaction within " +
                 LEDGER_LANDING_TIMEOUT_MILLIS + "ms: baseline=" + baselineTransactionTotal + " lastRead=" + observed +
                 " reads=" + reads + " withoutLease=" + withoutLease + " elapsed=" + elapsed + "ms " +
                 "candidates=[" + candidateRowsForFailure(ledger) + "] surface=[" + ui.surfaceTitle() + "] " +
-                "dump=" + dump.take(FAILURE_DUMP_CHARS) + truncation,
+                "dump=" + failureDump(ui, "confirmLegal:no-ledger-write"),
         )
+    }
+
+    /**
+     * L7/L8's field evidence: BOTH custom-window bounds read back from ONE tree, BEFORE the window is
+     * committed. One field's `landed=true` is not evidence — run `45687641567` logged both writes as
+     * landed while the upper field still held the lower bound (the two editors are adjacent rows and
+     * the former locator flipped between them), then committed a one-day window that no report line
+     * could ever match. A pair that does not read back exactly fails here, with both actual values and
+     * the DUMP, before the commit can hide the cause behind a landing judgement.
+     */
+    private fun assertCustomWindowBounds(
+        ui: P807Q2Flow3Ui,
+        start: String,
+        end: String,
+        what: String,
+    ) {
+        val (startText, endText) = ui.customWindowTexts(P807Q2Flow3Facts.CUSTOM_START_LABEL, P807Q2Flow3Facts.CUSTOM_END_LABEL)
+        if (startText == start && endText == end) return
+        throw AssertionError(
+            "${P807Q2Flow3Facts.PREFIX} $what must read back BOTH custom-window bounds from ONE tree: " +
+                "start=[$startText] expected=[$start] end=[$endText] expected=[$end] " +
+                "dump=" + failureDump(ui, "customWindow:$what"),
+        )
+    }
+
+    /** The truncation-marked DUMP a failure message carries (the whole one is in logcat, chunked). */
+    private fun failureDump(
+        ui: P807Q2Flow3Ui,
+        label: String,
+    ): String {
+        val dump = ui.dump(label)
+        return if (dump.length > FAILURE_DUMP_CHARS) {
+            dump.take(FAILURE_DUMP_CHARS) + "…(dump truncated at $FAILURE_DUMP_CHARS of ${dump.length} chars; the whole DUMP is in logcat)"
+        } else {
+            dump
+        }
     }
 
     /** The candidate rows a failure message carries: an unavailable or unreadable page is NAMED, never a zero. */

@@ -723,17 +723,51 @@ internal class P807Q2Flow3Ui(
         }
 
     /**
-     * Commits the custom window and proves the landed period line: the region prints a resolved
-     * window only for a landed read of the committed kind (`P503ReportRegion.kt:229-235`), so that
-     * line is the effect, never the click. The effect wait is longer than a click's usual probe
-     * because the landing is a database read: a shorter wait would let the retry re-commit an
-     * in-flight window and re-enter the loading face.
+     * Commits the custom window and proves the landed period line: the region prints a resolved window
+     * only for a landed read of the committed kind (`P503ReportRegion.kt:229-235`), so that line is the
+     * effect, never the click. The judgement itself is unchanged — the line is compared verbatim.
+     *
+     * WHY THE EFFECT NO LONGER SEARCHES THE WHOLE SURFACE. Run `45687641567` measured ONE failed probe
+     * of the former `awaitExactText(…, seek = true)` at 186 s: a text that is absent makes `seekApp`
+     * spend its own retry budget (two `ui.seek(maxScrolls = 40)` attempts plus the dumping third one)
+     * inside every single poll. Round 0's two channels then ran from the click at 03:54:51 to
+     * `verdict=click-not-applied` at 04:19:33 — about 25 min — and the rig stopped the process at
+     * 04:21:42, two minutes into round 1: the run died at `DEFAULT_TIMEOUT = 1800 s`
+     * (`tools/python/android_p807_q2.py:72`) with no assertion and no reading. The committed period
+     * line renders on the SAME report surface, directly below the button (the run's own dump carries
+     * `报表期间` and the resolved line in one window), so the effect is a same-screen exact wait with a
+     * per-COMMIT budget of [PERIOD_LINE_SCROLLS] small forward nudges and [PERIOD_LINE_WAIT_MILLIS]
+     * per poll. Re-committing is harmless by construction: the button re-runs a READ of the same
+     * window, so a retried click can never duplicate an accounting effect.
+     *
+     * THE WORST-CASE ARITHMETIC, against the rig's 1800 s: `SELECTION_ATTEMPTS` 3 rounds × 2 channels
+     * (this step's slot lambda is null, so the coordinate-slot channel never runs), each channel
+     * probing for `EFFECT_TIMEOUT_MILLIS` 4 s and overrunning by at most one [PERIOD_LINE_WAIT_MILLIS]
+     * = 6 × 7 s ≈ 42 s; plus 3 rounds of `refocusAnchor` on an on-screen target (~1 s each), a
+     * `settle()` and one DUMP per round (~5 s each) ≈ 60 s total — about 3 % of the budget, and a
+     * failure now lands as the caller's `assertTrue`, never as a host-side timeout.
      */
     fun commitCustomWindow(expectedPeriodLine: String): Boolean {
         hideKeyboard()
-        return clickVerifiedExact("commitCustomWindow", P807Q2Flow3Facts.CUSTOM_SUBMIT) {
-            awaitExactText(expectedPeriodLine, timeoutMillis = COMMIT_WAIT_MILLIS, seek = true)
+        var scrollsLeft = PERIOD_LINE_SCROLLS
+        val effect = {
+            val deadline = SystemClock.elapsedRealtime() + PERIOD_LINE_WAIT_MILLIS
+            var landed = false
+            while (SystemClock.elapsedRealtime() < deadline) {
+                refreshTreeForRead()
+                if (hasExactText(expectedPeriodLine)) {
+                    landed = true
+                    break
+                }
+                if (scrollsLeft > 0) {
+                    scrollsLeft--
+                    runCatching { flow.ui.scroll(forward = true, fraction = NUDGE_FRACTION) }
+                }
+                SystemClock.sleep(POLL_MILLIS)
+            }
+            landed
         }
+        return clickVerifiedExact("commitCustomWindow", P807Q2Flow3Facts.CUSTOM_SUBMIT, effect)
     }
 
     // ---------------------------------------------------------------- day detail
@@ -784,14 +818,18 @@ internal class P807Q2Flow3Ui(
         runCatching { flow.seekApp(label) }
         repeat(FIELD_INPUT_ATTEMPTS) { attempt ->
             refreshTreeForRead()
-            val node = fieldForLabel(label)
-            if (node == null) {
+            val location = locateField(flow.appNodes(), label)
+            if (location == null) {
                 log("$tag setField label=[$label] attempt=$attempt field=absent surface=${flow.surfaceTitle()}")
                 flow.dumpUiSnapshot("setField:absent:$label")
                 return false
             }
+            val node = location.node
             val before = flow.textOf(node)
-            log("$tag setField label=[$label] attempt=$attempt before=[$before] ${describeField(node)}")
+            log(
+                "$tag setField label=[$label] attempt=$attempt basis=${location.basis} labelBounds=${location.labelBounds} " +
+                    "fieldBounds=${location.fieldBounds} before=[$before] ${describeField(node)}",
+            )
             if (before == text) {
                 log("$tag setField label=[$label] attempt=$attempt landed=true via=already-set value=[$text]")
                 return true
@@ -876,32 +914,131 @@ internal class P807Q2Flow3Ui(
     /** Hides the soft keyboard while the platform still holds one (the frozen flow-1 window-list test). */
     fun hideKeyboard(): Boolean = flow.hideKeyboardIfShown()
 
-    /** The editable node nearest to any node carrying [label], or null when the screen has none. */
-    private fun fieldForLabel(label: String): AccessibilityNodeInfo? {
-        val nodes = flow.appNodes()
-        val labels = nodes.filter { node -> flow.textOf(node).contains(label) }
-        if (labels.isEmpty()) return null
+    /**
+     * One field resolution inside ONE tree: the editable node, the label bounds it was chosen for, the
+     * node's own bounds and the basis that chose it. The gap and distance are the `below` tier's
+     * tie-break inputs (see [locateField]).
+     */
+    private class FieldLocation(
+        val node: AccessibilityNodeInfo,
+        val labelBounds: Rect,
+        val fieldBounds: Rect,
+        val basis: String,
+        val gap: Int = 0,
+        val distance: Int = 0,
+    )
+
+    /**
+     * Resolves the ONE editable node belonging to [label] inside [nodes] (a single tree), or null.
+     *
+     * THE RULE IS DETERMINISTIC ON PURPOSE. Run `45687641567` wrote the custom window's lower bound
+     * into its upper field: `起始日期` and `结束日期` are adjacent rows whose editors stack at
+     * `(42,1028)-(1038,1196)` and `(42,1196)-(1038,1364)`, and the former "nearest editable node to
+     * any label node" search — which allows a field ABOVE the label — flipped between the two on
+     * consecutive reads, so the write went to one field while the verification read the other. Three
+     * bases, in order, and the caller logs the chosen one:
+     * 1. `self` — the label's own node is editable (the platform merged the hint into the editor);
+     * 2. `contained` — an editable node lies INSIDE the label's bounds (the tightest one if several:
+     *    a merged OutlinedTextField row carries its own editor);
+     * 3. `below` — among the fields whose TOP is at or below the label's top, never the field above:
+     *    smallest vertical gap, then smallest horizontal distance, then the topmost, then the leftmost.
+     * One tree therefore always yields one answer, and a `contained` hit is never displaced by a
+     * nearer field on the other side of the label.
+     */
+    private fun locateField(
+        nodes: List<AccessibilityNodeInfo>,
+        label: String,
+    ): FieldLocation? {
+        val labelNodes = nodes.filter { node -> flow.textOf(node).contains(label) }
+        if (labelNodes.isEmpty()) return null
         val fields = nodes.filter { node -> isEditable(node) }
         if (fields.isEmpty()) return null
-        labels.firstOrNull { node -> isEditable(node) }?.let { return it }
-        var best: AccessibilityNodeInfo? = null
-        var bestGap = Int.MAX_VALUE
-        var bestDistance = Int.MAX_VALUE
-        labels.forEach { labelNode ->
+        labelNodes.firstOrNull { node -> isEditable(node) }?.let { node -> return FieldLocation(node, flow.bounds(node), flow.bounds(node), "self") }
+        var contained: FieldLocation? = null
+        var containedArea = Long.MAX_VALUE
+        for (labelNode in labelNodes) {
             val labelBounds = flow.bounds(labelNode)
-            fields.forEach { field ->
+            for (field in fields) {
                 val fieldBounds = flow.bounds(field)
-                val gap = verticalGap(labelBounds, fieldBounds)
-                val distance = abs(labelBounds.centerX() - fieldBounds.centerX())
-                if (gap < bestGap || (gap == bestGap && distance < bestDistance)) {
-                    best = field
-                    bestGap = gap
-                    bestDistance = distance
+                if (!labelBounds.contains(fieldBounds)) continue
+                val area = fieldBounds.width().toLong() * fieldBounds.height().toLong()
+                if (area < containedArea) {
+                    containedArea = area
+                    contained = FieldLocation(field, labelBounds, fieldBounds, "contained")
                 }
             }
         }
-        return best
+        if (contained != null) return contained
+        return labelNodes
+            .flatMap { labelNode ->
+                val labelBounds = flow.bounds(labelNode)
+                fields.mapNotNull { field ->
+                    val fieldBounds = flow.bounds(field)
+                    if (fieldBounds.top < labelBounds.top) return@mapNotNull null
+                    FieldLocation(
+                        node = field,
+                        labelBounds = labelBounds,
+                        fieldBounds = fieldBounds,
+                        basis = "below",
+                        gap = verticalGap(labelBounds, fieldBounds),
+                        distance = abs(labelBounds.centerX() - fieldBounds.centerX()),
+                    )
+                }
+            }.minWithOrNull(compareBy({ choice -> choice.gap }, { choice -> choice.distance }, { choice -> choice.fieldBounds.top }, { choice -> choice.fieldBounds.left }))
     }
+
+    /** The editable node belonging to [label] in the CURRENT tree, or null when the screen has none. */
+    private fun fieldForLabel(label: String): AccessibilityNodeInfo? = locateField(flow.appNodes(), label)?.node
+
+    /**
+     * Reads the custom window's TWO date fields from ONE tree and returns their exact texts.
+     *
+     * A single node snapshot is the whole point: the pair is adjacent, and two separate reads are
+     * what let run `45687641567` report both writes landed while the upper field still held the lower
+     * bound. Both fields are resolved by [locateField] against the same list, and the log carries each
+     * label's bounds, the chosen field's bounds and the basis, so the next round can re-check the
+     * choice verbatim. A field that cannot be resolved answers null, never an empty string.
+     *
+     * The pair may be re-read from a FRESH tree up to [WINDOW_READ_ATTEMPTS] times with one small
+     * nudge toward the missing side: the two editors are adjacent rows, so after one of them was
+     * typed into the other can sit just outside the viewport. The nudge is a fraction of the viewport,
+     * never a full seek (a seek that misses costs minutes — the reason [commitCustomWindow] changed),
+     * and every judgement still comes from ONE tree.
+     */
+    fun customWindowTexts(
+        startLabel: String,
+        endLabel: String,
+    ): Pair<String?, String?> {
+        var start: FieldLocation? = null
+        var end: FieldLocation? = null
+        repeat(WINDOW_READ_ATTEMPTS) { attempt ->
+            refreshTreeForRead()
+            val nodes = flow.appNodes()
+            val locatedStart = locateField(nodes, startLabel)
+            val locatedEnd = locateField(nodes, endLabel)
+            start = locatedStart
+            end = locatedEnd
+            log("$tag window attempt=$attempt start " + describeChoice(startLabel, locatedStart) + " end " + describeChoice(endLabel, locatedEnd))
+            if (locatedStart != null && locatedEnd != null) {
+                return flow.textOf(locatedStart.node) to flow.textOf(locatedEnd.node)
+            }
+            runCatching { flow.ui.scroll(forward = locatedStart != null, fraction = NUDGE_FRACTION) }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        return (start?.let { location -> flow.textOf(location.node) }) to (end?.let { location -> flow.textOf(location.node) })
+    }
+
+    /** One resolved (or absent) field as the window log prints it. */
+    private fun describeChoice(
+        label: String,
+        location: FieldLocation?,
+    ): String =
+        if (location == null) {
+            "label=[$label] field=ABSENT"
+        } else {
+            "label=[$label] basis=" + location.basis + " labelBounds=" + location.labelBounds +
+                " fieldBounds=" + location.fieldBounds + " text=[" + flow.textOf(location.node) + "]"
+        }
 
     /** Zero when the two rects share a row band, else the distance between the facing edges. */
     private fun verticalGap(
@@ -1576,8 +1713,14 @@ internal class P807Q2Flow3Ui(
         /** The bounded text wait one click's effect probe pays, so a probe never blocks a channel. */
         const val EFFECT_WAIT_MILLIS = 2_000L
 
-        /** The bounded wait one committed report window's landed line may take (a database read). */
-        const val COMMIT_WAIT_MILLIS = 10_000L
+        /** The bounded same-screen wait one committed window's resolved period line may take. */
+        const val PERIOD_LINE_WAIT_MILLIS = 3_000L
+
+        /** How many small forward nudges ONE commit may spend reaching that line (never a full seek). */
+        const val PERIOD_LINE_SCROLLS = 3
+
+        /** How many fresh trees the custom window's pair may be read from before it answers absent. */
+        const val WINDOW_READ_ATTEMPTS = 3
 
         /** The UI poll interval (the frozen flow-1 `POLL_MILLIS` value). */
         const val POLL_MILLIS = 500L
