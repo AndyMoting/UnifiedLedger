@@ -644,6 +644,9 @@ internal class P807Q2Flow3Ui(
     /** The last calendar-step attempt's own reading; [calendarStepReport] hands it to the caller. */
     private var lastCalendarStepReport: String = "channel=none"
 
+    /** The last 返回 attempt's own reading; [backStepReport] hands it to the caller. */
+    private var lastBackReport: String = "channel=none"
+
     // ---------------------------------------------------------------- navigation
 
     fun launch() {
@@ -1012,15 +1015,112 @@ internal class P807Q2Flow3Ui(
     fun openRowDetail(headline: String): Boolean = clickVerifiedExact("openRowDetail", headline) { hasExactText(P807Q2Flow3Facts.DETAIL_TITLE) }
 
     /**
-     * Clicks the surface's own 返回 and proves the caller's [effect]. The effect is the CALLER's
-     * predicate on purpose: a return lands on a surface whose scroll may be restored, so the marker
-     * that proves it must be one this step can see from wherever the return put it — and a wrong
-     * marker would make the retries click a second 返回 that leaves the intended surface.
+     * L10's first 返回: the transaction detail closes onto the SAME day detail.
+     *
+     * ONE ACTIVATION, FACE-UNIQUE EFFECT — both are required. Run `45717583573` retried this 返回 with
+     * the generic click family: round 0's semantic click already popped the detail (`actionClick=true`),
+     * the 2.1 s probe missed the new surface, the coordinate fallback popped a SECOND time onto the
+     * calendar, and because the effect was the row headline — which HOME's flow list also prints
+     * (`P503OverviewScreen.kt:307-324`) — round 1 "succeeded" on HOME and the next assertion waited
+     * there. So:
+     * - [backOnce] sends the action AT MOST ONCE (a second 返回 always pops another surface and cannot
+     *   be recovered);
+     * - the effect names the day detail's OWN markers: [P807Q2Flow3Facts.DRILLDOWN_TITLE] (`报表明细`,
+     *   `P503ReportDrilldownScreen.kt:71`), [P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE] (`共 1 笔明细`,
+     *   `:143`) and the header prefix [P807Q2Flow3Facts.DAY_DETAIL_PREFIX] (`2026-11-20 明细`,
+     *   `P806DrilldownPresentation.kt:97-105`). None of the three is printed by HOME, the calendar or
+     *   the read-only detail, and the headline is deliberately NOT part of the effect.
      */
-    fun backVerified(
+    fun backToDayDetail(): Boolean =
+        backOnce(
+            step = "backToDayDetail",
+            expect = P807Q2Flow3Facts.DRILLDOWN_TITLE + "+" + P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE + "+" + P807Q2Flow3Facts.DAY_DETAIL_PREFIX,
+        ) {
+            hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE) && hasExactText(P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE) && hasPrefixText(P807Q2Flow3Facts.DAY_DETAIL_PREFIX)
+        }
+
+    /**
+     * L10's second 返回: the day detail closes onto the SAME calendar month.
+     *
+     * Face-unique for the same reason: [P807Q2Flow3Facts.CALENDAR_TITLE] alone is NOT enough (HOME's
+     * own entry chip prints `收支日历`, `P8HomeFlow.kt:277`), so the effect pairs it with the calendar
+     * header's [P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL] (`2026年11月`, `p806CalendarMonthLabel`,
+     * `P503CalendarScreen.kt:75`; HOME prints `2026-11`, a different literal). The old NEGATIVE
+     * predicate (`!报表明细 && !交易详情`) is gone: HOME satisfies it, so it proved nothing.
+     */
+    fun backToCalendar(): Boolean =
+        backOnce(
+            step = "backToCalendar",
+            expect = P807Q2Flow3Facts.CALENDAR_TITLE + "+" + P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL,
+        ) {
+            hasExactText(P807Q2Flow3Facts.CALENDAR_TITLE) && hasExactText(P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL)
+        }
+
+    /**
+     * Sends the surface's own 返回 AT MOST ONCE and waits for [effect] in a bounded window.
+     *
+     * The pre-check follows [homeMonthStepPrevious]'s `already-first-month` rule: when the target face
+     * is ALREADY showing, no click is sent (`already-on-target`), because a click there would pop a
+     * surface the caller never asked to leave. [backStepReport] carries the face before the tap,
+     * whether the action was sent, the face read at the end and every distinct face seen while waiting
+     * — the readings that tell "no click", "one surface too far" and "the product did not move" apart.
+     */
+    private fun backOnce(
         step: String,
+        expect: String,
         effect: () -> Boolean,
-    ): Boolean = clickVerifiedExact(step, P807Q2Flow3Facts.BACK, effect)
+    ): Boolean {
+        val before = faceMarkers()
+        if (effect()) {
+            lastBackReport = "channel=activate sent=[false] faceBefore=[$before] expect=[$expect] faceAfter=[$before] reason=[already-on-target]"
+            log("$tag back step=$step already-on-target face=[$before]")
+            return true
+        }
+        val sent = activateOnce(step, P807Q2Flow3Facts.BACK)
+        log("$tag back step=$step channel=activate sent=$sent faceBefore=[$before] expect=[$expect]")
+        if (!sent) {
+            lastBackReport = "channel=activate sent=[false] faceBefore=[$before] expect=[$expect] faceAfter=[$before]"
+            flow.dumpUiSnapshot("$step:not-sent")
+            return false
+        }
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + BACK_WAIT_MILLIS
+        val seen = LinkedHashSet<String>()
+        while (SystemClock.elapsedRealtime() < deadline) {
+            refreshTreeForRead()
+            if (effect()) {
+                val elapsedMs = SystemClock.elapsedRealtime() - started
+                lastBackReport = "channel=activate sent=[true] faceBefore=[$before] expect=[$expect] faceAfter=[$expect] elapsed=[$elapsedMs]ms"
+                log("$tag back step=$step channel=activate effect=true after=${elapsedMs}ms")
+                return true
+            }
+            seen += faceMarkers()
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        val faceAfter = faceMarkers()
+        val seenText = seen.joinToString("|")
+        lastBackReport = "channel=activate sent=[true] faceBefore=[$before] expect=[$expect] faceAfter=[$faceAfter] seen=[$seenText]"
+        log("$tag back step=$step channel=activate effect=false faceAfter=[$faceAfter] seen=[$seenText]")
+        return false
+    }
+
+    /**
+     * The last 返回 attempt's own reading — the face before, whether the action was sent, the face at
+     * the end, and every distinct face seen while waiting — for the caller's failure message.
+     */
+    fun backStepReport(): String = lastBackReport
+
+    /** A deduped fingerprint of the FACE the current tree shows, built from literals one face carries. */
+    private fun faceMarkers(): String {
+        val markers = ArrayList<String>()
+        if (hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE)) markers += P807Q2Flow3Facts.DRILLDOWN_TITLE
+        if (hasExactText(P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE)) markers += P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE
+        if (hasExactText(P807Q2Flow3Facts.DETAIL_TITLE)) markers += P807Q2Flow3Facts.DETAIL_TITLE
+        if (hasExactText(P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL)) markers += P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL
+        if (hasExactText(P807Q2Flow3Facts.REPORT_HEADER)) markers += P807Q2Flow3Facts.REPORT_HEADER
+        if (hasExactText(P807Q2Flow3Facts.TAB_HOME)) markers += P807Q2Flow3Facts.TAB_HOME
+        return if (markers.isEmpty()) "none" else markers.joinToString(",")
+    }
 
     // ---------------------------------------------------------------- text fields
 
@@ -2002,6 +2102,9 @@ internal class P807Q2Flow3Ui(
 
         /** How long the calendar's ONE next-month action may take to re-title the header. */
         const val MONTH_STEP_WAIT_MILLIS = 10_000L
+
+        /** How long one 返回 may take to land its own face (a local pop, not a database read). */
+        const val BACK_WAIT_MILLIS = 10_000L
 
         /** How many fresh trees the custom window's pair may be read from before it answers absent. */
         const val WINDOW_READ_ATTEMPTS = 3

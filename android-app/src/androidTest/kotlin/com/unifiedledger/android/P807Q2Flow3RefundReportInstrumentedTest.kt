@@ -494,8 +494,8 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             ui,
             "backToDayDetail",
             "the first 返回 must land on the same day detail",
-            ui.backVerified("backToDayDetail") { ui.hasExactText(headline) },
-        )
+            ui.backToDayDetail(),
+        ) { ui.backStepReport() }
         ui.scrollBackTo(facts.DAY_DETAIL_PREFIX)
         assertStep(
             ui,
@@ -507,8 +507,8 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             ui,
             "backToCalendar",
             "the second 返回 must close the day detail",
-            ui.backVerified("backToCalendar") { !ui.hasExactText(facts.DRILLDOWN_TITLE) && !ui.hasExactText(facts.DETAIL_TITLE) },
-        )
+            ui.backToCalendar(),
+        ) { ui.backStepReport() }
         ui.scrollBackTo(facts.CALENDAR_TITLE)
         assertStep(
             ui,
