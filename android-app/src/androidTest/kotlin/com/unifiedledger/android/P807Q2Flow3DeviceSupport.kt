@@ -263,6 +263,13 @@ private const val REFUND_CANDIDATE_PAGE_SIZE = 50
 private val MONTH_LABEL = Regex("\\d{4}-\\d{2}")
 
 /**
+ * The calendar header's own month title shape: `p806CalendarMonthLabel` prints
+ * `"${month.year}年${month.month.ordinal + 1}月"` (`P806CalendarPresentation.kt:49`), so only a
+ * `YYYY年M月` text is that header — the HOME row's `YYYY-MM` is a different literal and surface.
+ */
+private val CALENDAR_MONTH_LABEL = Regex("\\d{4}年\\d{1,2}月")
+
+/**
  * The confirmation page's frozen occurred-at text, mirroring `occurredAtDisplayText`
  * (`OccurredAtPicker.kt:54-58`): the Shanghai wall clock, the `（UTC+8）` annotation and the UTC ISO
  * string, and only the wall clock for dates whose offset the annotation cannot describe.
@@ -634,6 +641,9 @@ internal class P807Q2Flow3Ui(
     private val tag = P807Q2Flow3Facts.PREFIX
     private val automation = instrumentation.uiAutomation
 
+    /** The last calendar-step attempt's own reading; [calendarStepReport] hands it to the caller. */
+    private var lastCalendarStepReport: String = "channel=none"
+
     // ---------------------------------------------------------------- navigation
 
     fun launch() {
@@ -756,28 +766,86 @@ internal class P807Q2Flow3Ui(
 
     /**
      * The calendar's own next-month step (`P503CalendarScreen.kt:79`): `TextButton(onClick = {
-     * onShiftMonth(1) })` — ALWAYS enabled, `+1`, and with no domain check
-     * (`P806CalendarPresentation.kt:74-77`), so it is NOT idempotent. A retried click skips a month,
-     * and `2026年11月` would never appear again: the leg would go red after a full device round, not
-     * pass falsely. The step is ONE-WAY for that reason: the calendar must already stand on its pinned
-     * first month, [activateOnce] sends the action at most once (a refusal is the failure, never a
-     * retry), and only then is the arrival label awaited in a wider, still bounded window. The effect
-     * stays the calendar's own title — the only reading that proves the CALENDAR moved (see
-     * [openCalendar]).
+     * onShiftMonth(1) })`, ALWAYS enabled, `+1`, and with no domain check
+     * (`P806CalendarPresentation.kt:74-77`), so it is NOT idempotent — a retried click skips a month and
+     * `2026年11月` never appears, i.e. the leg can only go red, never falsely green.
+     *
+     * THE STEP SENDS ONE COORDINATE TAP AND NEVER THE SEMANTIC CHANNEL. Run `45713101824` had
+     * `activate … channel=semantic accepted=true` on this very button and the header still read
+     * `2026年10月` ten seconds later, with no loading or failure copy: the handler never ran (the title
+     * is `p806CalendarMonthLabel(state.month)`, `P503CalendarScreen.kt:75`, so any `onShiftMonth(1)`
+     * would have re-titled it at once), while 30 lines earlier the same tree accepted a semantic click
+     * on `openCalendar` and worked. Run `45708517886` had the mirror case on the HOME `‹` TextButton:
+     * semantic accepted and inert, coordinate tap effective at 1014 ms. An accepted ACTION_CLICK on
+     * this stack therefore does not imply the composable's `onClick` ran. WHY is not proven; what is
+     * observed is that ONE injected tap on the button's own on-screen centre works, so with one-way
+     * semantics (no retry allowed) the coordinate channel is the one that can be afforded.
+     *
+     * The readings [calendarStepReport] carries are the whole point of the step: the target's shape,
+     * the calendar title before, the injected point and answer, every distinct title the open window
+     * showed, and the title at its end — which is what tells "no click", "a click elsewhere" and "the
+     * product did not react" apart next time.
      */
     fun calendarNextMonth(expectedMonthLabel: String): Boolean {
         if (!awaitExactText(P807Q2Flow3Facts.CALENDAR_MONTH_FIRST, timeoutMillis = MONTH_ROW_TIMEOUT_MILLIS)) {
+            lastCalendarStepReport = "channel=coordinate calMonthBefore=[none] calMonthAfter=[none] injected=[false] target=[absent]"
             log("$tag calendar step=next ready=false absent=[${P807Q2Flow3Facts.CALENDAR_MONTH_FIRST}] surface=[" + flow.surfaceTitle() + "]")
             flow.dumpUiSnapshot("calendarNextMonth:not-ready")
             return false
         }
-        if (!activateOnce("calendarNextMonth", P807Q2Flow3Facts.MONTH_NEXT)) {
-            log("$tag calendar step=next sent=false target=[${P807Q2Flow3Facts.MONTH_NEXT}] surface=[" + flow.surfaceTitle() + "]")
-            flow.dumpUiSnapshot("calendarNextMonth:not-sent")
+        refreshTreeForRead()
+        val label = P807Q2Flow3Facts.MONTH_NEXT
+        val before = calendarMonthLabel() ?: "none"
+        val target = flow.findAppNode { node -> flow.textOf(node) == label || flow.descriptionOf(node) == label }
+        val bounds = target?.let { node -> flow.bounds(node) }
+        if (target == null || bounds == null || !isOnScreen(bounds)) {
+            lastCalendarStepReport = "channel=coordinate calMonthBefore=[$before] calMonthAfter=[$before] injected=[false] target=[absent:$bounds]"
+            log("$tag calendar step=next target=[$label] absent bounds=$bounds calMonthBefore=[$before] surface=[" + flow.surfaceTitle() + "]")
+            flow.dumpUiSnapshot("calendarNextMonth:target-absent")
             return false
         }
-        return awaitExactText(expectedMonthLabel, timeoutMillis = MONTH_STEP_WAIT_MILLIS)
+        val point = bounds.centerX() to bounds.centerY()
+        val injected = runCatching { tapAt(point) }.isSuccess
+        log("$tag calendar step=next channel=coordinate target=" + describe(target) + " point=(" + point.first + "," + point.second + ") injected=$injected calMonthBefore=[$before]")
+        if (!injected) {
+            lastCalendarStepReport = "channel=coordinate calMonthBefore=[$before] calMonthAfter=[$before] injected=[false] point=(" + point.first + "," + point.second + ")"
+            flow.dumpUiSnapshot("calendarNextMonth:not-injected")
+            return false
+        }
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + MONTH_STEP_WAIT_MILLIS
+        val seen = LinkedHashSet<String>()
+        var after = before
+        while (SystemClock.elapsedRealtime() < deadline) {
+            refreshTreeForRead()
+            val month = calendarMonthLabel()
+            if (month != null) {
+                seen += month
+                after = month
+            }
+            if (month == expectedMonthLabel) {
+                val seenText = seen.joinToString("|")
+                val elapsedMs = SystemClock.elapsedRealtime() - started
+                lastCalendarStepReport = "channel=coordinate calMonthBefore=[$before] calMonthAfter=[$month] injected=[true] seen=[$seenText] elapsed=[$elapsedMs]ms"
+                log("$tag calendar step=next channel=coordinate calMonthAfter=[$month] after=${elapsedMs}ms")
+                return true
+            }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        val seenText = seen.joinToString("|")
+        lastCalendarStepReport = "channel=coordinate calMonthBefore=[$before] calMonthAfter=[$after] injected=[true] seen=[$seenText]"
+        log("$tag calendar step=next channel=coordinate calMonthAfter=[$after] seen=[$seenText]")
+        return false
     }
+
+    /**
+     * The last calendar-step attempt's own reading — `channel`, the calendar title before and after, the
+     * injection answer and every distinct title the window showed — for the caller's failure message.
+     */
+    fun calendarStepReport(): String = lastCalendarStepReport
+
+    /** The calendar header's own month title (`2026年10月`, `p806CalendarMonthLabel`), or null. */
+    private fun calendarMonthLabel(): String? = visibleTexts().firstOrNull { text -> CALENDAR_MONTH_LABEL.matches(text) }
 
     /**
      * The month row's reading for a failure message: the label as rendered, whether `‹` is present and
@@ -787,7 +855,12 @@ internal class P807Q2Flow3Ui(
     fun monthRowReport(): String {
         val label = monthLabel() ?: "none"
         val previousNode = flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow3Facts.MONTH_PREVIOUS }
-        val previous = if (previousNode == null) "absent" else if (monthStepEnabled(P807Q2Flow3Facts.MONTH_PREVIOUS)) "enabled" else "disabled"
+        val previous =
+            when {
+                previousNode == null -> "absent"
+                monthStepEnabled(P807Q2Flow3Facts.MONTH_PREVIOUS) -> "enabled"
+                else -> "disabled"
+            }
         return "month=[$label] previous=$previous surface=[" + flow.surfaceTitle() + "]"
     }
 

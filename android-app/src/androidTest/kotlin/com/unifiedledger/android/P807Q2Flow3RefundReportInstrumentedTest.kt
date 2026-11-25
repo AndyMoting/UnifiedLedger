@@ -423,7 +423,7 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "calendarNextMonth",
             "the calendar's own next step must reach the arrival month [${facts.CALENDAR_MONTH_ARRIVAL}]",
             ui.calendarNextMonth(facts.CALENDAR_MONTH_ARRIVAL),
-        )
+        ) { ui.calendarStepReport() }
         assertStep(
             ui,
             "calendarArrivalMonth",
