@@ -527,16 +527,14 @@ internal class P807Q2Flow3Ledger(
      * observable yet", never "no transaction was added" — reading it as an empty ledger would turn
      * one busy moment of the app into a false negative about the write.
      */
-    fun snapshotWhenLeasable(): P807Q2Flow2Snapshot? =
-        ledgerProcessHolderFor(context)?.ledger?.withFacade { facade, _ -> p807Q2Flow2ReadSnapshot(facade) }
+    fun snapshotWhenLeasable(): P807Q2Flow2Snapshot? = ledgerProcessHolderFor(context)?.ledger?.withFacade { facade, _ -> p807Q2Flow2ReadSnapshot(facade) }
 
     /**
      * [addedTransaction] in the same repeatable shape: `null` when the lease is busy, while an
      * unreadable graph (InvalidState/Unavailable) still fails loudly inside the flow-1 helper — the
      * two outcomes this flow must never conflate are "could not look" and "nothing landed".
      */
-    fun addedTransactionWhenLeasable(knownTransactionIds: Set<String>): TransactionDetail? =
-        ledgerProcessHolderFor(context)?.ledger?.withFacade { facade, _ -> p807Q2Flow1AddedTransaction(facade, knownTransactionIds) }
+    fun addedTransactionWhenLeasable(knownTransactionIds: Set<String>): TransactionDetail? = ledgerProcessHolderFor(context)?.ledger?.withFacade { facade, _ -> p807Q2Flow1AddedTransaction(facade, knownTransactionIds) }
 
     /** The one transaction the flow added, resolved by difference against the seed's known ids. */
     fun addedTransaction(knownTransactionIds: Set<String>): TransactionDetail = accessor.read { facade -> p807Q2Flow1AddedTransaction(facade, knownTransactionIds) }
