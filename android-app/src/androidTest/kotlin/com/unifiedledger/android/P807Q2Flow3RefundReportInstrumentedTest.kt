@@ -208,6 +208,10 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "${facts.PREFIX} one field edit must bring 继续 back",
             ui.setFieldByLabel(facts.LABEL_AMOUNT_CNY, facts.LEGAL_AMOUNT_TEXT),
         )
+        // Task book section 5.3: the bottom action is reached with the soft keyboard dismissed. The
+        // field input above hides it BEFORE its own typing only, so the IME it opened can still sit
+        // over 继续 here.
+        ui.hideKeyboard()
         assertTrue(
             "${facts.PREFIX} the full-cap amount must be accepted and open the confirmation page",
             ui.clickVerifiedExact("proceedLegal", facts.CONTINUE) { ui.hasExactText(facts.CONFIRM_TITLE) },
