@@ -1,5 +1,6 @@
 package com.unifiedledger.android
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -12,6 +13,7 @@ import com.unifiedledger.application.P806CalendarView
 import com.unifiedledger.application.P806CurrencyView
 import com.unifiedledger.application.P806PeriodKind
 import com.unifiedledger.application.P806ReportView
+import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.domain.TransactionKind
 import kotlinx.datetime.YearMonth
 import org.junit.Assert.assertEquals
@@ -48,7 +50,11 @@ import org.junit.runner.RunWith
  *    back on the refund surface with 退款金额超过原交易的支出金额, 继续 is gone, and the whole
  *    formal read — versions included — plus all four faces are unchanged.
  * 4. The legal refund: one field edit brings 继续 back, 21.00 is accepted, the confirmation page
- *    prints its four rows and the pinned time, and the confirm answers 支出已创建.
+ *    prints its four rows and the pinned time, the submit is activated AT MOST ONCE, and the ledger
+ *    inside a bounded window carries exactly one new transaction — kind REFUND_RECEIPT, occurred-at
+ *    and statistics-at both the pinned instant. The 支出已创建 notice is a logged signal only: it is
+ *    a transient render, and device round 3 (run `45620555293`) showed a notice predicate calling a
+ *    landed write "click-not-applied" and re-clicking a submit that had already committed.
  * 5. The ledger face: exactly one new transaction, kind REFUND_RECEIPT, occurred-at ==
  *    statistics-at == the pinned instant, two legs (+21.00 on the arrival account, -21.00 on the
  *    inherited expense account), the seeded transactions, postings, versions and candidates
@@ -228,9 +234,41 @@ class P807Q2Flow3RefundReportInstrumentedTest {
                 ui.awaitAnywhereText(line, seek = false),
             )
         }
-        assertTrue(
-            "${facts.PREFIX} the confirmed refund must answer its created notice",
-            ui.clickVerifiedExact("confirmLegal", facts.CONFIRM_SUBMIT) { ui.hasExactText(facts.RESULT_CREATED) },
+        // THE SUBMIT IS ACTIVATED AT MOST ONCE, and the judgement is the LEDGER, never the notice.
+        // Device round 3 (run `45620555293`) had the write already committed while the criterion
+        // watched 支出已创建: three rounds probed a transient render, each reported
+        // click-not-applied, and the retries re-clicked a submit that had written. So the action is
+        // sent once ([P807Q2Flow3Ui.activateOnce] proves the target was on screen and the action was
+        // accepted), the notice is only logged, and the leg passes on the new ledger transaction.
+        val submitSent = ui.activateOnce("confirmLegal", facts.CONFIRM_SUBMIT)
+        if (!submitSent) {
+            throw AssertionError(
+                "${facts.PREFIX} the confirm must be activated once: no submit action was sent " +
+                    "(surface=[" + ui.surfaceTitle() + "])",
+            )
+        }
+        log(
+            if (ui.awaitExactText(facts.RESULT_CREATED, timeoutMillis = CREATED_NOTICE_WINDOW_MILLIS)) {
+                "${facts.PREFIX} the created notice ${facts.RESULT_CREATED} was rendered (log only: the ledger is the judgement)"
+            } else {
+                "${facts.PREFIX} the created notice ${facts.RESULT_CREATED} was not rendered (log only: the ledger is the judgement)"
+            },
+        )
+        val landed = awaitAddedTransaction(ledger, s0.formal.transactionTotal, seeded.knownTransactionIds, ui, log)
+        assertEquals(
+            "${facts.PREFIX} the confirmed refund must land on the ledger as a REFUND_RECEIPT",
+            TransactionKind.REFUND_RECEIPT,
+            landed.kind,
+        )
+        assertEquals(
+            "${facts.PREFIX} the confirmed refund's occurred-at must be the pinned arrival instant",
+            facts.ARRIVAL_INSTANT,
+            landed.occurredAt,
+        )
+        assertEquals(
+            "${facts.PREFIX} the confirmed refund's statistics-at must be the pinned arrival instant",
+            facts.ARRIVAL_INSTANT,
+            landed.statisticsAt,
         )
 
         // ---------------------------------------------------------------- L5: the ledger's own read face
@@ -465,6 +503,87 @@ class P807Q2Flow3RefundReportInstrumentedTest {
         view.days.singleOrNull { day -> day.date == P807Q2Flow3Facts.ARRIVAL_DAY }
             ?: error("the calendar of ${view.month} must carry the arrival day ${P807Q2Flow3Facts.ARRIVAL_DAY}")
 
+    /**
+     * L4's judgement: a LOUD, bounded ledger read-back of the one transaction the confirm must add.
+     *
+     * The window retries only the reading that shows NO new transaction: the confirm's write is
+     * committed on the app's own coroutine, so a read can legitimately arrive before it, and the
+     * operation lease is acquired with `tryLock`, so a read issued while the app is mid-operation
+     * answers nothing at all ([P807Q2Flow3Ledger.snapshotWhenLeasable] reports that as null rather
+     * than as an empty ledger). The FIRST read that shows one new transaction ends the window and
+     * resolves that transaction through the flow-1 difference helper, so a landed-but-unexpected row
+     * fails on the caller's own assertions at once instead of idling to the deadline.
+     *
+     * The failure names exactly what the next round needs: the baseline and the last good total, how
+     * many reads never got a lease, the candidate rows and the visible surface, and the window DUMP —
+     * the evidence that tells a lost write apart from a lost screen.
+     */
+    private fun awaitAddedTransaction(
+        ledger: P807Q2Flow3Ledger,
+        baselineTransactionTotal: Int,
+        knownTransactionIds: Set<String>,
+        ui: P807Q2Flow3Ui,
+        log: (String) -> Unit,
+    ): TransactionDetail {
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + LEDGER_LANDING_TIMEOUT_MILLIS
+        var reads = 0
+        var withoutLease = 0
+        var observed = baselineTransactionTotal
+        while (SystemClock.elapsedRealtime() < deadline) {
+            reads++
+            val snapshot = ledger.snapshotWhenLeasable()
+            if (snapshot == null) {
+                withoutLease++
+            } else {
+                observed = snapshot.formal.transactionTotal
+                if (observed == baselineTransactionTotal + 1) {
+                    val added = ledger.addedTransactionWhenLeasable(knownTransactionIds)
+                    if (added != null) {
+                        log(
+                            "${P807Q2Flow3Facts.PREFIX} the confirm's write read back after " +
+                                (SystemClock.elapsedRealtime() - started) + "ms reads=" + reads + " withoutLease=" + withoutLease,
+                        )
+                        return added
+                    }
+                    withoutLease++
+                } else if (observed > baselineTransactionTotal + 1) {
+                    break
+                }
+            }
+            SystemClock.sleep(LEDGER_POLL_MILLIS)
+        }
+        val elapsed = SystemClock.elapsedRealtime() - started
+        val dump = ui.dump("confirmLegal:no-ledger-write")
+        val truncation =
+            if (dump.length > FAILURE_DUMP_CHARS) {
+                "…(dump truncated at $FAILURE_DUMP_CHARS of ${dump.length} chars; the whole DUMP is in logcat)"
+            } else {
+                ""
+            }
+        throw AssertionError(
+            "${P807Q2Flow3Facts.PREFIX} the confirmed refund must add exactly ONE ledger transaction within " +
+                LEDGER_LANDING_TIMEOUT_MILLIS + "ms: baseline=" + baselineTransactionTotal + " lastRead=" + observed +
+                " reads=" + reads + " withoutLease=" + withoutLease + " elapsed=" + elapsed + "ms " +
+                "candidates=[" + candidateRowsForFailure(ledger) + "] surface=[" + ui.surfaceTitle() + "] " +
+                "dump=" + dump.take(FAILURE_DUMP_CHARS) + truncation,
+        )
+    }
+
+    /** The candidate rows a failure message carries: an unavailable or unreadable page is NAMED, never a zero. */
+    private fun candidateRowsForFailure(ledger: P807Q2Flow3Ledger): String =
+        runCatching {
+            when (val result = ledger.refundCandidates()) {
+                is ManualRefundCandidatesResult.Loaded ->
+                    if (result.candidates.isEmpty()) {
+                        "empty"
+                    } else {
+                        result.candidates.joinToString(";") { candidate -> p807Q2Flow3CandidateRowText(candidate) }
+                    }
+                ManualRefundCandidatesResult.Unavailable -> "unavailable"
+            }
+        }.getOrElse { failure -> "unreadable(" + failure.message + ")" }
+
     /** The seeded expense's own month, which the refund must leave untouched. */
     private fun assertSeededOctoberFace(view: P806ReportView) {
         val row = cnyRow(view)
@@ -503,5 +622,17 @@ class P807Q2Flow3RefundReportInstrumentedTest {
 
         /** The candidate read is asynchronous (a `LaunchedEffect`); the wait is bounded, never open. */
         const val CANDIDATE_TIMEOUT_MILLIS = 60_000L
+
+        /** How much of a failure-time DUMP the assertion message carries (the whole one is in logcat). */
+        const val FAILURE_DUMP_CHARS = 700
+
+        /** How long the created notice may take to render: a logged signal only, never a judgement. */
+        const val CREATED_NOTICE_WINDOW_MILLIS = 2_000L
+
+        /** How long the ledger may take to show the confirmed write, end to end. */
+        const val LEDGER_LANDING_TIMEOUT_MILLIS = 30_000L
+
+        /** The ledger poll interval inside that window (a bounded await, never a fixed sleep). */
+        const val LEDGER_POLL_MILLIS = 500L
     }
 }

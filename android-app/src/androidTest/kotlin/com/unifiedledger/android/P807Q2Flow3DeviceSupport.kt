@@ -511,7 +511,7 @@ internal fun p807Q2Flow3BalancesAfter(
  * read, so a degraded graph must stop the case instead of silently passing.
  */
 internal class P807Q2Flow3Ledger(
-    context: Context,
+    private val context: Context,
     private val log: (String) -> Unit,
 ) {
     private val tag = P807Q2Flow3Facts.PREFIX
@@ -519,6 +519,24 @@ internal class P807Q2Flow3Ledger(
 
     /** The formal + version face of the launched ledger, through the flow-1 accessor's own lease. */
     fun snapshot(): P807Q2Flow2Snapshot = accessor.read(::p807Q2Flow2ReadSnapshot)
+
+    /**
+     * [snapshot] in the shape a bounded POLL can repeat: the operation lease is acquired with
+     * `tryLock` (`LedgerRuntimeOwner.kt:393-415`), so a read issued while the app is mid-operation
+     * answers nothing instead of blocking or failing the case. `null` therefore means "not
+     * observable yet", never "no transaction was added" — reading it as an empty ledger would turn
+     * one busy moment of the app into a false negative about the write.
+     */
+    fun snapshotWhenLeasable(): P807Q2Flow2Snapshot? =
+        ledgerProcessHolderFor(context)?.ledger?.withFacade { facade, _ -> p807Q2Flow2ReadSnapshot(facade) }
+
+    /**
+     * [addedTransaction] in the same repeatable shape: `null` when the lease is busy, while an
+     * unreadable graph (InvalidState/Unavailable) still fails loudly inside the flow-1 helper — the
+     * two outcomes this flow must never conflate are "could not look" and "nothing landed".
+     */
+    fun addedTransactionWhenLeasable(knownTransactionIds: Set<String>): TransactionDetail? =
+        ledgerProcessHolderFor(context)?.ledger?.withFacade { facade, _ -> p807Q2Flow1AddedTransaction(facade, knownTransactionIds) }
 
     /** The one transaction the flow added, resolved by difference against the seed's known ids. */
     fun addedTransaction(knownTransactionIds: Set<String>): TransactionDetail = accessor.read { facade -> p807Q2Flow1AddedTransaction(facade, knownTransactionIds) }
@@ -600,7 +618,8 @@ internal class P807Q2Flow3Ledger(
  * The flow's refund-form, report, calendar and day-detail driver. The generic app discipline
  * (launch, seek, click, absence sampling, keyboard hide, failure dumps) stays in the frozen
  * [P807Q2Flow1Ui]; this class adds the label-anchored field input, the structurally anchored radio
- * rows and the effect-verified clicks those surfaces need.
+ * rows, the effect-verified clicks those surfaces need, and the ONE-WAY activation ([activateOnce])
+ * the ledger-judged submit requires.
  */
 internal class P807Q2Flow3Ui(
     private val flow: P807Q2Flow1Ui,
@@ -1019,9 +1038,8 @@ internal class P807Q2Flow3Ui(
         flow.settle()
     }
 
-    fun dump(label: String) {
-        flow.dumpUiSnapshot(label)
-    }
+    /** Writes the failure-time picture (chunked into logcat) and returns it whole for the message. */
+    fun dump(label: String): String = flow.dumpUiSnapshot(label)
 
     // ---------------------------------------------------------------- verified clicks
 
@@ -1047,6 +1065,58 @@ internal class P807Q2Flow3Ui(
             log("$tag click-failed step=$step target=[$text] " + anchorReport(step, text, null))
         }
         return clicked
+    }
+
+    // ---------------------------------------------------------------- one-way activations
+
+    /**
+     * Activates the action whose exact text or description is [text] AT MOST ONCE and reports whether
+     * the action was actually SENT. The rule belongs to the ledger: a confirm that may already have
+     * written must never be clicked twice, so this primitive repeats only the LOOKUP, never the
+     * action — a re-read of the screen is safe, a second submit is a second write.
+     *
+     * The two evidences are deliberately separate layers. The ON-SCREEN layer is a target found after
+     * one bounded re-focus whose bounds lie inside the display AND the app window. The ACTION-SENT
+     * layer is the [clickVerified] family's own channel answer: ACTION_CLICK accepted by the target or
+     * one of its clickable ancestors ([clickSemantic]); only a REFUSED semantic action escalates to one
+     * coordinate tap on that same on-screen centre, because tapping after an ACCEPTED click is exactly
+     * the second write this method exists to prevent. `false` means NO action was sent at all: the
+     * caller fails on that instead of retrying, which is the fail-closed side of the rule.
+     */
+    fun activateOnce(
+        step: String,
+        text: String,
+    ): Boolean {
+        repeat(ACTIVATION_LOOKUP_ATTEMPTS) { attempt ->
+            refocusAnchor(text)
+            val target = flow.findAppNode { node -> matchesExact(node, text) }
+            val bounds = target?.let { node -> flow.bounds(node) }
+            if (target != null && bounds != null && isOnScreen(bounds)) {
+                val point = bounds.centerX() to bounds.centerY()
+                val accepted = clickSemantic(target)
+                log("$tag activate step=$step target=[$text] channel=semantic accepted=$accepted onScreen=true bounds=$bounds")
+                if (accepted) return true
+                val tapped =
+                    try {
+                        tapAt(point)
+                        true
+                    } catch (failure: IllegalStateException) {
+                        log("$tag activate step=$step target=[$text] channel=coordinate-target sent=false reason=[" + failure.message + "]")
+                        false
+                    }
+                if (tapped) {
+                    log("$tag activate step=$step target=[$text] channel=coordinate-target sent=true point=(" + point.first + "," + point.second + ")")
+                    return true
+                }
+                flow.dumpUiSnapshot("$step:not-injected")
+                return false
+            }
+            log("$tag activate step=$step attempt=$attempt target=[$text] sent=false reason=not-on-screen bounds=$bounds")
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        flow.dumpUiSnapshot("$step:absent")
+        log("$tag activate step=$step target=[$text] sent=false reason=never-on-screen " + anchorReport(step, text, null))
+        return false
     }
 
     /**
@@ -1474,6 +1544,9 @@ internal class P807Q2Flow3Ui(
 
         /** The selection/click retries (the frozen flow-1 `SELECTION_CLICK_ATTEMPTS` value). */
         const val SELECTION_ATTEMPTS = 3
+
+        /** How many times a one-way activation may LOOK for its target before it fails un-sent. */
+        const val ACTIVATION_LOOKUP_ATTEMPTS = 3
 
         /** How many field-input escalations one value may take. */
         const val FIELD_INPUT_ATTEMPTS = 3
