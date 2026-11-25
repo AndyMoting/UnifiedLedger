@@ -276,7 +276,10 @@ internal fun p807Q2Flow3LocalDateText(instant: Instant): String = instant.toLoca
  * (`P503ReportRegion.kt:189-201`) for every value this flow can meet: the refund's own legs are
  * `+/-2100`, so the `Long.MIN_VALUE` branch that function exists for is unreachable here.
  */
-internal fun p807Q2Flow3MinorText(minorUnits: Long, precision: Int): String {
+internal fun p807Q2Flow3MinorText(
+    minorUnits: Long,
+    precision: Int,
+): String {
     val sign = if (minorUnits < 0L) "-" else ""
     val magnitude = if (minorUnits < 0L) -minorUnits else minorUnits
     val digits = magnitude.toString()
@@ -325,7 +328,11 @@ internal fun p807Q2Flow3ReportLines(view: P806ReportView): List<String> {
         }
     lines += "period|" + periodFields
     lines += "counts|" + view.transactionCount + "|" + view.detailCount + "|" + view.futureTransactionCount
-    lines += "detailRows|" + view.detailPage.rows.map { row -> p807Q2Flow3RowKey(row) }.sorted().joinToString(";")
+    val detailRowKeys =
+        view.detailPage.rows
+            .map { row -> p807Q2Flow3RowKey(row) }
+            .sorted()
+    lines += "detailRows|" + detailRowKeys.joinToString(";")
     view.currencies.forEach { row ->
         lines +=
             "currency|" + row.currency.code + "|" + row.ordinaryIncomeMinorUnits + "|" + row.netExpenseMinorUnits +
@@ -349,7 +356,10 @@ private fun p807Q2Flow3CategoryFace(category: P806CategoryView): String =
 
 /** The exact positive/refund split of one category's currencies, as sorted strings. */
 private fun p807Q2Flow3TotalFace(totals: List<P806CategoryCurrencyTotal>): String =
-    totals.map { total -> total.currency.code + "|" + total.positiveMinorUnits + "|" + total.refundMinorUnits }.sorted().joinToString(",")
+    totals
+        .map { total -> total.currency.code + "|" + total.positiveMinorUnits + "|" + total.refundMinorUnits }
+        .sorted()
+        .joinToString(",")
 
 /**
  * The report lines the region must RENDER for [view], built from the authoritative payload with the
@@ -430,7 +440,11 @@ internal fun p807Q2Flow3DrilldownLines(view: P806DrilldownView): List<String> {
     val lines = mutableListOf<String>()
     lines += "window|" + view.window.startEpochNanos + "|" + view.window.endEpochNanos
     lines += "totalCount|" + view.totalCount
-    lines += "rows|" + view.page.rows.map { row -> p807Q2Flow3RowKey(row) }.sorted().joinToString(";")
+    val rowKeys =
+        view.page.rows
+            .map { row -> p807Q2Flow3RowKey(row) }
+            .sorted()
+    lines += "rows|" + rowKeys.joinToString(";")
     return lines
 }
 
@@ -438,8 +452,7 @@ internal fun p807Q2Flow3DrilldownLines(view: P806DrilldownView): List<String> {
  * One flow row's visible headline, mirroring `P503OverviewScreen.kt:307-308`: the effective kind, the
  * statistics instant and — only when the current version carries one — the note.
  */
-internal fun p807Q2Flow3RowHeadline(row: LedgerEntryRow): String =
-    row.kind.toString() + " · 统计 " + row.statisticsAt + (row.note?.let { note -> " · " + note } ?: "")
+internal fun p807Q2Flow3RowHeadline(row: LedgerEntryRow): String = row.kind.toString() + " · 统计 " + row.statisticsAt + (row.note?.let { note -> " · " + note } ?: "")
 
 /** One transaction's posting lines, mirroring `flowRowPostingLineText` (`P503LedgerViewPresentation.kt:431-437`). */
 internal fun p807Q2Flow3PostingLines(legs: List<TransactionDetailLeg>): List<String> =
@@ -666,8 +679,7 @@ internal class P807Q2Flow3Ui(
      * accepted effect is that same radio's `checked` state, which mirrors
      * `draft.originalTransactionId == candidate.transactionId` (`P503EditScreen.kt:494-497`).
      */
-    fun selectOriginalRow(rowText: String): Boolean =
-        selectRadioVerified("selectOriginalRow", rowText) { radioCheckedFor(rowText) }
+    fun selectOriginalRow(rowText: String): Boolean = selectRadioVerified("selectOriginalRow", rowText) { radioCheckedFor(rowText) }
 
     /**
      * Selects the arrival account row and proves it took through the row's own radio: the option is
@@ -710,12 +722,10 @@ internal class P807Q2Flow3Ui(
     // ---------------------------------------------------------------- day detail
 
     /** Opens the day cell whose accessibility text is [description] and proves the drilldown landed. */
-    fun openDayCell(description: String): Boolean =
-        clickVerifiedExact("openDayCell", description) { hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE) }
+    fun openDayCell(description: String): Boolean = clickVerifiedExact("openDayCell", description) { hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE) }
 
     /** Opens one flow row's read-only detail by its visible headline and proves the detail landed. */
-    fun openRowDetail(headline: String): Boolean =
-        clickVerifiedExact("openRowDetail", headline) { hasExactText(P807Q2Flow3Facts.DETAIL_TITLE) }
+    fun openRowDetail(headline: String): Boolean = clickVerifiedExact("openRowDetail", headline) { hasExactText(P807Q2Flow3Facts.DETAIL_TITLE) }
 
     /**
      * Clicks the surface's own 返回 and proves the caller's [effect]. The effect is the CALLER's

@@ -244,7 +244,7 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             P807Q2Flow1Facts.REFUNDABLE_EXPENSE_MINOR,
             arrivalLeg.amount.minorUnits,
         )
-        val expenseLeg = added.legs.singleOrNull { leg -> leg.accountId == DEFAULT_HIDDEN_EXPENSE_ACCOUNT_ID }
+        val expenseLeg = added.legs.singleOrNull { leg -> leg.accountId.value == DEFAULT_HIDDEN_EXPENSE_ACCOUNT_ID }
         checkNotNull(expenseLeg) { "${facts.PREFIX} the refund must reverse the inherited expense account" }
         assertEquals(
             "${facts.PREFIX} the inherited expense leg must reverse the same minor units",
