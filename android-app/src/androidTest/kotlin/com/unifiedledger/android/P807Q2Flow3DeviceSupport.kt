@@ -741,13 +741,21 @@ internal class P807Q2Flow3Ui(
     // ---------------------------------------------------------------- text fields
 
     /**
-     * Sets the field that belongs to [label] and VERIFIES the value landed. Compose renders an
-     * OutlinedTextField's label as its own text node while the editable area is an `EditText` node,
-     * so the field is the editable node nearest to the label — nearest rather than first, because a
-     * supporting text under the same field repeats the field's word (the sampler precedent,
-     * `tools/python/android_fontscale/sampler.py` `find_field_center`). The input path escalates
-     * inside one attempt exactly as the frozen flow-1 helper does: focus + SetText, then
-     * tap-to-focus, clear and inject the characters as key events; only a read-back counts.
+     * Sets the field that belongs to [label] and VERIFIES the value landed, judging every read AFTER a
+     * forced tree refresh. Compose renders an OutlinedTextField's label as its own text node while the
+     * editable area is an `EditText` node, so the field is the editable node nearest to the label —
+     * nearest rather than first, because a supporting text under the same field repeats the field's
+     * word (the sampler precedent, `tools/python/android_fontscale/sampler.py` `find_field_center`).
+     *
+     * WHY EVERY JUDGEMENT IS REFRESHED. `ACTION_SET_TEXT` can be accepted AND applied while the client
+     * accessibility cache keeps answering the PRE-write node for seconds: run `45615503912` polled the
+     * still-empty field for the whole 5.5 s window after an accepted write, declared `landed=false`,
+     * and fell back to key events. That fallback then typed into an editor the action had already
+     * filled — and because the clear length came from the same stale node (zero) the value became
+     * `99.9999.99`. Both halves are fixed here: a value is judged only after [refreshTreeForRead], and
+     * the key-event channel empties the editor before typing, from a blind but harmless delete count
+     * that no stale read can shrink. A field that already reads the target is a success, never a
+     * rewrite (so a re-run of this step is idempotent).
      */
     fun setFieldByLabel(
         label: String,
@@ -758,33 +766,94 @@ internal class P807Q2Flow3Ui(
         runCatching { flow.hideKeyboardIfShown() }
         runCatching { flow.seekApp(label) }
         repeat(FIELD_INPUT_ATTEMPTS) { attempt ->
+            refreshTreeForRead()
             val node = fieldForLabel(label)
             if (node == null) {
                 log("$tag setField label=[$label] attempt=$attempt field=absent surface=${flow.surfaceTitle()}")
                 flow.dumpUiSnapshot("setField:absent:$label")
                 return false
             }
-            log("$tag setField label=[$label] attempt=$attempt ${describeField(node)}")
+            val before = flow.textOf(node)
+            log("$tag setField label=[$label] attempt=$attempt before=[$before] ${describeField(node)}")
+            if (before == text) {
+                log("$tag setField label=[$label] attempt=$attempt landed=true via=already-set value=[$text]")
+                return true
+            }
             runCatching { node.performAction(AccessibilityNodeInfo.ACTION_FOCUS) }
             val arguments = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
             val accepted = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-            if (awaitFieldValue(label, text)) {
-                log("$tag setField label=[$label] accepted=$accepted landed=true via=action attempt=$attempt value=[$text]")
+            refreshTreeForRead()
+            runCatching { flow.settle() }
+            val afterAction = fieldText(label)
+            if (afterAction == text) {
+                log("$tag setField label=[$label] attempt=$attempt accepted=$accepted landed=true via=action afterRefresh=[$afterAction] value=[$text]")
                 return true
             }
-            log("$tag setField label=[$label] accepted=$accepted landed=false via=action attempt=$attempt; typing into the field")
-            flow.tap(node)
-            SystemClock.sleep(POLL_MILLIS)
-            clearFocusedField(flow.textOf(node).length)
-            val typed = typeTextEvents(text)
-            log("$tag setField label=[$label] typed=$typed attempt=$attempt value=[$text]")
-            if (awaitFieldValue(label, text)) {
-                log("$tag setField label=[$label] landed=true via=keys attempt=$attempt value=[$text]")
+            log("$tag setField label=[$label] attempt=$attempt accepted=$accepted landed=false via=action afterRefresh=[$afterAction]; clearing and typing")
+            if (typeIntoField(label, text)) {
+                log("$tag setField label=[$label] attempt=$attempt landed=true via=keys value=[$text]")
                 return true
             }
         }
         flow.dumpUiSnapshot("setField:$label")
         return false
+    }
+
+    /**
+     * The key-event channel: tap the field for focus, empty it, type the characters and verify after a
+     * refresh. Clearing first is not cosmetic — the value an earlier action already wrote but the tree
+     * could not show is exactly what turned `99.99` into `99.9999.99` in run `45615503912`. Returns
+     * whether the field reads back exactly [text]; a field that already reads it is left untouched.
+     */
+    private fun typeIntoField(
+        label: String,
+        text: String,
+    ): Boolean {
+        if (currentFieldText(label) == text) {
+            log("$tag setField label=[$label] keys skipped reason=already-set value=[$text]")
+            return true
+        }
+        val node = fieldForLabel(label) ?: return false
+        flow.tap(node)
+        SystemClock.sleep(POLL_MILLIS)
+        clearFieldToEmpty(label)
+        val typed = typeTextEvents(text)
+        log("$tag setField label=[$label] keys typed=$typed beforeVerify=[${fieldText(label)}] value=[$text]")
+        return awaitFieldValue(label, text)
+    }
+
+    /**
+     * Empties the field before typing. The delete count is `max(read length, [CLEAR_MIN_DELETES])` on
+     * purpose: the read is the very thing that can lie on this stack, and deleting past the end of an
+     * editor is a no-op, so the blind floor removes the whole `99.99` → `99.9999.99` class of failure
+     * without needing a correct length.
+     */
+    private fun clearFieldToEmpty(label: String) {
+        val existing = currentFieldText(label).orEmpty()
+        val deletes = maxOf(existing.length, CLEAR_MIN_DELETES)
+        log("$tag setField label=[$label] clear readLength=${existing.length} deletes=$deletes")
+        clearFocusedField(deletes)
+        SystemClock.sleep(POLL_MILLIS)
+    }
+
+    /**
+     * Forces the tree current before a field value is judged. The client accessibility cache answers
+     * the pre-write node until an event invalidates it (`AndroidScaleUi.kt:137-163`, the D-203
+     * signature), and only a MISS goes through that helper's forcing passes (`root.refresh()` with
+     * bypassCache, then the rate-limited D-208 reset, `:223-273`); a lookup of a PRESENT text is
+     * cache-served and refreshes nothing, which is why the sentinel is a guaranteed miss.
+     */
+    private fun refreshTreeForRead() {
+        flow.ui.has(REFRESH_SENTINEL)
+    }
+
+    /** The field's text from the CURRENT tree read (no refresh of its own), or null when absent. */
+    private fun fieldText(label: String): String? = fieldForLabel(label)?.let { node -> flow.textOf(node) }
+
+    /** The field's text after a forced refresh. */
+    private fun currentFieldText(label: String): String? {
+        refreshTreeForRead()
+        return fieldText(label)
     }
 
     /** Hides the soft keyboard while the platform still holds one (the frozen flow-1 window-list test). */
@@ -826,7 +895,12 @@ internal class P807Q2Flow3Ui(
     /** Whether [node] is a writable field on this stack. */
     private fun isEditable(node: AccessibilityNodeInfo): Boolean = node.isEditable || node.className?.toString()?.contains("EditText") == true
 
-    /** Waits until the field belonging to [label] carries [expected] (the input's observable effect). */
+    /**
+     * Waits until the field belonging to [label] carries [expected], forcing the tree current before
+     * EVERY poll: the editor's text lives in the client cache, so one stale read would otherwise turn
+     * a landed write into a false negative (run `45615503912` read the empty pre-write node for the
+     * whole window).
+     */
     private fun awaitFieldValue(
         label: String,
         expected: String,
@@ -834,6 +908,7 @@ internal class P807Q2Flow3Ui(
     ): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMillis
         while (SystemClock.elapsedRealtime() < deadline) {
+            refreshTreeForRead()
             if (fieldForLabel(label)?.let { node -> flow.textOf(node) } == expected) return true
             SystemClock.sleep(POLL_MILLIS)
         }
@@ -1405,6 +1480,9 @@ internal class P807Q2Flow3Ui(
 
         /** How long one written field value may take to read land. */
         const val FIELD_SETTLE_TIMEOUT_MILLIS = 5_000L
+
+        /** The blind delete floor of the key-event channel: deleting past an editor's end is a no-op. */
+        const val CLEAR_MIN_DELETES = 24
 
         /** The poll interval used while proving a selection took effect (ms). */
         const val PROBE_POLL_MILLIS = 250L
