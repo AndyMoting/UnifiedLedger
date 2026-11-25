@@ -18,6 +18,9 @@ EXCLUDED = {
     # P706-A10 export half (D-239 item 4): fills /data until the kernel refuses a
     # target write, so it is opt-in and runs alone on its own dedicated rig.
     "BackupExportEnospcInstrumentedTest",
+    # P8-07 Q2 flow 2 (D-365): its own dedicated rig `android-p807-q2.yml`, because the seed
+    # guard requires this case to be the FIRST case of its instrumentation process.
+    "P807Q2Flow2ReconciliationInstrumentedTest",
 }
 
 

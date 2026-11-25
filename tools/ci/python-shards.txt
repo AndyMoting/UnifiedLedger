@@ -57,3 +57,4 @@
 1	tests.python.test_migration_split_inventory
 1	tests.python.test_shard_packing
 2	tests.python.test_scale_readings_report
+2	tests.python.test_android_p807_q2
