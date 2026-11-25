@@ -916,34 +916,47 @@ internal class P807Q2Flow3Ui(
 
     /**
      * One field resolution inside ONE tree: the editable node, the label bounds it was chosen for, the
-     * node's own bounds and the basis that chose it. The gap and distance are the `below` tier's
-     * tie-break inputs (see [locateField]).
+     * node's own bounds and the basis that chose it. Every ordering key is derived from these bounds,
+     * so the log line names enough for a later round to re-derive the choice (see [locateField]).
      */
     private class FieldLocation(
         val node: AccessibilityNodeInfo,
         val labelBounds: Rect,
         val fieldBounds: Rect,
         val basis: String,
-        val gap: Int = 0,
-        val distance: Int = 0,
     )
 
     /**
      * Resolves the ONE editable node belonging to [label] inside [nodes] (a single tree), or null.
      *
-     * THE RULE IS DETERMINISTIC ON PURPOSE. Run `45687641567` wrote the custom window's lower bound
-     * into its upper field: `起始日期` and `结束日期` are adjacent rows whose editors stack at
-     * `(42,1028)-(1038,1196)` and `(42,1196)-(1038,1364)`, and the former "nearest editable node to
-     * any label node" search — which allows a field ABOVE the label — flipped between the two on
-     * consecutive reads, so the write went to one field while the verification read the other. Three
-     * bases, in order, and the caller logs the chosen one:
+     * ONE TREE, ONE ANSWER, AND NEVER THE ROW ABOVE. The rule is deterministic on purpose: the same
+     * tree always names the same field, so a write and its verification can no longer disagree (run
+     * `45687641567` wrote the custom window's lower bound into its upper field and then "verified"
+     * the other row).
+     *
+     * THE TWO LABEL STATES, each read off a real run:
+     * - EMPTY BOX (`45698454134`): a Material3 OutlinedTextField draws its label at the input line, so
+     *   the label rect `(84,1390)-(429,1453)` lies INSIDE its own editor. Its vertical centre y≈1421
+     *   falls inside that editor, and the editor's bottom is far below the label's bottom.
+     * - FLOATED LABEL (`45687641567`): once the box holds text the label rides the box's TOP border
+     *   (the outline notch), e.g. the second date row, whose editor is `(1196)-(1364)` and whose label
+     *   is centred on y≈1196 — the same y as the FIRST row's bottom edge. A tier that only asked
+     *   "which field holds this y" could therefore name the row above, which is exactly run 4's flip.
+     *
+     * THE TIERS, in order; the chosen one is logged as `basis`:
      * 1. `self` — the label's own node is editable (the platform merged the hint into the editor);
-     * 2. `contained` — an editable node lies INSIDE the label's bounds (the tightest one if several:
-     *    a merged OutlinedTextField row carries its own editor);
-     * 3. `below` — among the fields whose TOP is at or below the label's top, never the field above:
-     *    smallest vertical gap, then smallest horizontal distance, then the topmost, then the leftmost.
-     * One tree therefore always yields one answer, and a `contained` hit is never displaced by a
-     * nearer field on the other side of the label.
+     * 2. `contained` — an editable node lies INSIDE the label's bounds (a merged row carries its own
+     *    editor); the tightest area wins;
+     * 3. `center` — an editable node whose y span holds the label's vertical centre AND whose bottom
+     *    is STRICTLY below the label's bottom. The second half is what keeps the row ABOVE out: a
+     *    field that merely reaches the label's bottom edge is the row above, and a field that ends
+     *    before it cannot be the label's own. Order: tightest area, then the LOWEST field (`-top`, so
+     *    the row below wins an equal-area tie), then the leftmost;
+     * 4. `nearest` — the fallback for a label that shares a border with its own field: smallest
+     *    [verticalGap], then [centerOffsetKey] (every field whose centre is ABOVE the label's centre
+     *    falls behind every field at or below it), then the horizontal distance, then the left edge.
+     *    There is deliberately NO "field top below label top" filter here — run `45698454134`'s
+     *    blocker, which also dropped the empty-state box — and no `top`-ascending key, run 4's flip.
      */
     private fun locateField(
         nodes: List<AccessibilityNodeInfo>,
@@ -969,22 +982,51 @@ internal class P807Q2Flow3Ui(
             }
         }
         if (contained != null) return contained
+        val centered =
+            labelNodes
+                .flatMap { labelNode ->
+                    val labelBounds = flow.bounds(labelNode)
+                    val labelCenterY = labelBounds.centerY()
+                    fields.mapNotNull { field ->
+                        val fieldBounds = flow.bounds(field)
+                        if (labelCenterY < fieldBounds.top || labelCenterY > fieldBounds.bottom) return@mapNotNull null
+                        if (fieldBounds.bottom <= labelBounds.bottom) return@mapNotNull null
+                        FieldLocation(field, labelBounds, fieldBounds, "center")
+                    }
+                }.minWithOrNull(
+                    compareBy(
+                        { choice -> choice.fieldBounds.width().toLong() * choice.fieldBounds.height().toLong() },
+                        { choice -> -choice.fieldBounds.top },
+                        { choice -> choice.fieldBounds.left },
+                    ),
+                )
+        if (centered != null) return centered
         return labelNodes
             .flatMap { labelNode ->
                 val labelBounds = flow.bounds(labelNode)
-                fields.mapNotNull { field ->
-                    val fieldBounds = flow.bounds(field)
-                    if (fieldBounds.top < labelBounds.top) return@mapNotNull null
-                    FieldLocation(
-                        node = field,
-                        labelBounds = labelBounds,
-                        fieldBounds = fieldBounds,
-                        basis = "below",
-                        gap = verticalGap(labelBounds, fieldBounds),
-                        distance = abs(labelBounds.centerX() - fieldBounds.centerX()),
-                    )
-                }
-            }.minWithOrNull(compareBy({ choice -> choice.gap }, { choice -> choice.distance }, { choice -> choice.fieldBounds.top }, { choice -> choice.fieldBounds.left }))
+                fields.map { field -> FieldLocation(field, labelBounds, flow.bounds(field), "nearest") }
+            }.minWithOrNull(
+                compareBy(
+                    { choice -> verticalGap(choice.labelBounds, choice.fieldBounds) },
+                    { choice -> centerOffsetKey(choice.labelBounds, choice.fieldBounds) },
+                    { choice -> abs(choice.labelBounds.centerX() - choice.fieldBounds.centerX()) },
+                    { choice -> choice.fieldBounds.left },
+                ),
+            )
+    }
+
+    /**
+     * How far a field's vertical centre sits at or below the label's centre, with every field whose
+     * centre is ABOVE the label pushed behind all of them ([ABOVE_LABEL_PENALTY], the same idiom as
+     * the radio anchor's right-of-anchor penalty): two adjacent rows can both reach [verticalGap] 0
+     * when a floated label rides their shared border, and the lower row is the label's own.
+     */
+    private fun centerOffsetKey(
+        labelBounds: Rect,
+        fieldBounds: Rect,
+    ): Int {
+        val offset = fieldBounds.centerY() - labelBounds.centerY()
+        return if (offset >= 0) offset else ABOVE_LABEL_PENALTY + (-offset)
     }
 
     /** The editable node belonging to [label] in the CURRENT tree, or null when the screen has none. */
@@ -1718,6 +1760,9 @@ internal class P807Q2Flow3Ui(
 
         /** How many small forward nudges ONE commit may spend reaching that line (never a full seek). */
         const val PERIOD_LINE_SCROLLS = 3
+
+        /** Pushes a field whose centre is ABOVE the label's centre behind every field at or below it. */
+        const val ABOVE_LABEL_PENALTY = 10_000
 
         /** How many fresh trees the custom window's pair may be read from before it answers absent. */
         const val WINDOW_READ_ATTEMPTS = 3
