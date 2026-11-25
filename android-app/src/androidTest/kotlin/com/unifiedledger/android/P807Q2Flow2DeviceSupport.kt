@@ -527,7 +527,7 @@ internal class P807Q2Flow2Ui(
      * Selects [accountName] as the bind target and binds. The account row is
      * `Row { RadioButton(...); Text(choice.name) }` (`P503ReconciliationScreen.kt:390-397`), so the
      * radio is named by the row's own structure first and by the Row's fixed radio-then-label
-     * geometry only when the tree will not expose it ([selectRadio]). The bind action must be
+     * geometry only when the tree will not expose it ([selectRadioVerified]). The bind action must be
      * UNAVAILABLE before the pick (`reconciliationBindEnabled`,
      * `P503ReconciliationPresentation.kt:583`) and enabled after it; both states are read off the
      * button node itself, never inferred. Every failure dumps the surface first and carries the
@@ -554,22 +554,23 @@ internal class P807Q2Flow2Ui(
                     log("$tag bind label=absent account=$accountName bindEnabledBefore=false $report")
                     error("the bind step must offer the account [$accountName]; $report")
                 }
-        val path = selectRadio(label, "bindToAccount:radio", accountName)
+        val selected = selectRadioVerified("bindToAccount:radio", accountName) { bindButtonEnabled() }
         log(
-            "$tag bind anchor account=$accountName $path label=" + describe(label) +
+            "$tag bind anchor account=$accountName selected=$selected label=" + describe(label) +
                 " bindEnabledBefore=false",
         )
         // The bind button's own text is a PREFIX of 绑定到账户, so the seek uses the unique warning
         // copy that sits between the radios and the button; the section fits one screen, so this is
         // normally a no-op.
         runCatching { flow.seekApp(P807Q2Flow2Facts.BIND_IRREVERSIBLE_WARNING) }
-        if (!awaitEnabledButton(P807Q2Flow2Facts.BIND_BUTTON)) {
-            val report = anchorReport("bind-not-selected", accountName, label)
+        if (!selected || !awaitEnabledButton(P807Q2Flow2Facts.BIND_BUTTON)) {
+            val liveLabel = flow.findAppNode { node -> flow.textOf(node) == accountName }
+            val report = anchorReport("bind-not-selected", accountName, liveLabel)
             flow.dumpUiSnapshot("bindToAccount:enabled")
-            log("$tag bind selected=false account=$accountName $path bindEnabledAfter=false $report")
-            error("the account pick did not enable 绑定 for [$accountName] ($path); $report")
+            log("$tag bind selected=false account=$accountName selectedByDriver=$selected bindEnabledAfter=false $report")
+            error("the account pick did not enable 绑定 for [$accountName] after $SELECTION_ATTEMPTS verified rounds; $report")
         }
-        log("$tag bind selected account=$accountName $path bindEnabledAfter=true")
+        log("$tag bind selected account=$accountName bindEnabledAfter=true")
         flow.clickApp(P807Q2Flow2Facts.BIND_BUTTON)
         flow.awaitAppText(P807Q2Flow2Facts.BOUND_NOTICE)
         return true
@@ -601,9 +602,12 @@ internal class P807Q2Flow2Ui(
                     log("$tag select candidate label=absent line=[$anchorText] $report")
                     error("the proposal must render its candidate line [$anchorText]; $report")
                 }
-        val path = selectRadio(label, "selectCandidate:radio", anchorText)
-        log("$tag select candidate $path label=" + describe(label))
-        return runCatching { flow.awaitAppText(P807Q2Flow2Facts.ELEMENT_EXTERNAL_EVIDENCE) }.isSuccess
+        val selected =
+            selectRadioVerified("selectCandidate:radio", anchorText) {
+                flow.hasAppText(P807Q2Flow2Facts.ELEMENT_EXTERNAL_EVIDENCE)
+            }
+        log("$tag select candidate selected=$selected label=" + describe(label))
+        return selected && runCatching { flow.awaitAppText(P807Q2Flow2Facts.ELEMENT_EXTERNAL_EVIDENCE) }.isSuccess
     }
 
     /**
@@ -678,25 +682,20 @@ internal class P807Q2Flow2Ui(
      * The candidate detail's own selection row: the checkbox anchored on the detail-only hint copy
      * (`P503ImportReview.kt:1064-1071`), exactly the frozen flow-1 anchoring rule. The postcondition
      * is the detail's 进入批量确认 entry, which only renders for a non-empty selection
-     * (`P503ImportReview.kt:1035-1047`).
+     * (`P503ImportReview.kt:1035-1047`), so that entry is also the verified effect of the click.
      */
     fun selectForBatch(): Boolean {
-        var lastHint: AccessibilityNodeInfo? = null
-        repeat(SELECTION_ATTEMPTS) { attempt ->
-            flow.seekApp(P807Q2Flow2Facts.SELECTION_HINT)
-            val hint = flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow2Facts.SELECTION_HINT }
-            lastHint = hint
-            val checkbox = hint?.let(::checkboxLeftOfHint)
-            if (hint == null || checkbox == null) {
-                log("$tag selection row absent attempt=$attempt hint=${hint != null}")
-                flow.settle()
-                return@repeat
-            }
-            log("$tag selection checkbox attempt=$attempt " + describe(checkbox) + " hint=" + flow.bounds(hint))
-            flow.tap(checkbox)
-            if (runCatching { flow.awaitAppText(P807Q2Flow2Facts.BATCH_ENTRY) }.isSuccess) return true
-        }
-        val report = anchorReport("selectForBatch", P807Q2Flow2Facts.SELECTION_HINT, lastHint)
+        flow.seekApp(P807Q2Flow2Facts.SELECTION_HINT)
+        val selected =
+            clickVerified(
+                "selectForBatch",
+                locate = { flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow2Facts.SELECTION_HINT }?.let(::checkboxLeftOfHint) },
+                slot = { null },
+                effect = { flow.hasAppText(P807Q2Flow2Facts.BATCH_ENTRY) },
+            )
+        if (selected) return true
+        val hint = flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow2Facts.SELECTION_HINT }
+        val report = anchorReport("selectForBatch", P807Q2Flow2Facts.SELECTION_HINT, hint)
         flow.dumpUiSnapshot("selectForBatch")
         log("$tag selection row not selectable attempts=$SELECTION_ATTEMPTS $report")
         return false
@@ -780,40 +779,38 @@ internal class P807Q2Flow2Ui(
     /**
      * One decision option of the section [section]: the nearest `○ <name>` / `● <name>` button
      * BELOW the section label (each section renders its own option list, so the same name appears
-     * under more than one label and only the vertical band disambiguates).
+     * under more than one label and only the vertical band disambiguates). The `● <name>` read-back
+     * is the verified effect ([clickVerified]), so a dropped click is retried instead of trusted.
      */
     private fun pickDecisionOption(
         section: String,
         accountName: String,
     ): Boolean {
-        var lastLabel: AccessibilityNodeInfo? = null
-        repeat(SELECTION_ATTEMPTS) { attempt ->
-            runCatching { flow.seekApp(section) }
-            val anchor = flow.findAppNode { node -> flow.textOf(node) == section }
-            lastLabel = anchor
-            val band = flow.bounds(anchor ?: return@repeat)
-            val options =
-                flow
-                    .appNodes()
-                    .filter { node ->
-                        val text = flow.textOf(node)
-                        (text == "○ " + accountName || text == "● " + accountName) && flow.bounds(node).centerY() > band.bottom
-                    }.sortedBy { node -> flow.bounds(node).centerY() }
-            val option = options.firstOrNull()
-            if (option == null) {
-                log("$tag decision option absent section=$section account=$accountName attempt=$attempt")
-                flow.settle()
-                return@repeat
-            }
-            log("$tag decision option section=$section " + describe(option))
-            flow.tap(option)
-            SystemClock.sleep(POLL_MILLIS)
-            if (flow.findAppNode { node -> flow.textOf(node) == "● " + accountName } != null) {
-                log("$tag decision option selected section=$section account=$accountName")
-                return true
-            }
+        runCatching { flow.seekApp(section) }
+        val selected =
+            clickVerified(
+                "pickDecisionOption:$section",
+                locate = {
+                    val sectionNode = flow.findAppNode { node -> flow.textOf(node) == section }
+                    val band = sectionNode?.let { node -> flow.bounds(node) }
+                    flow
+                        .appNodes()
+                        .filter { node ->
+                            val text = flow.textOf(node)
+                            (text == "○ " + accountName || text == "● " + accountName) &&
+                                band != null &&
+                                flow.bounds(node).centerY() > band.bottom
+                        }.minByOrNull { node -> flow.bounds(node).centerY() }
+                },
+                slot = { null },
+                effect = { flow.findAppNode { node -> flow.textOf(node) == "● " + accountName } != null },
+            )
+        if (selected) {
+            log("$tag decision option selected section=$section account=$accountName")
+            return true
         }
-        val report = anchorReport("pickDecisionOption:$section", section, lastLabel)
+        val label = flow.findAppNode { node -> flow.textOf(node) == section }
+        val report = anchorReport("pickDecisionOption:$section", section, label)
         flow.dumpUiSnapshot("pickDecisionOption:$section")
         log("$tag decision option not selected section=$section account=$accountName attempts=$SELECTION_ATTEMPTS $report")
         return false
@@ -916,30 +913,137 @@ internal class P807Q2Flow2Ui(
     }
 
     /**
-     * Selects the radio of [label]'s row and returns the path it used. Structure first
-     * ([radioOfRow]); coordinates second ([radioSlotLeftOf]), because a radio the tree will not name
-     * still has exactly one place it can be. A failure dumps the surface and throws with the anchor
-     * report, so the run names its own cause instead of costing another round.
+     * Selects the radio of [anchorText]'s row and proves the selection took effect. Each round is a
+     * fresh tree ([clickVerified]); [effect] is the only success test, so a click the accessibility
+     * layer silently drops can never be read as a pick.
      */
-    private fun selectRadio(
-        label: AccessibilityNodeInfo,
+    private fun selectRadioVerified(
         step: String,
         anchorText: String,
-    ): String {
-        val radio = radioOfRow(label)
-        if (radio != null) {
-            flow.tap(radio)
-            return "path=row radio=" + describe(radio)
+        effect: () -> Boolean,
+    ): Boolean {
+        val locate = { flow.findAppNode { node -> flow.textOf(node) == anchorText }?.let(::radioOfRow) }
+        val slot = { flow.findAppNode { node -> flow.textOf(node) == anchorText }?.let(::radioSlotLeftOf) }
+        return clickVerified(step, locate, slot, effect)
+    }
+
+    /**
+     * Clicks one target and proves the screen took it: up to [SELECTION_ATTEMPTS] rounds of (fresh
+     * read, semantic channel, coordinate channel on the target's own bounds, the derived slot), each
+     * followed by a bounded poll of [effect].
+     *
+     * WHY ROUNDS AND A FRESH READ. This stack drops actions aimed at a node taken from an earlier
+     * traversal (`AndroidScaleUi.kt:476-484`, the stale-client-cache signature), and
+     * `AndroidScaleUi.clickNode` never verifies the effect, so a refused click looks exactly like an
+     * accepted one. [locate] therefore re-reads the tree on every use, and the semantic channel's own
+     * answer is logged instead of discarded.
+     */
+    private fun clickVerified(
+        step: String,
+        locate: () -> AccessibilityNodeInfo?,
+        slot: () -> Pair<Int, Int>?,
+        effect: () -> Boolean,
+    ): Boolean {
+        repeat(SELECTION_ATTEMPTS) { round ->
+            val target = locate()
+            val fallbackSlot = slot()
+            val accepted = target?.let(::clickSemantic)
+            log(
+                "$tag select step=$step round=$round channel=semantic actionClick=$accepted target=" +
+                    (target?.let { describe(it) } ?: "absent"),
+            )
+            if (probeEffect(step, round, "semantic", locate, effect)) return true
+            if (target != null) {
+                val bounds = flow.bounds(target)
+                val point = bounds.centerX() to bounds.centerY()
+                tapAt(point)
+                log("$tag select step=$step round=$round channel=coordinate-target point=(" + point.first + "," + point.second + ")")
+                if (probeEffect(step, round, "coordinate-target", locate, effect)) return true
+            }
+            if (fallbackSlot != null) {
+                tapAt(fallbackSlot)
+                log(
+                    "$tag select step=$step round=$round channel=coordinate-slot point=(" +
+                        fallbackSlot.first + "," + fallbackSlot.second + ") target=" + (target != null),
+                )
+                if (probeEffect(step, round, "coordinate-slot", locate, effect)) return true
+            }
+            flow.dumpUiSnapshot("$step:round$round")
+            flow.settle()
         }
-        log("$tag radio search step=$step anchor=[$anchorText] row=none")
-        val slot = radioSlotLeftOf(label)
-        if (slot == null) {
-            flow.dumpUiSnapshot(step)
-            error("no radio node and no derivable slot for [$anchorText]; " + anchorReport(step, anchorText, label))
+        return false
+    }
+
+    /**
+     * The semantic channel with its answer kept: ACTION_CLICK on [node], then on up to
+     * [CLICK_ANCESTOR_DEPTH] clickable ancestors (the discipline `AndroidScaleUi.clickNode` uses).
+     * `false` is an observation, not a failure: it says the tree refused the action.
+     */
+    private fun clickSemantic(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        repeat(CLICK_ANCESTOR_DEPTH) {
+            val candidate = current ?: return false
+            val usable = candidate.isEnabled && candidate.isVisibleToUser
+            if (usable && candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            current = candidate.parent
         }
-        tapAt(slot)
-        log("$tag radio tap step=$step anchor=[$anchorText] path=coordinate slot=(" + slot.first + "," + slot.second + ")")
-        return "path=coordinate slot=(" + slot.first + "," + slot.second + ")"
+        return false
+    }
+
+    /**
+     * Polls [effect] with [PROBE_POLL_MILLIS] steps for at most [EFFECT_TIMEOUT_MILLIS], recording the
+     * target's `checked` and the effect value at [PROBE_FIRST_MILLIS] and [PROBE_SECOND_MILLIS].
+     *
+     * WHY THOSE TWO INSTANTS. `checked` false at both says the click never reached the reducer;
+     * `checked` true at the first reading and false at the second says the product applied the pick
+     * and then lost it (an asynchronous reload rewriting the detail state), which is a product
+     * finding, not something a driver may retry around.
+     */
+    private fun probeEffect(
+        step: String,
+        round: Int,
+        channel: String,
+        locate: () -> AccessibilityNodeInfo?,
+        effect: () -> Boolean,
+    ): Boolean {
+        val started = SystemClock.elapsedRealtime()
+        var readFirst = false
+        var readSecond = false
+        var sawChecked = false
+        while (true) {
+            val elapsed = SystemClock.elapsedRealtime() - started
+            if (!readFirst && elapsed >= PROBE_FIRST_MILLIS) {
+                readFirst = true
+                sawChecked = probeReading(step, round, channel, locate, effect, elapsed)
+            }
+            if (!readSecond && elapsed >= PROBE_SECOND_MILLIS) {
+                readSecond = true
+                sawChecked = probeReading(step, round, channel, locate, effect, elapsed) || sawChecked
+            }
+            if (effect()) {
+                log("$tag select step=$step round=$round channel=$channel at=${elapsed}ms effect=true")
+                return true
+            }
+            if (elapsed >= EFFECT_TIMEOUT_MILLIS) break
+            SystemClock.sleep(PROBE_POLL_MILLIS)
+        }
+        val verdict = if (sawChecked) "checked-then-lost" else "click-not-applied"
+        log("$tag select step=$step round=$round channel=$channel verdict=$verdict")
+        return false
+    }
+
+    /** One probe reading: logs the target's `checked` state and the effect value, returns `checked`. */
+    private fun probeReading(
+        step: String,
+        round: Int,
+        channel: String,
+        locate: () -> AccessibilityNodeInfo?,
+        effect: () -> Boolean,
+        elapsedMs: Long,
+    ): Boolean {
+        val checked = locate()?.isChecked == true
+        log("$tag select step=$step round=$round channel=$channel at=${elapsedMs}ms checked=$checked effect=" + effect())
+        return checked
     }
 
     /**
@@ -1101,6 +1205,21 @@ internal class P807Q2Flow2Ui(
 
         /** The selection/decision click retries (the frozen flow-1 `SELECTION_CLICK_ATTEMPTS` value). */
         const val SELECTION_ATTEMPTS = 3
+
+        /** The poll interval used while proving a selection took effect (ms). */
+        const val PROBE_POLL_MILLIS = 250L
+
+        /** The first post-click reading of the target's checked state (ms). */
+        const val PROBE_FIRST_MILLIS = 300L
+
+        /** The second post-click reading (ms): a pick checked here and gone later was reset. */
+        const val PROBE_SECOND_MILLIS = 2_000L
+
+        /** How long one channel's effect may take before the next channel is tried (ms). */
+        const val EFFECT_TIMEOUT_MILLIS = 4_000L
+
+        /** How many clickable ancestors the semantic channel may climb (the `clickNode` bound). */
+        const val CLICK_ANCESTOR_DEPTH = 7
 
         /** The decision form waits for the cached catalog snapshot to land (`P503ImportReview.kt:984-1009`). */
         const val DECISION_FORM_TIMEOUT_MILLIS = 60_000L
