@@ -953,69 +953,119 @@ internal class P807Q2Flow3Ui(
     /**
      * Clicks the node whose exact text or description is [text] and proves [effect]. The target is
      * reached with one bounded forward seek first (these surfaces scroll), and the click itself runs
-     * through [clickVerified], so a dropped action is retried instead of trusted.
+     * through [clickVerified], so a dropped action is retried instead of trusted against a stale tree.
      */
     fun clickVerifiedExact(
         step: String,
         text: String,
         effect: () -> Boolean,
     ): Boolean {
-        runCatching { flow.seekApp(text) }
+        refocusAnchor(text)
         if (!hasExactText(text)) {
             val report = anchorReport(step, text, null)
             flow.dumpUiSnapshot("$step:absent")
-            log("$tag click step=$step target=[$text] absent $report")
+            log("$tag click step=$step target=[$text] absent " + report)
             return false
         }
-        return clickVerified(step, { flow.findAppNode { node -> matchesExact(node, text) } }, { null }, effect)
+        val clicked = clickVerified(step, text, { flow.findAppNode { node -> matchesExact(node, text) } }, { null }, effect)
+        if (!clicked) {
+            log("$tag click-failed step=$step target=[$text] " + anchorReport(step, text, null))
+        }
+        return clicked
     }
 
     /**
      * Selects the radio of [anchorText]'s row and proves [effect]. The row is
      * `Row { RadioButton; Text(anchor) }`, so the radio is the anchor's sibling inside the nearest
-     * ancestor that holds a checkable node; the derived slot is the fallback for a tree that refuses
-     * to name that node at all, and [effect] is the only success test either way.
+     * ancestor that holds a checkable node on the anchor's band — the one immediately LEFT of the
+     * anchor when several rows share that band (the type choice list and any wrapped row); the
+     * derived slot is the fallback for a tree that refuses to name that node at all, and [effect] is
+     * the only success test either way.
      */
     private fun selectRadioVerified(
         step: String,
         anchorText: String,
         effect: () -> Boolean,
     ): Boolean {
-        runCatching { flow.seekApp(anchorText) }
         val locate = { flow.findAppNode { node -> flow.textOf(node) == anchorText }?.let(::radioOfRow) }
         val slot = { flow.findAppNode { node -> flow.textOf(node) == anchorText }?.let(::radioSlotLeftOf) }
-        return clickVerified(step, locate, slot, effect)
+        val selected = clickVerified(step, anchorText, locate, slot, effect)
+        if (!selected) {
+            val label = flow.findAppNode { node -> flow.textOf(node) == anchorText }
+            log("$tag select-failed step=$step anchor=[$anchorText] " + anchorReport(step, anchorText, label))
+        }
+        return selected
     }
 
     /**
-     * Clicks one target and proves the screen took it: up to [SELECTION_ATTEMPTS] rounds of (fresh
-     * read, semantic channel, coordinate channel on the target's own bounds, the derived slot), each
-     * followed by a bounded poll of [effect]. [locate] re-reads the tree on every use because this
-     * stack drops actions aimed at a node taken from an earlier traversal.
+     * Re-establishes the viewport and the tree for ONE round of a click. Five bounded steps, each
+     * with the reason this stack needs it:
+     * 1. when the anchor is NOT in the visible tree it may be ABOVE the viewport (an earlier label
+     *    seek scrolled the form down), so the backward seek runs before the forward one;
+     * 2. a forward seek then puts the anchor on screen (the frozen helper's own bounded scroll);
+     * 3. a small out-and-back scroll makes the app re-lay out and emits accessibility events — on this
+     *    stack the client AccessibilityCache is invalidated by event delivery, so a stalled feed keeps
+     *    serving one stale tree (`AndroidScaleUi.kt:137-163`, the D-203 signature);
+     * 4. a lookup of an ABSENT text then takes that helper's second pass (`root.refresh()` with
+     *    bypassCache) and, when its rate limit allows, the D-208 cache reset (`:223-273`); a lookup of
+     *    a PRESENT text is served from the cache and refreshes nothing, which is why the sentinel is a
+     *    guaranteed miss;
+     * 5. a trailing seek undoes any drift the out-and-back left on a surface that scrolls one way only.
+     */
+    private fun refocusAnchor(anchorText: String) {
+        if (!flow.hasAppText(anchorText)) {
+            runCatching { flow.scrollBackTo(anchorText) }
+        }
+        runCatching { flow.seekApp(anchorText) }
+        runCatching { flow.ui.scroll(forward = true, fraction = NUDGE_FRACTION) }
+        runCatching { flow.ui.scroll(forward = false, fraction = NUDGE_FRACTION) }
+        flow.ui.has(REFRESH_SENTINEL)
+        runCatching { flow.seekApp(anchorText) }
+    }
+
+    /**
+     * Clicks one target and proves the screen took it, ROUND BY ROUND against a CURRENT tree: each
+     * round first re-establishes the viewport ([refocusAnchor]), then reads the target again, then
+     * only taps a target whose own bounds are ON SCREEN. A node with stale or clipped bounds is never
+     * hard-tapped — the round records why and moves on — so the coordinate fallback stays fail-closed
+     * and [effect] remains the only success test.
      */
     private fun clickVerified(
         step: String,
+        anchorText: String,
         locate: () -> AccessibilityNodeInfo?,
         slot: () -> Pair<Int, Int>?,
         effect: () -> Boolean,
     ): Boolean {
         repeat(SELECTION_ATTEMPTS) { round ->
+            refocusAnchor(anchorText)
             val target = locate()
-            val fallbackSlot = slot()
+            val targetBounds = target?.let { node -> flow.bounds(node) }
+            val onScreen = targetBounds != null && isOnScreen(targetBounds)
             val accepted = target?.let(::clickSemantic)
-            log("$tag select step=$step round=$round channel=semantic actionClick=$accepted target=" + (target?.let { describe(it) } ?: "absent"))
+            log(
+                "$tag select step=$step round=$round channel=semantic actionClick=$accepted onScreen=$onScreen target=" +
+                    (target?.let { node -> describe(node) } ?: "absent"),
+            )
             if (probeEffect(step, round, "semantic", locate, effect)) return true
-            if (target != null) {
-                val bounds = flow.bounds(target)
-                val point = bounds.centerX() to bounds.centerY()
+            if (target != null && targetBounds != null && onScreen) {
+                val point = targetBounds.centerX() to targetBounds.centerY()
                 tapAt(point)
                 log("$tag select step=$step round=$round channel=coordinate-target point=(" + point.first + "," + point.second + ")")
                 if (probeEffect(step, round, "coordinate-target", locate, effect)) return true
+            } else {
+                log(
+                    "$tag select step=$step round=$round channel=coordinate-target skipped reason=target-not-on-screen bounds=$targetBounds " +
+                        "display=${displaySize()} window=${appWindowBounds()}",
+                )
             }
-            if (fallbackSlot != null) {
+            val fallbackSlot = slot()
+            if (fallbackSlot != null && isPointOnScreen(fallbackSlot)) {
                 tapAt(fallbackSlot)
                 log("$tag select step=$step round=$round channel=coordinate-slot point=(" + fallbackSlot.first + "," + fallbackSlot.second + ")")
                 if (probeEffect(step, round, "coordinate-slot", locate, effect)) return true
+            } else if (fallbackSlot != null) {
+                log("$tag select step=$step round=$round channel=coordinate-slot skipped reason=slot-not-on-screen point=(" + fallbackSlot.first + "," + fallbackSlot.second + ")")
             }
             flow.dumpUiSnapshot("$step:round$round")
             flow.settle()
@@ -1025,10 +1075,13 @@ internal class P807Q2Flow3Ui(
     }
 
     /**
-     * Polls [effect] for at most [EFFECT_TIMEOUT_MILLIS], recording the target's `checked` and the
-     * effect value at [PROBE_FIRST_MILLIS] and [PROBE_SECOND_MILLIS]: checked at both says the click
-     * never reached the reducer, checked once and gone says the product applied it and then lost it
-     * (a product finding the driver must not retry around).
+     * Polls [effect] for at most [EFFECT_TIMEOUT_MILLIS] against a tree that is periodically forced
+     * current (one absent-text lookup every [PROBE_REFRESH_EVERY] polls, i.e. roughly twice a second),
+     * recording the target's `checked` and the effect value at [PROBE_FIRST_MILLIS] and
+     * [PROBE_SECOND_MILLIS]: checked at both says the click never reached the reducer, checked once and
+     * gone says the product applied it and then lost it (a product finding the driver must not retry
+     * around). Without the refresh a landed effect can be invisible for the whole poll window because
+     * the client cache still serves the pre-click tree.
      */
     private fun probeEffect(
         step: String,
@@ -1041,8 +1094,11 @@ internal class P807Q2Flow3Ui(
         var readFirst = false
         var readSecond = false
         var sawChecked = false
+        var polls = 0
         while (true) {
             val elapsed = SystemClock.elapsedRealtime() - started
+            if (polls % PROBE_REFRESH_EVERY == 0) flow.ui.has(REFRESH_SENTINEL)
+            polls++
             if (!readFirst && elapsed >= PROBE_FIRST_MILLIS) {
                 readFirst = true
                 sawChecked = probeReading(step, round, channel, locate, effect, elapsed)
@@ -1118,10 +1174,12 @@ internal class P807Q2Flow3Ui(
 
     /**
      * The radio that belongs to [label]'s own row, found by STRUCTURE: the label's sibling inside
-     * the nearest ancestor that holds a checkable node on the label's band. The previous anchor
-     * demanded a fixed left-of geometry, which loses the radio whenever the client tree reports a
-     * bounds rectangle the layout no longer has; a row whose label was composed has its radio beside
-     * it, and the band only breaks a tie between several rows' radios.
+     * the nearest ancestor that holds a checkable node on the label's band. When SEVERAL radios share
+     * that band — one row per choice, all on one line (the type choice list, and any row that wraps
+     * beside it) — a Y-only tie-break returns the FIRST of them, which is a different row's radio:
+     * run `45610482800` clicked the wrong radio that way and every channel stayed inert. The row's own
+     * radio is the one immediately LEFT of the label, so the horizontal gap decides and the band only
+     * filters candidates.
      */
     private fun radioOfRow(label: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val band = flow.bounds(label)
@@ -1133,12 +1191,33 @@ internal class P807Q2Flow3Ui(
                     node != label && node.isVisibleToUser && isRadioNode(node) && onBand(node, band)
                 }
             if (radios.size == 1) return radios.single()
-            if (radios.isNotEmpty()) {
-                return radios.minByOrNull { node -> abs(flow.bounds(node).centerY() - band.centerY()) }
-            }
+            if (radios.isNotEmpty()) return nearestRadioLeftOf(radios, band)
             current = container.parent
         }
         return null
+    }
+
+    /**
+     * Among several radios sharing [band], the one that belongs to the anchor's own row: the smallest
+     * horizontal gap between the radio's right edge and the anchor's left edge, with a radio that sits
+     * RIGHT of the anchor (impossible for the frozen radio-then-label row order) pushed behind every
+     * left one by [RADIO_RIGHT_OF_ANCHOR_PENALTY]. The vertical distance only separates rows that a
+     * re-measured band lets in.
+     */
+    private fun nearestRadioLeftOf(
+        radios: List<AccessibilityNodeInfo>,
+        band: Rect,
+    ): AccessibilityNodeInfo? {
+        val nearest =
+            radios
+                .map { node -> node to flow.bounds(node) }
+                .filter { (_, rect) -> rect.width() > 0 }
+                .minByOrNull { (_, rect) ->
+                    val gap = band.left - rect.right
+                    val horizontal = if (gap >= 0) gap else RADIO_RIGHT_OF_ANCHOR_PENALTY + (-gap)
+                    horizontal + abs(rect.centerY() - band.centerY())
+                }
+        return nearest?.first
     }
 
     /** Whether [node] is radio-like: checkable, selected, or the platform's radio/check class. */
@@ -1186,10 +1265,40 @@ internal class P807Q2Flow3Ui(
         text: String,
     ): Boolean = node.isVisibleToUser && (flow.textOf(node) == text || flow.descriptionOf(node) == text)
 
+    /** The display's pixel size, as the driver reads it before trusting any bounds. */
+    private fun displaySize(): String {
+        val metrics = instrumentation.targetContext.resources.displayMetrics
+        return metrics.widthPixels.toString() + "x" + metrics.heightPixels
+    }
+
+    /** The app window's screen rect, or null when the window list cannot name it. */
+    private fun appWindowBounds(): Rect? =
+        automation.windows
+            .firstOrNull { window -> runCatching { window.root?.packageName?.toString() }.getOrNull() == instrumentation.targetContext.packageName }
+            ?.let { window -> Rect().also { rect -> window.getBoundsInScreen(rect) } }
+
     /**
-     * The self-evidence of a failed anchor: the anchor's own shape, its parent subtree with the
-     * accessibility facts that decide radio-ness, and the surface's visible texts. Truncation is
-     * MARKED, so a cut report is visible as one.
+     * Whether [rect] is a non-empty rectangle that lies inside the display AND intersects the app
+     * window. The window test is the one that matters: a node whose bounds were computed for a layout
+     * the window no longer shows has coordinates that inject taps into nothing.
+     */
+    private fun isOnScreen(rect: Rect): Boolean {
+        if (rect.width() <= 0 || rect.height() <= 0) return false
+        val metrics = instrumentation.targetContext.resources.displayMetrics
+        if (rect.left >= metrics.widthPixels || rect.top >= metrics.heightPixels || rect.right <= 0 || rect.bottom <= 0) return false
+        val window = appWindowBounds() ?: return true
+        return rect.left < window.right && window.left < rect.right && rect.top < window.bottom && window.top < rect.bottom
+    }
+
+    /** Whether one screen point would land inside the display and the app window. */
+    private fun isPointOnScreen(point: Pair<Int, Int>): Boolean = isOnScreen(Rect(point.first, point.second, point.first + 1, point.second + 1))
+
+    /**
+     * The self-evidence of a failed anchor, extended for run `45610482800`: the anchor's own shape and
+     * bounds, the display and window geometry the taps are validated against, EVERY radio the tree
+     * reports on the anchor's band (class/checkable/checked/clickable/bounds — the data that shows a
+     * band-mate was clicked instead), the resolved target, and one refresh-then-reread comparison of
+     * that target's bounds so a stale tree names itself. Truncation is MARKED.
      */
     private fun anchorReport(
         step: String,
@@ -1198,10 +1307,24 @@ internal class P807Q2Flow3Ui(
     ): String {
         val lines = ArrayList<String>()
         lines.add("anchor-report step=$step anchor=[$anchorText]")
+        lines.add("display=" + displaySize() + " window=" + (appWindowBounds() ?: "unknown"))
         if (label == null) {
             lines.add("anchor=ABSENT (no visible node carries that exact text)")
         } else {
             lines.add("anchor=" + describe(label))
+            lines.add("anchor-bounds=" + flow.bounds(label))
+            val band = flow.bounds(label)
+            val bandRadios = flow.appNodes().filter { node -> isRadioNode(node) && onBand(node, band) }
+            lines.add("band-radios count=" + bandRadios.size + " band=" + band)
+            bandRadios.forEach { node -> lines.add("  radio " + describe(node)) }
+            val target = radioOfRow(label)
+            lines.add("target=" + (target?.let { node -> describe(node) } ?: "ABSENT"))
+            if (target != null) {
+                val before = flow.bounds(target)
+                flow.ui.has(REFRESH_SENTINEL)
+                val after = radioOfRow(label)?.let { node -> flow.bounds(node) }
+                lines.add("refresh-compare before=" + before + " after=" + after + " changed=" + (after != before))
+            }
             val parent = label.parent
             if (parent == null) {
                 lines.add("parent=ABSENT (the client tree answered no parent for the anchor)")
@@ -1255,6 +1378,18 @@ internal class P807Q2Flow3Ui(
 
         /** The radio centre's offset from its label's left edge, in dp (a Material3 radio touch target). */
         const val RADIO_SLOT_DP = 24
+
+        /** Pushes a radio that sits RIGHT of its anchor behind every radio that sits left of it. */
+        const val RADIO_RIGHT_OF_ANCHOR_PENALTY = 10_000
+
+        /** The out-and-back scroll step that makes the app re-lay out (a fraction of the viewport). */
+        const val NUDGE_FRACTION = 0.15f
+
+        /** A text no visible node can carry: its lookup is the only in-process forced tree refresh. */
+        const val REFRESH_SENTINEL = "\u0000P807-Q2FLOW3-refresh"
+
+        /** How many effect polls pass between two forced tree refreshes (about twice a second). */
+        const val PROBE_REFRESH_EVERY = 2
 
         /** How long one injected tap holds the touch down. */
         const val TOUCH_HOLD_MILLIS = 60L
