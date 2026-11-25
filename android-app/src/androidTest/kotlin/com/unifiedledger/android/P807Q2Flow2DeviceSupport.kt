@@ -50,9 +50,7 @@ import kotlin.math.abs
  * WHAT THIS FILE DOES NOT DO. It writes nothing to the ledger, and it never judges a product rule
  * itself: the UI copy and the port payloads are compared, and the formal-ledger snapshot equality
  * is the zero-accounting-effect oracle.
- */
-
-/**
+ *
  * The flow-2 copy table, seed facts and helpers shared by the flow's own device case.
  *
  * Every UI literal carries the `app-ui` (or `ledger-application`) line that produces it, so a
@@ -296,11 +294,18 @@ internal object P807Q2Flow2Facts {
     fun auditResponsibilityLine(responsibility: P408EvidenceResponsibility): String = ELEMENT_RESPONSIBILITY + "：" + responsibility.storageValue
 
     /** The audit's human-decision line (mirrors the human-decision element of `reconciliationAuditDecisionLines`). */
-    fun auditHumanDecisionLine(humanDecision: String, decidedAt: String): String = ELEMENT_HUMAN_DECISION + "：" + humanDecision + " · " + decidedAt
+    fun auditHumanDecisionLine(
+        humanDecision: String,
+        decidedAt: String,
+    ): String = ELEMENT_HUMAN_DECISION + "：" + humanDecision + " · " + decidedAt
 
     /** The audit's source line for a read link (mirrors `reconciliationAuditSourceText`). */
-    fun auditSourceLine(importInputRef: String, recordOrdinal: Long, recordKind: String, occurredAt: String?): String =
-        "证据来源：导入 " + importInputRef + " · 第 " + recordOrdinal + " 条（" + recordKind + "）· 来源时间 " + (occurredAt ?: "—")
+    fun auditSourceLine(
+        importInputRef: String,
+        recordOrdinal: Long,
+        recordKind: String,
+        occurredAt: String?,
+    ): String = "证据来源：导入 " + importInputRef + " · 第 " + recordOrdinal + " 条（" + recordKind + "）· 来源时间 " + (occurredAt ?: "—")
 }
 
 /**
@@ -630,7 +635,10 @@ internal class P807Q2Flow2Ui(
      * each pick is anchored on its own section label and takes the nearest option BELOW it — the
      * "same vertical band label + nearest clickable node" discipline, vertically.
      */
-    fun completeTransferDecision(fromAccountName: String, toAccountName: String): Boolean {
+    fun completeTransferDecision(
+        fromAccountName: String,
+        toAccountName: String,
+    ): Boolean {
         if (!awaitDecisionForm()) {
             flow.dumpUiSnapshot("completeTransferDecision:form")
             return false
@@ -725,8 +733,7 @@ internal class P807Q2Flow2Ui(
     }
 
     /** The visible node whose text or contentDescription is exactly [text], if any. */
-    fun nodeWithText(text: String): AccessibilityNodeInfo? =
-        flow.findAppNode { node -> flow.textOf(node) == text || flow.descriptionOf(node) == text }
+    fun nodeWithText(text: String): AccessibilityNodeInfo? = flow.findAppNode { node -> flow.textOf(node) == text || flow.descriptionOf(node) == text }
 
     /** Every visible node's text, used by the flow to assert a summary line's tail (counts) and absences. */
     fun visibleTexts(): List<String> = flow.appNodes().map(flow::textOf).filter { text -> text.isNotBlank() }
@@ -745,13 +752,17 @@ internal class P807Q2Flow2Ui(
      * BELOW the section label (each section renders its own option list, so the same name appears
      * under more than one label and only the vertical band disambiguates).
      */
-    private fun pickDecisionOption(section: String, accountName: String): Boolean {
+    private fun pickDecisionOption(
+        section: String,
+        accountName: String,
+    ): Boolean {
         repeat(SELECTION_ATTEMPTS) { attempt ->
             runCatching { flow.seekApp(section) }
             val label = flow.findAppNode { node -> flow.textOf(node) == section } ?: return@repeat
             val band = flow.bounds(label)
             val options =
-                flow.appNodes()
+                flow
+                    .appNodes()
                     .filter { node ->
                         val text = flow.textOf(node)
                         (text == "○ " + accountName || text == "● " + accountName) && flow.bounds(node).centerY() > band.bottom
@@ -927,8 +938,7 @@ internal fun p807Q2Flow2StatusHistoryLine(
  * The accumulated-total face of one summary read as the flow compares it: the `(currency, status)`
  * groups the port returned, in the read's own order, as exact integer minor units.
  */
-internal fun p807Q2Flow2TotalLines(totals: List<P801AccountReconciliationStatusTotal>): List<String> =
-    totals.map { total -> total.currency.code + "|" + total.status.storageValue + "|" + total.totalMinorUnits + "|" + total.rowCount }
+internal fun p807Q2Flow2TotalLines(totals: List<P801AccountReconciliationStatusTotal>): List<String> = totals.map { total -> total.currency.code + "|" + total.status.storageValue + "|" + total.totalMinorUnits + "|" + total.rowCount }
 
 /**
  * The queue row's own comparable face, derived from the PORT payload through the same fields
@@ -954,5 +964,4 @@ internal fun p807Q2Flow2MinorText(
 }
 
 /** Whether a read evidence row carries a READY projection (the bind step's own gate). */
-internal fun p807Q2Flow2ProjectionReady(evidence: P801ReconciliationCandidateEvidence): Boolean =
-    evidence.projection?.state == P408ProjectionState.READY
+internal fun p807Q2Flow2ProjectionReady(evidence: P801ReconciliationCandidateEvidence): Boolean = evidence.projection?.state == P408ProjectionState.READY
