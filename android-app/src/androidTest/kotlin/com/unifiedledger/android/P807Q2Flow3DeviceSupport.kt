@@ -680,20 +680,33 @@ internal class P807Q2Flow3Ui(
      * — 30 s of waiting then failed with no reading. [awaitMonthRowReady] therefore waits for a
      * resolved `YYYY-MM` label AND an ENABLED `‹`, and the click itself is the verified one.
      *
-     * ONE EXPLICIT EXCEPTION: a row already reading [P807Q2Flow3Facts.HOME_MONTH_FIRST] needs no click
-     * at all (`already-first-month`), because the leg's purpose is to make the calendar open on that
-     * month. A disabled button is never treated as success — it cannot answer for the month.
+     * THE EDGE IS PROVEN BY THE DISABLED STEPPER, NOT BY THE LABEL. The row's label is the SELECTOR
+     * cursor (`selectedMonth ?: resolvedCurrentMonth`, `P503OverviewScreen.kt:174`) — a different
+     * source from the summary card's `activity?.month` (`P8HomeFlow.kt:204`) — so a `2026-10` reading
+     * says what the cursor shows and never that it cannot move. The stepper is disabled exactly when
+     * `monthStepEdges`' `previous = selectableMonths.firstOrNull { it < current }`
+     * (`P503LedgerViewPresentation.kt:211`) finds no earlier month, which is what "the cursor is the
+     * domain's first month" means. The exception therefore runs BEFORE the gate and requires the
+     * disabled half:
+     * - label `2026-10` AND `‹` PRESENT but DISABLED -> `already-first-month`: no click, true. This is
+     *   the only state that proves the edge, and the readiness gate can never reach it, because a
+     *   disabled `‹` is by construction not "ready";
+     * - everything else -> the readiness gate and then the verified click, INCLUDING the over-claiming
+     *   state: a `2026-10` label with an ENABLED `‹` means an earlier month exists, so the step must be
+     *   taken, and the effect (`2026-10`) reddens if the click lands the label elsewhere instead of
+     *   passing on the label alone. An ABSENT `‹` is not the edge either: it is a tree inconsistency
+     *   the gate reports.
      */
     fun homeMonthStepPrevious(): Boolean {
+        refreshTreeForRead()
+        if (monthLabel() == P807Q2Flow3Facts.HOME_MONTH_FIRST && monthStepEnabledOrNull(P807Q2Flow3Facts.MONTH_PREVIOUS) == false) {
+            log("$tag month step=previous already-first-month month=[${P807Q2Flow3Facts.HOME_MONTH_FIRST}] previous=disabled")
+            return true
+        }
         if (!awaitMonthRowReady()) {
             log("$tag month step=previous ready=false " + monthRowReport())
             flow.dumpUiSnapshot("homeMonthPrevious:not-ready")
             return false
-        }
-        val month = monthLabel()
-        if (month == P807Q2Flow3Facts.HOME_MONTH_FIRST) {
-            log("$tag month step=previous already-first-month month=[$month]")
-            return true
         }
         return clickVerifiedExact("homeMonthPrevious", P807Q2Flow3Facts.MONTH_PREVIOUS) {
             hasExactText(P807Q2Flow3Facts.HOME_MONTH_FIRST)
@@ -720,10 +733,15 @@ internal class P807Q2Flow3Ui(
     }
 
     /**
-     * The calendar's own next-month step (`P503CalendarScreen.kt:79`, a plain `TextButton`). The effect
-     * is the arrival month's calendar title, for the same reason as [openCalendar]: it is the only
-     * reading that proves the CALENDAR moved, and the step is only taken after the calendar's own
-     * first-month label is on screen.
+     * The calendar's own next-month step (`P503CalendarScreen.kt:79`): `TextButton(onClick = {
+     * onShiftMonth(1) })` — ALWAYS enabled, `+1`, and with no domain check
+     * (`P806CalendarPresentation.kt:74-77`), so it is NOT idempotent. A retried click skips a month,
+     * and `2026年11月` would never appear again: the leg would go red after a full device round, not
+     * pass falsely. The step is ONE-WAY for that reason: the calendar must already stand on its pinned
+     * first month, [activateOnce] sends the action at most once (a refusal is the failure, never a
+     * retry), and only then is the arrival label awaited in a wider, still bounded window. The effect
+     * stays the calendar's own title — the only reading that proves the CALENDAR moved (see
+     * [openCalendar]).
      */
     fun calendarNextMonth(expectedMonthLabel: String): Boolean {
         if (!awaitExactText(P807Q2Flow3Facts.CALENDAR_MONTH_FIRST, timeoutMillis = MONTH_ROW_TIMEOUT_MILLIS)) {
@@ -731,9 +749,12 @@ internal class P807Q2Flow3Ui(
             flow.dumpUiSnapshot("calendarNextMonth:not-ready")
             return false
         }
-        return clickVerifiedExact("calendarNextMonth", P807Q2Flow3Facts.MONTH_NEXT) {
-            awaitExactText(expectedMonthLabel, timeoutMillis = EFFECT_WAIT_MILLIS)
+        if (!activateOnce("calendarNextMonth", P807Q2Flow3Facts.MONTH_NEXT)) {
+            log("$tag calendar step=next sent=false target=[${P807Q2Flow3Facts.MONTH_NEXT}] surface=[" + flow.surfaceTitle() + "]")
+            flow.dumpUiSnapshot("calendarNextMonth:not-sent")
+            return false
         }
+        return awaitExactText(expectedMonthLabel, timeoutMillis = MONTH_STEP_WAIT_MILLIS)
     }
 
     /**
@@ -775,16 +796,23 @@ internal class P807Q2Flow3Ui(
     /** Whether [text] is a resolved month label (the selector prints `YearMonth.toString()`). */
     private fun isMonthLabel(text: String?): Boolean = text != null && MONTH_LABEL.matches(text)
 
-    /** Whether the action carrying [text] — itself or its nearest clickable ancestor — is ENABLED. */
-    private fun monthStepEnabled(text: String): Boolean {
-        var current: AccessibilityNodeInfo? = flow.findAppNode { node -> flow.textOf(node) == text } ?: return false
+    /**
+     * Whether the action carrying [text] — itself or its nearest clickable ancestor — is ENABLED, or
+     * `null` when the tree holds no such action at all. The tri-state lets the caller tell the domain
+     * edge (present AND disabled) from a broken tree (absent) instead of reading both as "not on".
+     */
+    private fun monthStepEnabledOrNull(text: String): Boolean? {
+        var current: AccessibilityNodeInfo? = flow.findAppNode { node -> flow.textOf(node) == text } ?: return null
         repeat(CLICK_ANCESTOR_DEPTH) {
-            val node = current ?: return false
+            val node = current ?: return null
             if (node.isClickable) return node.isEnabled
             current = node.parent
         }
-        return false
+        return null
     }
+
+    /** Whether the row action carrying [text] is present and enabled. */
+    private fun monthStepEnabled(text: String): Boolean = monthStepEnabledOrNull(text) == true
 
     // ---------------------------------------------------------------- refund form
 
@@ -1875,6 +1903,9 @@ internal class P807Q2Flow3Ui(
 
         /** How long the HOME month row may take to become operable (a monthly READ, not a click). */
         const val MONTH_ROW_TIMEOUT_MILLIS = 30_000L
+
+        /** How long the calendar's ONE next-month action may take to re-title the header. */
+        const val MONTH_STEP_WAIT_MILLIS = 10_000L
 
         /** How many fresh trees the custom window's pair may be read from before it answers absent. */
         const val WINDOW_READ_ATTEMPTS = 3
