@@ -96,8 +96,9 @@ Process crashed.
 INSTRUMENTATION_CODE: 0
 """
 
-# The device-log protocol the driver must follow (W-01): the clear runs after the installs and
-# before the case, and the dump runs AFTER the case, so `logcat.txt` carries this run's lines.
+# The device-log protocol the driver must follow: the clear runs after the installs and before the
+# case, and the dump runs after the case, so `logcat.txt` carries this run's own lines. Reverse a leg
+# of that order and the export carries install noise, or nothing of the case at all.
 LOGCAT_CLEAR = ("logcat", "-c")
 LOGCAT_DUMP = ("logcat", "-d", "-v", "threadtime")
 # A stand-in for a line the CASE itself logs (`Log.i(TAG, "P807-Q2FLOW2 …")`): a driver that
@@ -133,7 +134,11 @@ class Parsing(unittest.TestCase):
     def test_a_process_crash_transcript_is_a_failure_not_a_pass(self) -> None:
         parsed = parse_instrumentation(CRASHED)
         self.assertIn("Process crashed", parsed["markers"])
-        self.assertNotIn(PASS_MARKER, CRASHED)
+        reasons = judge(CRASHED, CASE)
+        self.assertTrue(reasons)
+        joined = " ".join(reasons)
+        self.assertIn("carries failure markers", joined)
+        self.assertIn(repr(PASS_MARKER), joined)
 
 
 class Judging(unittest.TestCase):
@@ -144,6 +149,16 @@ class Judging(unittest.TestCase):
         joined = " ".join(judge(FAILING, CASE))
         self.assertIn("did not pass", joined)
         self.assertIn("FAILURES!!!", joined)
+
+    def test_a_short_message_transcript_is_red_for_its_markers(self) -> None:
+        # End to end: a transcript whose only failure tokens ride STATUS fields is red for those
+        # tokens, not merely red for its missing pass marker.
+        reasons = judge(SHORT_MSG, CASE)
+        self.assertTrue(reasons)
+        joined = " ".join(reasons)
+        self.assertIn("carries failure markers", joined)
+        self.assertIn("Error=", joined)
+        self.assertIn("shortMsg=", joined)
 
     def test_a_missing_pass_marker_is_red(self) -> None:
         text = PASSING.replace("OK (1 test)\n", "")
@@ -357,8 +372,8 @@ class Session(unittest.TestCase):
         host = json.loads((self.evidence / HOST_FILE).read_text())
         self.assertEqual("FAIL", host["status"])
         self.assertTrue(host["reasons"])
-        # W-01: a failing case still exports the run's tail, so the artifact carries the failure
-        # context instead of install noise.
+        # A failing case still exports the run's tail, so the artifact carries the failure context
+        # instead of install noise.
         self.assertEqual(LOGCAT_RUN_LINE, (self.evidence / "logcat.txt").read_text())
 
     def test_a_nonzero_exit_code_is_red_even_with_a_passing_transcript(self) -> None:
@@ -368,8 +383,8 @@ class Session(unittest.TestCase):
         self.assertIn("exit code is 137", str(caught.exception))
 
     def test_the_logcat_is_cleared_after_the_install_and_exported_after_the_case(self) -> None:
-        # W-01: the clear precedes the case and the dump follows it, so `logcat.txt` carries THIS
-        # run's lines. Moving either call across `am instrument` makes this test red.
+        # The clear precedes the case and the dump follows it, so `logcat.txt` carries this run's
+        # lines; moving either call across `am instrument` makes this test red.
         device = FakeDevice()
         payload = run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
         calls = list(device.calls)
@@ -521,6 +536,19 @@ class Gating(unittest.TestCase):
         verdict = gate_evidence(self.evidence, SHA, 2)
         self.assertEqual("FAIL", verdict["verdict"])
         self.assertTrue(verdict["reasons"])
+
+    def test_a_crashed_process_result_line_fails_the_gate(self) -> None:
+        # The carrier is the line `am instrument` prints for a dead process, on an ordinary line
+        # rather than a STATUS field: the same failure reaches the transcript in two shapes, and the
+        # gate must read both. `Process crashed` also rides this line, so the `shortMsg=` assertion
+        # below is what keeps that token in `FAILURE_MARKERS`.
+        carrier = "INSTRUMENTATION_RESULT: shortMsg=Process crashed.\n"
+        self.write(transcript=PASSING.replace("INSTRUMENTATION_CODE: -1", carrier + "INSTRUMENTATION_CODE: -1"))
+        verdict = gate_evidence(self.evidence, SHA, 2)
+        self.assertEqual("FAIL", verdict["verdict"])
+        joined = " ".join(verdict["reasons"])
+        self.assertIn("carries failure markers", joined)
+        self.assertIn("shortMsg=", joined)
 
     def test_a_missing_pass_marker_fails_the_gate(self) -> None:
         self.write(transcript=PASSING.replace("OK (1 test)\n", ""))
