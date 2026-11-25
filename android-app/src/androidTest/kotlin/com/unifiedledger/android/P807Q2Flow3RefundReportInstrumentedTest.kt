@@ -67,10 +67,12 @@ import org.junit.runner.RunWith
  * 8. The original expense's month: the October window's two bounds read back the same way, it still
  *    reads 净支出（含退款） 21.00 and 普通收支笔数：1, and its whole port face equals the pre-flow face
  *    item by item.
- * 9. The calendar and the day detail: one previous step pins the HOME cursor to the domain's first
- *    month 2026-10, the calendar opens there, one forward step reaches 2026年11月, the arrival day's
- *    cell carries its exact accessibility text, and that cell opens 报表明细 with 共 1 笔明细, the
- *    day header, the row's own headline and each posting line.
+ * 9. The calendar and the day detail: one previous step — taken only once the month row reports a
+ *    resolved YYYY-MM label and an ENABLED ‹, and verified on that label — pins the HOME cursor to the
+ *    domain's first month 2026-10, the calendar opens there (its own 2026年10月 label is the proof),
+ *    one forward step reaches 2026年11月, the arrival day's cell carries its exact accessibility text,
+ *    and that cell opens 报表明细 with 共 1 笔明细, the day header, the row's own headline and each
+ *    posting line.
  * 10. The detail round trip: the row's read-only detail opens, one 返回 reaches the same day detail
  *     and a second 返回 the same calendar month, and the whole read face equals the post-write read.
  *
@@ -403,19 +405,29 @@ class P807Q2Flow3RefundReportInstrumentedTest {
 
         // ---------------------------------------------------------------- L9: the calendar and the day detail
         ui.goHome()
-        ui.homeMonthStepPrevious()
-        assertTrue(
-            "${facts.PREFIX} one HOME step must land the domain's first month [${facts.HOME_MONTH_FIRST}]",
-            ui.awaitExactText(facts.HOME_MONTH_FIRST),
-        )
-        ui.openCalendar()
-        assertTrue(
-            "${facts.PREFIX} the calendar must open on the pinned first month [${facts.CALENDAR_MONTH_FIRST}]",
+        assertStep(
+            ui,
+            "homeMonthPrevious",
+            "one HOME step must land the domain's first month [${facts.HOME_MONTH_FIRST}]",
+            ui.homeMonthStepPrevious(),
+        ) { ui.monthRowReport() }
+        assertStep(ui, "openCalendar", "the calendar's own HOME entry must open it", ui.openCalendar())
+        assertStep(
+            ui,
+            "calendarFirstMonth",
+            "the calendar must open on the pinned first month [${facts.CALENDAR_MONTH_FIRST}]",
             ui.awaitExactText(facts.CALENDAR_MONTH_FIRST),
         )
-        ui.calendarNextMonth()
-        assertTrue(
-            "${facts.PREFIX} one calendar step must reach the arrival month [${facts.CALENDAR_MONTH_ARRIVAL}]",
+        assertStep(
+            ui,
+            "calendarNextMonth",
+            "the calendar's own next step must reach the arrival month [${facts.CALENDAR_MONTH_ARRIVAL}]",
+            ui.calendarNextMonth(facts.CALENDAR_MONTH_ARRIVAL),
+        )
+        assertStep(
+            ui,
+            "calendarArrivalMonth",
+            "one calendar step must reach the arrival month [${facts.CALENDAR_MONTH_ARRIVAL}]",
             ui.awaitExactText(facts.CALENDAR_MONTH_ARRIVAL),
         )
         val arrivalCalendar = ledger.calendar(NOVEMBER)
@@ -427,17 +439,23 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             dayCellText,
         )
         assertEquals("${facts.PREFIX} the arrival day must carry exactly one contribution", 1, arrivalDay.transactionCount)
-        assertTrue(
-            "${facts.PREFIX} the arrival day's cell must render its exact accessibility text",
+        assertStep(
+            ui,
+            "arrivalDayCell",
+            "the arrival day's cell must render its exact accessibility text",
             ui.awaitExactText(dayCellText, seek = true),
         )
-        assertTrue("${facts.PREFIX} the arrival day's cell must open the day detail", ui.openDayCell(dayCellText))
-        assertTrue(
-            "${facts.PREFIX} the day detail must count exactly one row [${facts.DRILLDOWN_COUNT_ONE}]",
+        assertStep(ui, "openDayCell", "the arrival day's cell must open the day detail", ui.openDayCell(dayCellText))
+        assertStep(
+            ui,
+            "drilldownCountOne",
+            "the day detail must count exactly one row [${facts.DRILLDOWN_COUNT_ONE}]",
             ui.awaitExactText(facts.DRILLDOWN_COUNT_ONE, seek = true),
         )
-        assertTrue(
-            "${facts.PREFIX} the day detail's header must name the day [${facts.DAY_DETAIL_PREFIX}]",
+        assertStep(
+            ui,
+            "dayDetailHeader",
+            "the day detail's header must name the day [${facts.DAY_DETAIL_PREFIX}]",
             ui.awaitPrefixText(facts.DAY_DETAIL_PREFIX, seek = true),
         )
         val dayDrilldown = ledger.drilldown(arrivalWindow)
@@ -447,41 +465,55 @@ class P807Q2Flow3RefundReportInstrumentedTest {
         assertEquals("${facts.PREFIX} the day's one row must be the refund", added.transactionId, arrivalRow.transactionId)
         assertEquals("${facts.PREFIX} the day's one row must read as REFUND_RECEIPT", TransactionKind.REFUND_RECEIPT, arrivalRow.kind)
         assertEquals("${facts.PREFIX} the day's one row must carry the pinned statistics instant", facts.ARRIVAL_INSTANT, arrivalRow.statisticsAt)
-        assertTrue(
-            "${facts.PREFIX} the day detail must group the row under its own day [${facts.ARRIVAL_DAY} · 1 笔]",
+        assertStep(
+            ui,
+            "dayGroupRow",
+            "the day detail must group the row under its own day [${facts.ARRIVAL_DAY} · 1 笔]",
             ui.awaitExactText("${facts.ARRIVAL_DAY} · 1 笔", seek = true),
         )
         val headline = p807Q2Flow3RowHeadline(arrivalRow)
-        assertTrue(
-            "${facts.PREFIX} the day detail must print the row's exact headline [$headline]",
+        assertStep(
+            ui,
+            "rowHeadline",
+            "the day detail must print the row's exact headline [$headline]",
             ui.awaitExactText(headline, seek = true),
         )
         p807Q2Flow3PostingLines(added.legs).forEach { line ->
-            assertTrue(
-                "${facts.PREFIX} the day detail must print the exact posting line [$line]",
+            assertStep(
+                ui,
+                "postingLine",
+                "the day detail must print the exact posting line [$line]",
                 ui.awaitExactText(line, seek = true),
             )
         }
 
         // ---------------------------------------------------------------- L10: the detail round trip writes nothing
         ui.scrollBackTo(facts.DAY_DETAIL_PREFIX)
-        assertTrue("${facts.PREFIX} the row's read-only detail must open", ui.openRowDetail(headline))
-        assertTrue(
-            "${facts.PREFIX} the first 返回 must land on the same day detail",
+        assertStep(ui, "openRowDetail", "the row's read-only detail must open", ui.openRowDetail(headline))
+        assertStep(
+            ui,
+            "backToDayDetail",
+            "the first 返回 must land on the same day detail",
             ui.backVerified("backToDayDetail") { ui.hasExactText(headline) },
         )
         ui.scrollBackTo(facts.DAY_DETAIL_PREFIX)
-        assertTrue(
-            "${facts.PREFIX} the returned day detail must still count one row",
+        assertStep(
+            ui,
+            "returnedCountOne",
+            "the returned day detail must still count one row",
             ui.awaitExactText(facts.DRILLDOWN_COUNT_ONE),
         )
-        assertTrue(
-            "${facts.PREFIX} the second 返回 must close the day detail",
+        assertStep(
+            ui,
+            "backToCalendar",
+            "the second 返回 must close the day detail",
             ui.backVerified("backToCalendar") { !ui.hasExactText(facts.DRILLDOWN_TITLE) && !ui.hasExactText(facts.DETAIL_TITLE) },
         )
         ui.scrollBackTo(facts.CALENDAR_TITLE)
-        assertTrue(
-            "${facts.PREFIX} the returned calendar must still stand on the arrival month",
+        assertStep(
+            ui,
+            "returnedCalendarMonth",
+            "the returned calendar must still stand on the arrival month",
             ui.awaitExactText(facts.CALENDAR_MONTH_ARRIVAL),
         )
         val s3 = ledger.snapshot()
@@ -610,6 +642,27 @@ class P807Q2Flow3RefundReportInstrumentedTest {
         } else {
             dump
         }
+    }
+
+    /**
+     * L9/L10's failure shape: the message carries the window DUMP, so a red leg leaves a reading
+     * instead of a guess — run `45702988967` failed the first calendar step on a bare assertion with
+     * no dump at all. [detail] is evaluated only on failure and carries step-specific readings such
+     * as [P807Q2Flow3Ui.monthRowReport].
+     */
+    private fun assertStep(
+        ui: P807Q2Flow3Ui,
+        step: String,
+        what: String,
+        ok: Boolean,
+        detail: () -> String = { "" },
+    ) {
+        if (ok) return
+        val extra = detail()
+        throw AssertionError(
+            "${P807Q2Flow3Facts.PREFIX} $what (step=$step" + (if (extra.isEmpty()) "" else " " + extra) + ") " +
+                "dump=" + failureDump(ui, "step:$step"),
+        )
     }
 
     /** The candidate rows a failure message carries: an unavailable or unreadable page is NAMED, never a zero. */

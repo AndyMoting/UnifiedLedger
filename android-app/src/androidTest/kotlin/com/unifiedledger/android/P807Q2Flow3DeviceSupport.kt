@@ -256,6 +256,13 @@ private val REPORT_TIME_ZONE: TimeZone = TimeZone.of("Asia/Shanghai")
 private const val REFUND_CANDIDATE_PAGE_SIZE = 50
 
 /**
+ * The HOME month row's resolved label shape: the selector prints `YearMonth.toString()`
+ * (`P503OverviewScreen.kt:174`), so only a `YYYY-MM` text is a loaded month. Anything else — the
+ * `本月` placeholder or an empty label — means the ledger clock or the month read has not landed.
+ */
+private val MONTH_LABEL = Regex("\\d{4}-\\d{2}")
+
+/**
  * The confirmation page's frozen occurred-at text, mirroring `occurredAtDisplayText`
  * (`OccurredAtPicker.kt:54-58`): the Shanghai wall clock, the `（UTC+8）` annotation and the UTC ISO
  * string, and only the wall clock for dates whose offset the annotation cannot describe.
@@ -661,20 +668,122 @@ internal class P807Q2Flow3Ui(
         }
     }
 
-    /** The HOME month row's one previous step, which lands on the domain's FIRST month. */
-    fun homeMonthStepPrevious() {
-        flow.clickApp(P807Q2Flow3Facts.MONTH_PREVIOUS)
+    /**
+     * The HOME month row's one previous step, which lands on the domain's FIRST month.
+     *
+     * A READY ROW IS CLICKED, NEVER A DISABLED ONE. Run `45702988967` sent this click while the row
+     * was still loading: `‹` is `TextButton(enabled = onPrevious != null)` (`P8HomeFlow.kt:268`) and
+     * `onPrevious` comes from `monthStepEdges(selectedMonth, resolvedCurrentMonth, selectableMonths)`
+     * (`P503OverviewScreen.kt:172-175`), whose `selectableMonths` is the ASYNC monthly read's
+     * answer (default `emptyList()`, `P503AppState.kt:144`). A disabled TextButton accepts the
+     * coordinate fallback and does nothing at all, so the action was "sent" and the month never moved
+     * — 30 s of waiting then failed with no reading. [awaitMonthRowReady] therefore waits for a
+     * resolved `YYYY-MM` label AND an ENABLED `‹`, and the click itself is the verified one.
+     *
+     * ONE EXPLICIT EXCEPTION: a row already reading [P807Q2Flow3Facts.HOME_MONTH_FIRST] needs no click
+     * at all (`already-first-month`), because the leg's purpose is to make the calendar open on that
+     * month. A disabled button is never treated as success — it cannot answer for the month.
+     */
+    fun homeMonthStepPrevious(): Boolean {
+        if (!awaitMonthRowReady()) {
+            log("$tag month step=previous ready=false " + monthRowReport())
+            flow.dumpUiSnapshot("homeMonthPrevious:not-ready")
+            return false
+        }
+        val month = monthLabel()
+        if (month == P807Q2Flow3Facts.HOME_MONTH_FIRST) {
+            log("$tag month step=previous already-first-month month=[$month]")
+            return true
+        }
+        return clickVerifiedExact("homeMonthPrevious", P807Q2Flow3Facts.MONTH_PREVIOUS) {
+            hasExactText(P807Q2Flow3Facts.HOME_MONTH_FIRST)
+        }
     }
 
-    /** The HOME calendar entry opens the monthly calendar (`P8HomeFlow.kt:276-278`). */
-    fun openCalendar() {
-        flow.clickApp(P807Q2Flow3Facts.CALENDAR_ENTRY)
-        flow.awaitAppText(P807Q2Flow3Facts.CALENDAR_TITLE)
+    /**
+     * The HOME calendar entry opens the monthly calendar, and the calendar's OWN first-month label is
+     * the effect. That label is `p806CalendarMonthLabel(state.month)` = `2026年10月`
+     * (`P503CalendarScreen.kt:75`), which the overview never prints — the entry chip and the calendar
+     * title share the literal `收支日历` (`P8HomeFlow.kt:277`, `P503CalendarScreen.kt:72`), so waiting
+     * for that title would be satisfied by the HOME chip itself and prove nothing (`P807Q2Flow3Facts`
+     * keeps the entry and the title as the same constant for exactly that reason).
+     */
+    fun openCalendar(): Boolean {
+        if (!awaitMonthRowReady()) {
+            log("$tag calendar ready=false " + monthRowReport())
+            flow.dumpUiSnapshot("openCalendar:not-ready")
+            return false
+        }
+        return clickVerifiedExact("openCalendar", P807Q2Flow3Facts.CALENDAR_ENTRY) {
+            hasExactText(P807Q2Flow3Facts.CALENDAR_MONTH_FIRST)
+        }
     }
 
-    /** The calendar's OWN next-month step (`P503CalendarScreen.kt:79`). */
-    fun calendarNextMonth() {
-        flow.clickApp(P807Q2Flow3Facts.MONTH_NEXT)
+    /**
+     * The calendar's own next-month step (`P503CalendarScreen.kt:79`, a plain `TextButton`). The effect
+     * is the arrival month's calendar title, for the same reason as [openCalendar]: it is the only
+     * reading that proves the CALENDAR moved, and the step is only taken after the calendar's own
+     * first-month label is on screen.
+     */
+    fun calendarNextMonth(expectedMonthLabel: String): Boolean {
+        if (!awaitExactText(P807Q2Flow3Facts.CALENDAR_MONTH_FIRST, timeoutMillis = MONTH_ROW_TIMEOUT_MILLIS)) {
+            log("$tag calendar step=next ready=false absent=[${P807Q2Flow3Facts.CALENDAR_MONTH_FIRST}] surface=[" + flow.surfaceTitle() + "]")
+            flow.dumpUiSnapshot("calendarNextMonth:not-ready")
+            return false
+        }
+        return clickVerifiedExact("calendarNextMonth", P807Q2Flow3Facts.MONTH_NEXT) {
+            awaitExactText(expectedMonthLabel, timeoutMillis = EFFECT_WAIT_MILLIS)
+        }
+    }
+
+    /**
+     * The month row's readiness reading for a failure message: the label as rendered, whether `‹` is
+     * present and enabled, and the surface the failure happened on. A row that never becomes ready
+     * names itself here instead of leaving the next round to guess.
+     */
+    fun monthRowReport(): String {
+        val label = monthLabel() ?: "none"
+        val previousNode = flow.findAppNode { node -> flow.textOf(node) == P807Q2Flow3Facts.MONTH_PREVIOUS }
+        val previous = if (previousNode == null) "absent" else if (monthStepEnabled(P807Q2Flow3Facts.MONTH_PREVIOUS)) "enabled" else "disabled"
+        return "month=[$label] previous=$previous surface=[" + flow.surfaceTitle() + "]"
+    }
+
+    /**
+     * Bounded wait for the HOME month row to be OPERABLE: a resolved `YYYY-MM` label and an ENABLED
+     * `‹`. The wait is forced-current every poll (the same [refreshTreeForRead] rule the field input
+     * uses), so a stale cache cannot answer either half. Exhausting the window is a failure, never an
+     * implicit pass: the caller logs [monthRowReport] and dumps the surface.
+     */
+    private fun awaitMonthRowReady(timeoutMillis: Long = MONTH_ROW_TIMEOUT_MILLIS): Boolean {
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + timeoutMillis
+        while (SystemClock.elapsedRealtime() < deadline) {
+            refreshTreeForRead()
+            val month = monthLabel()
+            if (isMonthLabel(month) && monthStepEnabled(P807Q2Flow3Facts.MONTH_PREVIOUS)) {
+                log("$tag month row ready month=[$month] previous=enabled after=${SystemClock.elapsedRealtime() - started}ms")
+                return true
+            }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        return false
+    }
+
+    /** The row's own month label — the one visible node printing exactly `YYYY-MM` — or null. */
+    private fun monthLabel(): String? = visibleTexts().firstOrNull { text -> isMonthLabel(text) }
+
+    /** Whether [text] is a resolved month label (the selector prints `YearMonth.toString()`). */
+    private fun isMonthLabel(text: String?): Boolean = text != null && MONTH_LABEL.matches(text)
+
+    /** Whether the action carrying [text] — itself or its nearest clickable ancestor — is ENABLED. */
+    private fun monthStepEnabled(text: String): Boolean {
+        var current: AccessibilityNodeInfo? = flow.findAppNode { node -> flow.textOf(node) == text } ?: return false
+        repeat(CLICK_ANCESTOR_DEPTH) {
+            val node = current ?: return false
+            if (node.isClickable) return node.isEnabled
+            current = node.parent
+        }
+        return false
     }
 
     // ---------------------------------------------------------------- refund form
@@ -1763,6 +1872,9 @@ internal class P807Q2Flow3Ui(
 
         /** Pushes a field whose centre is ABOVE the label's centre behind every field at or below it. */
         const val ABOVE_LABEL_PENALTY = 10_000
+
+        /** How long the HOME month row may take to become operable (a monthly READ, not a click). */
+        const val MONTH_ROW_TIMEOUT_MILLIS = 30_000L
 
         /** How many fresh trees the custom window's pair may be read from before it answers absent. */
         const val WINDOW_READ_ATTEMPTS = 3
