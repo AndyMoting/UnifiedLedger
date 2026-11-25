@@ -851,8 +851,11 @@ internal class P807Q2Flow2Ui(
     /** Whether [node] is radio-like: checkable, selected, or the platform's radio/check class. */
     private fun isRadioNode(node: AccessibilityNodeInfo): Boolean {
         val className = node.className?.toString().orEmpty()
-        return node.isCheckable || node.isChecked || node.isSelected ||
-            className.endsWith("RadioButton") || className.endsWith("CheckBox")
+        return node.isCheckable ||
+            node.isChecked ||
+            node.isSelected ||
+            className.endsWith("RadioButton") ||
+            className.endsWith("CheckBox")
     }
 
     /** Whether [node]'s centre sits on [band]'s row, with the slack a re-measured row needs. */
@@ -876,7 +879,13 @@ internal class P807Q2Flow2Ui(
      */
     private fun radioSlotLeftOf(label: AccessibilityNodeInfo): Pair<Int, Int>? {
         val band = flow.bounds(label)
-        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        val density =
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext
+                .resources
+                .displayMetrics
+                .density
         val x = band.left - (RADIO_SLOT_DP * density).toInt()
         return if (x > 0) x to band.centerY() else null
     }
@@ -887,9 +896,11 @@ internal class P807Q2Flow2Ui(
         val down = SystemClock.uptimeMillis()
         val events =
             listOf(
-                MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
+                MotionEvent
+                    .obtain(down, down, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
                     .apply { source = InputDevice.SOURCE_TOUCHSCREEN },
-                MotionEvent.obtain(down, down + TOUCH_HOLD_MILLIS, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
+                MotionEvent
+                    .obtain(down, down + TOUCH_HOLD_MILLIS, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
                     .apply { source = InputDevice.SOURCE_TOUCHSCREEN },
             )
         try {
@@ -958,7 +969,11 @@ internal class P807Q2Flow2Ui(
             }
         }
         val texts =
-            flow.appNodes().map { node -> flow.textOf(node) }.filter { text -> text.isNotBlank() }.distinct()
+            flow
+                .appNodes()
+                .map { node -> flow.textOf(node) }
+                .filter { text -> text.isNotBlank() }
+                .distinct()
         lines.add("visible-texts count=" + texts.size + " [" + texts.joinToString(" ¦ ") + "]")
         return reportOf(lines)
     }
