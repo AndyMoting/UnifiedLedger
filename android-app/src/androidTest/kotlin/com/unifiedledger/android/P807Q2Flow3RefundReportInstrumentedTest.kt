@@ -411,7 +411,7 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "one HOME step must land the domain's first month [${facts.HOME_MONTH_FIRST}]",
             ui.homeMonthStepPrevious(),
         ) { ui.monthRowReport() }
-        assertStep(ui, "openCalendar", "the calendar's own HOME entry must open it", ui.openCalendar())
+        assertStep(ui, "openCalendar", "the calendar's own HOME entry must open it", ui.openCalendar(facts.HOME_MONTH_FIRST))
         assertStep(
             ui,
             "calendarFirstMonth",

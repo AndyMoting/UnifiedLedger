@@ -677,7 +677,7 @@ internal class P807Q2Flow3Ui(
      * (`P503OverviewScreen.kt:172-175`), whose `selectableMonths` is the ASYNC monthly read's
      * answer (default `emptyList()`, `P503AppState.kt:144`). A disabled TextButton accepts the
      * coordinate fallback and does nothing at all, so the action was "sent" and the month never moved
-     * — 30 s of waiting then failed with no reading. [awaitMonthRowReady] therefore waits for a
+     * — 30 s of waiting then failed with no reading. [awaitMonthPreviousReady] therefore waits for a
      * resolved `YYYY-MM` label AND an ENABLED `‹`, and the click itself is the verified one.
      *
      * THE EDGE IS PROVEN BY THE DISABLED STEPPER, NOT BY THE LABEL. The row's label is the SELECTOR
@@ -703,7 +703,7 @@ internal class P807Q2Flow3Ui(
             log("$tag month step=previous already-first-month month=[${P807Q2Flow3Facts.HOME_MONTH_FIRST}] previous=disabled")
             return true
         }
-        if (!awaitMonthRowReady()) {
+        if (!awaitMonthPreviousReady()) {
             log("$tag month step=previous ready=false " + monthRowReport())
             flow.dumpUiSnapshot("homeMonthPrevious:not-ready")
             return false
@@ -720,10 +720,32 @@ internal class P807Q2Flow3Ui(
      * title share the literal `收支日历` (`P8HomeFlow.kt:277`, `P503CalendarScreen.kt:72`), so waiting
      * for that title would be satisfied by the HOME chip itself and prove nothing (`P807Q2Flow3Facts`
      * keeps the entry and the title as the same constant for exactly that reason).
+     *
+     * WHY THIS GATE IS ONLY "THE EXPECTED MONTH IS RENDERED, AND THE ENTRY IS THERE". Run
+     * `45708517886` reused the PREVIOUS STEP's readiness gate here, which also demands an ENABLED
+     * `‹` — but this leg runs right after the cursor reached the domain's FIRST month, where
+     * `monthStepEdges.previous` is null by construction (`P503LedgerViewPresentation.kt:211`) and `‹`
+     * is disabled on purpose (`P8HomeFlow.kt:268`). The gate could therefore never pass: 30 s, zero
+     * clicks, a red with no attempt (`month=[2026-10] previous=disabled`). Stepper operability belongs
+     * to [homeMonthStepPrevious] alone. The entry itself is `TextButton(onClick = open)` with NO
+     * enabled gate (`P8HomeFlow.kt:276-278`; the host only renders it while interactions are enabled,
+     * `P503OverviewScreen.kt:177`), so its presence is its operability.
      */
-    fun openCalendar(): Boolean {
-        if (!awaitMonthRowReady()) {
-            log("$tag calendar ready=false " + monthRowReport())
+    fun openCalendar(expectedMonthLabel: String): Boolean {
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + MONTH_ROW_TIMEOUT_MILLIS
+        var ready = false
+        while (SystemClock.elapsedRealtime() < deadline) {
+            refreshTreeForRead()
+            if (monthLabel() == expectedMonthLabel && hasExactText(P807Q2Flow3Facts.CALENDAR_ENTRY)) {
+                log("$tag calendar row ready month=[$expectedMonthLabel] entry=present after=${SystemClock.elapsedRealtime() - started}ms")
+                ready = true
+                break
+            }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        if (!ready) {
+            log("$tag calendar ready=false expected=[$expectedMonthLabel] " + monthRowReport())
             flow.dumpUiSnapshot("openCalendar:not-ready")
             return false
         }
@@ -758,9 +780,9 @@ internal class P807Q2Flow3Ui(
     }
 
     /**
-     * The month row's readiness reading for a failure message: the label as rendered, whether `‹` is
-     * present and enabled, and the surface the failure happened on. A row that never becomes ready
-     * names itself here instead of leaving the next round to guess.
+     * The month row's reading for a failure message: the label as rendered, whether `‹` is present and
+     * enabled, and the surface the failure happened on. A step that misses names the row here instead
+     * of leaving the next round to guess.
      */
     fun monthRowReport(): String {
         val label = monthLabel() ?: "none"
@@ -770,12 +792,13 @@ internal class P807Q2Flow3Ui(
     }
 
     /**
-     * Bounded wait for the HOME month row to be OPERABLE: a resolved `YYYY-MM` label and an ENABLED
-     * `‹`. The wait is forced-current every poll (the same [refreshTreeForRead] rule the field input
-     * uses), so a stale cache cannot answer either half. Exhausting the window is a failure, never an
-     * implicit pass: the caller logs [monthRowReport] and dumps the surface.
+     * The PREVIOUS step's own precondition: a resolved `YYYY-MM` label AND an ENABLED `‹`. It is
+     * deliberately not a general "month row ready" gate — [openCalendar] must not ask for `‹`, which
+     * is disabled exactly at the domain's first month. The wait is forced-current every poll (the
+     * same [refreshTreeForRead] rule the field input uses), so a stale cache cannot answer either
+     * half. Exhausting the window is a failure, never an implicit pass.
      */
-    private fun awaitMonthRowReady(timeoutMillis: Long = MONTH_ROW_TIMEOUT_MILLIS): Boolean {
+    private fun awaitMonthPreviousReady(timeoutMillis: Long = MONTH_ROW_TIMEOUT_MILLIS): Boolean {
         val started = SystemClock.elapsedRealtime()
         val deadline = started + timeoutMillis
         while (SystemClock.elapsedRealtime() < deadline) {
