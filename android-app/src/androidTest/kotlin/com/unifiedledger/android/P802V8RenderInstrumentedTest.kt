@@ -134,6 +134,12 @@ class P802V8RenderInstrumentedTest {
             // is an EARLIER plateau (the loading face, typically), and accepting it would pin finalState,
             // completedIndex and renderFirstPageMs to frames the list face has already replaced while the
             // only bound on the reading (finite and positive) stayed green.
+            //
+            // The `takeIf` below is a semantic anchor, not a redundant restatement. The backward scan
+            // returns the NEWEST run it finds, and that run's last sample need not be the newest one:
+            // samples [A, B, B, B, C] with settleSamples=3 return index 3, not the last index. The
+            // filter rejects that older plateau, so only a run ending at the newest sample can become
+            // `candidate`; the assertion after the loop then cannot fail.
             val candidate = p802V8FirstSettledIndex(samples, P802V8RenderFacts.SETTLE_SAMPLES)?.takeIf { index -> index == samples.lastIndex }
             // A settled state that still equals the pre-submit frame is the untouched condition area,
             // not a rendered result list: it is rejected and sampling continues.
@@ -159,8 +165,11 @@ class P802V8RenderInstrumentedTest {
                 "lastProbe=${pendingProbe ?: "no candidate settled state"}",
             settledIndex >= 0,
         )
-        // The candidate pin above is a live guard, not a comment: a settled index that is not the newest
-        // sample means the accepted plateau is older than the frame the list face left behind.
+        // This assertion states the invariant; it is not the guard. The newest-sample relation is
+        // already enforced where `candidate` is formed: the `takeIf` above rejects any run that does
+        // not end at `samples.lastIndex`, so `settledIndex` can only be assigned that index. The
+        // assertion cannot fail while that construction holds; it would catch only a refactor that
+        // dropped the filter, which is why it stays as an executable statement of the invariant.
         assertTrue(
             "the accepted settled state must be the NEWEST sample; an earlier plateau is not the state the reading reports",
             settledIndex == samples.lastIndex,
@@ -181,12 +190,12 @@ class P802V8RenderInstrumentedTest {
                 "rowBounds=${view.rowBounds} band=$band window=$window",
         )
         val finalState = samples[settledIndex]
+        // This lookup cannot miss and cannot run past the settled sample: `finalState` IS
+        // `samples[settledIndex]`, and `p802V8SameState` is `IntArray.contentEquals`, which is
+        // reflexive, so the first equal sample exists at or before `settledIndex`. Earlier revisions
+        // asserted `completedIndex >= 0` and `completedIndex <= settledIndex`; both follow from the
+        // lookup and the list alone, so they held whatever the pixels did and guarded nothing.
         val completedIndex = samples.indexOfFirst { sample -> p802V8SameState(sample, finalState) }
-        assertTrue("the completed sample must be one of the samples", completedIndex >= 0)
-        assertTrue(
-            "the completed sample can never follow the settled one",
-            completedIndex <= settledIndex,
-        )
         // WHAT THIS CASE DOES NOT ASSERT: that `completedIndex` is the START of the settled run. The
         // accept-time candidate is `p802V8FirstSettledIndex(samples, settleSamples)` only while it ends
         // at the newest sample, so `samples[settledIndex - (SETTLE_SAMPLES - 1)]` always equals

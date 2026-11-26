@@ -855,19 +855,21 @@ internal class P802V8ResultSurface(
      * screen for a frame before its rows are laid out, so a red here means the guard fired, not that
      * every later sample would have stayed empty.
      *
-     * The tree is forced current first: this read ACCEPTS a settled pixel state, so a read served
-     * from the pre-settle client cache could accept a state the surface has already left.
+     * The tree is forced current FIRST, before the window bounds are read: the window, the header,
+     * the absent loading row and the in-band amount row must all be read after ONE forced refresh.
+     * Reading the window first let a cached root equal the expected bounds while the refreshed nodes
+     * behind it already belonged to the next frame, so the equality was judged on the stale tree.
      */
     fun confirmResultView(
         expectedWindow: Rect,
         band: Rect,
     ): P802V8ResultView? {
+        refreshTreeForRead()
         val window = windowBounds()
         check(window == expectedWindow) {
             "the app window moved during the reading: the band $band was cut from $expectedWindow, " +
                 "the window now reads $window"
         }
-        refreshTreeForRead()
         val nodes = flow.appNodes()
         val header = nodes.firstOrNull { node -> flow.textOf(node).startsWith(P802V8RenderFacts.RESULTS_HEADER) }
         val loading = nodes.firstOrNull { node -> flow.textOf(node).contains(P802V8RenderFacts.LOADING_TEXT) }
@@ -917,14 +919,13 @@ internal class P802V8ResultSurface(
     }
 
     /** Checks the tag row's box, proving the row's own state flipped; the state is the only test. */
-    private fun toggleTag(): Boolean {
-        return checkVerified(
+    private fun toggleTag(): Boolean =
+        checkVerified(
             step = "tag",
             label = P802V8RenderFacts.tagName,
             expectedState = "checked=true",
             effect = { node -> node.isChecked },
         )
-    }
 
     /**
      * Selects the merchant row's radio, proving the row's own state flipped; same shape as the tag.
@@ -934,14 +935,13 @@ internal class P802V8ResultSurface(
      * `P503SearchScreen.kt:211` reports `checked` instead. Both are read from the same node the click
      * was aimed at.
      */
-    private fun selectMerchant(): Boolean {
-        return checkVerified(
+    private fun selectMerchant(): Boolean =
+        checkVerified(
             step = "merchant",
             label = P802V8RenderFacts.merchantName,
             expectedState = "checked=true|selected=true",
             effect = { node -> node.isChecked || node.isSelected },
         )
-    }
 
     /**
      * Places ONE condition-area control and proves the surface took it: forced-current read, the
