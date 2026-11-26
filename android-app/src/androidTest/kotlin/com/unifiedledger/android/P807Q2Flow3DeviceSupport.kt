@@ -295,6 +295,18 @@ internal fun p807Q2Flow3OccurredAtDisplayText(instant: Instant): String {
 internal fun p807Q2Flow3LocalDateText(instant: Instant): String = instant.toLocalDateTime(REPORT_TIME_ZONE).date.toString()
 
 /**
+ * The calendar header's own title of the HOME row's `YYYY-MM` month: `p806CalendarMonthLabel` prints
+ * `"${month.year}年${month.month.ordinal + 1}月"` (`P806CalendarPresentation.kt:49`), so the month
+ * number is NOT zero-padded. One month is named once — the step's gate reads the HOME label and its
+ * effect reads this — and its one caller ([openCalendar]) only reaches it after its own gate
+ * matched `MONTH_LABEL`.
+ */
+internal fun p807Q2Flow3CalendarMonthTitle(homeMonthLabel: String): String {
+    val month = YearMonth(homeMonthLabel.substring(0, 4).toInt(), homeMonthLabel.substring(5, 7).toInt())
+    return month.year.toString() + "年" + (month.month.ordinal + 1) + "月"
+}
+
+/**
  * Exact minor-unit text at [precision], mirroring `p806MinorUnitsText`
  * (`P503ReportRegion.kt:189-201`) for every value this flow can meet: the refund's own legs are
  * `+/-2100`, so the `Long.MIN_VALUE` branch that function exists for is unreachable here.
@@ -766,10 +778,12 @@ internal class P807Q2Flow3Ui(
      * face, the coordinate fallback tapped the SAME point — which by then was a calendar day cell — and
      * the leg died on `2026-10-11 明细`. So the step now sends ONE activation
      * ([activateAndAwait]) and waits up to [ONE_WAY_WAIT_MILLIS] for the calendar's own face there:
-     * `收支日历` plus the `YYYY年M月` header of the month it opens on, [P807Q2Flow3Facts.CALENDAR_MONTH_FIRST]
-     * (`2026年10月`) — NOT [P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL], because the calendar opens on the
-     * HOME cursor's month (`p806CalendarInitialMonth`, `P503App.kt:1709`), which this leg has just
-     * pinned to `2026-10`; the arrival month is one `›` later.
+     * `收支日历` plus the `YYYY年M月` header of the month it opens on — [P807Q2Flow3CalendarMonthTitle]
+     * of [expectedMonthLabel], today `2026年10月` — NOT [P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL],
+     * because the calendar opens on the HOME cursor's month (`p806CalendarInitialMonth`,
+     * `P503App.kt:1709`), which this leg has just pinned to `2026-10`; the arrival month is one `›`
+     * later. The header is derived from the caller's month rather than named by a second literal, so
+     * the month the gate reads and the month the effect reads cannot drift apart.
      */
     fun openCalendar(expectedMonthLabel: String): Boolean {
         val started = SystemClock.elapsedRealtime()
@@ -792,11 +806,12 @@ internal class P807Q2Flow3Ui(
             flow.dumpUiSnapshot("openCalendar:not-ready")
             return false
         }
+        val calendarMonth = p807Q2Flow3CalendarMonthTitle(expectedMonthLabel)
         return activateAndAwait(
             step = "openCalendar",
             text = P807Q2Flow3Facts.CALENDAR_ENTRY,
-            expect = P807Q2Flow3Facts.CALENDAR_TITLE + "+" + P807Q2Flow3Facts.CALENDAR_MONTH_FIRST,
-        ) { calendarShownAt(P807Q2Flow3Facts.CALENDAR_MONTH_FIRST) }
+            expect = P807Q2Flow3Facts.CALENDAR_TITLE + "+" + calendarMonth,
+        ) { calendarShownAt(calendarMonth) }
     }
 
     /**
@@ -949,19 +964,45 @@ internal class P807Q2Flow3Ui(
 
     /**
      * The edit surface's 继续 opens the confirmation page — a FACE CHANGE, so it is ONE activation
-     * like every other face-changing step. Run 8 measured this stack's post-change tree lag at 4.18 s,
-     * and the retriable family's coordinate fallback would tap the CONFIRMATION page's action row
-     * after a missed probe — which can be `确认提交` (submitting the refund this leg exists to withhold,
-     * after which `confirmLegal` finds no `确认提交`) or `取消`. Both are red, but the first one writes
-     * before it reddens. The pre-check stays on (`alreadyOnTarget`): a surface that already shows
-     * [P807Q2Flow3Facts.CONFIRM_TITLE] needs no second 继续.
+     * like every other face-changing step. Run `45723504934` is why the retriable family cannot carry
+     * it: the semantic select on `收支日历` was accepted (`actionClick=true onScreen=true`,
+     * `logcat.txt:61597`) and the effect still read false at 403 ms (`:61602`) and at 2180 ms
+     * (`:61619`), so that family's coordinate fallback fired at `point=(933,867)` (`:61793`) on a face
+     * that had already changed, and the leg died inside `2026-10-11 明细` (the failure dump in
+     * `instrumentation.txt`). Here the same fallback would tap the CONFIRMATION page's action row
+     * after a missed probe — which can be `确认提交` (submitting the refund this leg exists to
+     * withhold, after which `confirmLegal` finds no `确认提交`) or `取消`. Both are red, but the first
+     * one writes before it reddens.
+     *
+     * TWO GUARDS, AND BOTH STAY. `alreadyOnTarget` is the reverse pre-check: a surface that already
+     * shows [P807Q2Flow3Facts.CONFIRM_TITLE] needs no second 继续. [refundEditActionReady] is the
+     * POSITIVE one, and it is there because 继续 is restored by the reducer after a field edit
+     * (`P503Reducer.kt:5755-5767`): a face still re-rendering it would answer [activateOnce]'s three
+     * lookups with `sent=[false]`. The face half uses the refund-only amount label
+     * (`P503EditScreen.kt:530-533`) instead of the surface title, because the title sits in the
+     * scrolling column header (`P503EditScreen.kt:203,230-241`) and is gone once the action row
+     * (`:702-718`) is in view.
      */
     fun proceedToConfirmation(step: String): Boolean =
         activateAndAwait(
             step = step,
             text = P807Q2Flow3Facts.CONTINUE,
             expect = P807Q2Flow3Facts.CONFIRM_TITLE,
+            gate = ::refundEditActionReady,
         ) { hasExactText(P807Q2Flow3Facts.CONFIRM_TITLE) }
+
+    /**
+     * [proceedToConfirmation]'s POSITIVE gate: the refund edit surface carries its own refund-only
+     * amount label at the currency the arrival account names ([P807Q2Flow3Facts.LABEL_AMOUNT_CNY],
+     * `P503EditScreen.kt:530-533`) and [P807Q2Flow3Facts.CONTINUE] is on it. Both halves are bounded
+     * by this file's own text wait ([NODE_TIMEOUT_MILLIS]) and both read the tree without moving it
+     * (`seek = false`): the label is read with the containing test the field-chain assertions use,
+     * because Compose merges a field's label into its own node.
+     */
+    private fun refundEditActionReady(): Boolean {
+        if (!awaitAnywhereText(P807Q2Flow3Facts.LABEL_AMOUNT_CNY, seek = false)) return false
+        return awaitExactText(P807Q2Flow3Facts.CONTINUE)
+    }
 
     /**
      * Selects the refund type row. The radio carries no text, so the row is named by its own label
@@ -1158,12 +1199,17 @@ internal class P807Q2Flow3Ui(
      * [oneWayStepReport] carries the face before the action, whether it was sent, the face at the end
      * and every distinct face seen while waiting, so the next round can tell "no action", "one surface
      * too far" and "the product did not move" apart.
+     *
+     * [gate], when a step passes one, is that step's POSITIVE precondition: it is asked after the
+     * pre-check and before the single action, so a face still re-rendering its own action reports
+     * `gate=[<step>:not-ready]` with the same face fields instead of an un-sent activation.
      */
     private fun activateAndAwait(
         step: String,
         text: String,
         expect: String,
         alreadyOnTarget: Boolean = true,
+        gate: (() -> Boolean)? = null,
         effect: () -> Boolean,
     ): Boolean {
         refreshTreeForRead()
@@ -1172,6 +1218,12 @@ internal class P807Q2Flow3Ui(
             lastOneWayReport = "channel=activate sent=[false] faceBefore=[$before] expect=[$expect] faceAfter=[$before] reason=[already-on-target]"
             log("$tag oneway step=$step already-on-target face=[$before]")
             return true
+        }
+        if (gate != null && !gate()) {
+            val face = faceMarkers()
+            lastOneWayReport = "channel=activate sent=[false] gate=[$step:not-ready] faceBefore=[$before] expect=[$expect] faceAfter=[$face] seen=[$face]"
+            log("$tag oneway step=$step gate=not-ready target=[$text] face=[$face]")
+            return false
         }
         val sent = activateOnce(step, text)
         log("$tag oneway step=$step channel=activate sent=$sent target=[$text] faceBefore=[$before] expect=[$expect]")
@@ -1217,7 +1269,15 @@ internal class P807Q2Flow3Ui(
     /** The read-only transaction detail's own face. */
     private fun detailShown(): Boolean = hasExactText(P807Q2Flow3Facts.DETAIL_TITLE)
 
-    /** A deduped fingerprint of the FACE the current tree shows, built from literals one face carries. */
+    /**
+     * A deduped fingerprint of the FACE the current tree shows, built from literals one face carries.
+     * The refund path's three are diagnostic only: [P807Q2Flow3Facts.CONFIRM_TITLE] is the
+     * confirmation page's title (`P503ConfirmationPresentation.kt:51`),
+     * [P807Q2Flow3Facts.ENTRY_TITLE_REFUND] the refund edit surface's (`P503EditScreen.kt:237`) and
+     * [P807Q2Flow3Facts.CAP_REJECTION] the over-cap banner's
+     * (`P503RefundEntryPresentation.kt:115`), so a `proceed*` report can name where the step stood
+     * instead of always `none`. No marker here feeds a pass condition; the steps' effects do that.
+     */
     private fun faceMarkers(): String {
         val markers = ArrayList<String>()
         if (hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE)) markers += P807Q2Flow3Facts.DRILLDOWN_TITLE
@@ -1225,6 +1285,9 @@ internal class P807Q2Flow3Ui(
         if (hasExactText(P807Q2Flow3Facts.DETAIL_TITLE)) markers += P807Q2Flow3Facts.DETAIL_TITLE
         if (hasExactText(P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL)) markers += P807Q2Flow3Facts.CALENDAR_MONTH_ARRIVAL
         if (hasExactText(P807Q2Flow3Facts.REPORT_HEADER)) markers += P807Q2Flow3Facts.REPORT_HEADER
+        if (hasExactText(P807Q2Flow3Facts.CONFIRM_TITLE)) markers += P807Q2Flow3Facts.CONFIRM_TITLE
+        if (hasExactText(P807Q2Flow3Facts.ENTRY_TITLE_REFUND)) markers += P807Q2Flow3Facts.ENTRY_TITLE_REFUND
+        if (hasAnywhereText(P807Q2Flow3Facts.CAP_REJECTION)) markers += P807Q2Flow3Facts.CAP_REJECTION
         if (hasExactText(P807Q2Flow3Facts.TAB_HOME)) markers += P807Q2Flow3Facts.TAB_HOME
         return if (markers.isEmpty()) "none" else markers.joinToString(",")
     }
