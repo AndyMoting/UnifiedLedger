@@ -177,10 +177,12 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             ui.setFieldByLabel(facts.LABEL_OCCURRED_AT, facts.ARRIVAL_INSTANT_TEXT),
         )
         assertTrue("${facts.PREFIX} the soft keyboard must be dismissed before the submit", ui.hideKeyboard())
-        assertTrue(
-            "${facts.PREFIX} the over-cap amount must still reach the confirmation page (the product refuses on confirm)",
-            ui.clickVerifiedExact("proceedOverCap", facts.CONTINUE) { ui.hasExactText(facts.CONFIRM_TITLE) },
-        )
+        assertStep(
+            ui,
+            "proceedOverCap",
+            "the over-cap amount must still reach the confirmation page (the product refuses on confirm)",
+            ui.proceedToConfirmation("proceedOverCap"),
+        ) { ui.oneWayStepReport() }
         assertTrue(
             "${facts.PREFIX} the over-cap confirm must land back on the refund surface with the frozen sentence",
             ui.clickVerifiedExact("confirmOverCap", facts.CONFIRM_SUBMIT) { ui.hasAnywhereText(facts.CAP_REJECTION) },
@@ -221,10 +223,12 @@ class P807Q2Flow3RefundReportInstrumentedTest {
         // field input above hides it BEFORE its own typing only, so the IME it opened can still sit
         // over 继续 here.
         ui.hideKeyboard()
-        assertTrue(
-            "${facts.PREFIX} the full-cap amount must be accepted and open the confirmation page",
-            ui.clickVerifiedExact("proceedLegal", facts.CONTINUE) { ui.hasExactText(facts.CONFIRM_TITLE) },
-        )
+        assertStep(
+            ui,
+            "proceedLegal",
+            "the full-cap amount must be accepted and open the confirmation page",
+            ui.proceedToConfirmation("proceedLegal"),
+        ) { ui.oneWayStepReport() }
         sequenceOf(
             facts.CONFIRM_ORIGINAL_ROW,
             facts.confirmArrivalRow(arrivalAccountName),

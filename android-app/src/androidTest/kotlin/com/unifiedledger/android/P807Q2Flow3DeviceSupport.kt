@@ -785,7 +785,10 @@ internal class P807Q2Flow3Ui(
             SystemClock.sleep(POLL_MILLIS)
         }
         if (!ready) {
-            log("$tag calendar ready=false expected=[$expectedMonthLabel] " + monthRowReport())
+            val entry = if (hasExactText(P807Q2Flow3Facts.CALENDAR_ENTRY)) "present" else "absent"
+            val report = "expected=[$expectedMonthLabel] entry=[$entry] " + monthRowReport()
+            lastOneWayReport = "channel=activate sent=[false] gate=[openCalendar:not-ready] " + report
+            log("$tag calendar ready=false " + report)
             flow.dumpUiSnapshot("openCalendar:not-ready")
             return false
         }
@@ -943,6 +946,22 @@ internal class P807Q2Flow3Ui(
     private fun monthStepEnabled(text: String): Boolean = monthStepEnabledOrNull(text) == true
 
     // ---------------------------------------------------------------- refund form
+
+    /**
+     * The edit surface's 继续 opens the confirmation page — a FACE CHANGE, so it is ONE activation
+     * like every other face-changing step. Run 8 measured this stack's post-change tree lag at 4.18 s,
+     * and the retriable family's coordinate fallback would tap the CONFIRMATION page's action row
+     * after a missed probe — which can be `确认提交` (submitting the refund this leg exists to withhold,
+     * after which `confirmLegal` finds no `确认提交`) or `取消`. Both are red, but the first one writes
+     * before it reddens. The pre-check stays on (`alreadyOnTarget`): a surface that already shows
+     * [P807Q2Flow3Facts.CONFIRM_TITLE] needs no second 继续.
+     */
+    fun proceedToConfirmation(step: String): Boolean =
+        activateAndAwait(
+            step = step,
+            text = P807Q2Flow3Facts.CONTINUE,
+            expect = P807Q2Flow3Facts.CONFIRM_TITLE,
+        ) { hasExactText(P807Q2Flow3Facts.CONFIRM_TITLE) }
 
     /**
      * Selects the refund type row. The radio carries no text, so the row is named by its own label
