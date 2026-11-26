@@ -8217,7 +8217,7 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 
 ①`flow 1` 与 `V-7` 的 APK 来自 `ci.yml` run `45813731846`（`source_sha=17700da7d46167073a7ef0656ac7c6541828c11c`，完整受控文件树相同），`provenance.json` 记录了 `build_origin` 与 `reused_from`。②三档 fontscale 各自的 app APK 哈希互异，其余各组亦互异，说明构建不是逐字节可复现，所以证据绑定看的是完整受控文件树相同，而不是 APK 哈希相同。③接受口径：以「完整受控文件树相同」为绑定口径接受这些 APK（与合并树守卫同一标准）。
 
-**八组强制证据。** run id 与决定性读数逐字登记，不合并、不四舍五入；工件根 `local/artifacts/p807-wave6/`。
+**八组强制证据。** run id 与决定性读数逐字登记，不合并、不四舍五入。
 
 | # | 证据 | run id | 决定性读数／结论 |
 | --- | --- | --- | --- |
@@ -8257,7 +8257,7 @@ Q3 三档的候选身份：每档 `host.json` 的 `talkback.version=16.0.0.73866
 | `45825033996` | seeded 4 | `run: screen 'detail' step 1 (tap containing '对账样本转账') …: tap target '对账样本转账' (containing) is not in the accessibility tree` | rig 竞态第 3 次 | 重跑（按本波自设的升级规则此时应改判 rig 缺陷、修 rig 后整波重取，实际继续重派） |
 | `45828163106` | seeded 5 | `TalkBack's VERBOSE log-level route did not succeed: '… after 3 attempts (attempt 1=list-not-opened; attempt 2=list-not-opened; attempt 3=list-not-opened)…'`＋两屏 `TalkBack logged no utterance within 90.6 s / 90.1 s of being enabled (88 logcat reads)` | 设备面（TalkBack 控制路径，fail-closed） | 重跑后绿（`45831309476`） |
 
-**噪声排除（VR2）。** `Emulator boot timeout: 300` 与 `ERROR | bad color buffer handle` 在**通过**的作业里同样出现——refund `45819455920`：`Emulator boot timeout: 300` 1 次、`bad color buffer` 4 次；seeded `45831309476` 与 empty `45816214260` 按同序各为 1／5 与 1／20（boot timeout／color buffer），第五波 seeded `45799748714` 也有。计数取自独立核验对 CI job log 的读取（工件内不含 job log）。它们既不列入失败归因，也不作设施红；真正的红只有上表七条。
+**噪声排除（VR2）。** `Emulator boot timeout: 300` 与 `ERROR | bad color buffer handle` 在**通过**的作业里同样出现（第五波 seeded `45799748714`、第六波 refund `45819455920` 与 empty `45816214260` 均可复现其存在），故不构成红因；本记录不登记其次数。它们既不列入失败归因，也不作设施红；真正的红只有上表七条。
 
 **未硬化的 rig 竞态（VR4）。** `tap target … is not in the accessibility tree` 在同一候选上出现 3 次（两次在 `detail`、一次在 `search-results`），第 6 次（`45831309476`）才转绿。绿成立（工件支持：gate 从磁盘重算、两目标 success、两腿金额都在），但**不是干净通过**：点击目标前「重读至有界次数再点」的硬化未做，同形竞态仍是未修的 rig 缺口，本波自设的升级规则也没有按自己的条件执行。登记口径写死为：这是已知 rig 健壮性缺口下的第 6 次通过。
 
@@ -8269,7 +8269,7 @@ Q3 三档的候选身份：每档 `host.json` 的 `talkback.version=16.0.0.73866
 
 **读数登记的措辞更正（VR11、VR13）。** ①逐字引文：seeded `search-results` 的片段是 `… 备注 对账样本转账；默认支付账户 -12.34 CNY；对账样本账户 12.34 CNY`，只写两腿金额会漏掉「默认支付账户」一段。②指向：seeded 的五次红按 run 编号逐条列于上表，不再指向不存在的小节。本批不写 `local/` 台账；上述更正以本条为准，台账侧同步不属本批写面。
 
-**rig 层与批 C 的残余（登记，不并入任何 PASS）。** ①V-8 rig 曾登记一条由稳定态定义蕴含、永不会失败的恒真断言，已在后续批移除（`QI-1`，指针 `local/artifacts/p807-q5/pr-e2-body.md:54`；同形断言另有两处按登记保留）。②`D-366` 的「证据模型」段另有一处陈旧措辞（`QI-2`）：只有 `local/artifacts/p807-q5/pr-e-body.md:65` 的一次点名，措辞原文与位置缺证，无可追溯条目。③批 C 侧，`setFieldByLabel` 在标签不在树内时只有「重读—定位—判 `field=absent`」，「刷新后做一次小幅前推再判定」的硬化未实现（`REV-c-21` 的边界）：只有 `local/artifacts/p807-q2-flow3/writer-r8/writer-r8-evidence.md:80` 记它不在批准清单内，清单本身缺证，无可追溯条目。④`QJ-2`、`REV-c-29` 缺证，无可追溯条目。以上均不在本批补做。
+**rig 层与批 C 的残余（登记，不并入任何 PASS）。** `QI-1`／`QI-2`／`REV-c-21`／`QJ-2`／`REV-c-29` 均记缺证：其内容在 tracked 记录中无可追溯条目，本条不作内容断言。以上均不在本批补做。
 
 **边界：** 入 = 本条、`docs/ROADMAP.md` 阶段 8 的收口与例外段、`docs/CURRENT_STATE.md` 的状态段、`docs/CONTRIBUTING.md` 的朗读通路措辞与 `D-368`。出 = 产品代码／测试／schema／迁移／CI 配置／设备执行／`local/` 台账／`docs/specs/**`／`.external`；不改任何切片的产品行为、验收向量与已登记残余。
 
