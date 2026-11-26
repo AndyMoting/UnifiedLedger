@@ -23,15 +23,18 @@ import org.junit.runner.RunWith
  * THE TERMINAL. Completion is the FIRST sample whose cropped, downscaled result-region grid equals the
  * FINAL settled grid, minus the submit action's dispatch instant. The final grid is the first run of
  * [P802V8RenderFacts.SETTLE_SAMPLES] mutually equal samples that also differs from the pre-submit
- * frame, so a band that never changed can never be read as "rendered". The sampling interval plus the
- * measured submit-to-first-sample overhead ([P802V8Reading.firstSampleAfterSubmitMs]) is the reading's
- * time resolution, and the number is an UPPER BOUND.
+ * frame, so a band that never changed can never be read as "rendered" — and that run must END AT THE
+ * NEWEST SAMPLE: a run that ended earlier is an older plateau, and pinning the reading to it would
+ * report a settled state the list face has already replaced. The sampling interval plus the measured
+ * submit-to-first-sample overhead ([P802V8Reading.firstSampleAfterSubmitMs]) is the reading's time
+ * resolution, and the number is an UPPER BOUND.
  *
  * WHAT ACCEPTS A SETTLED STATE. A settled pixel grid is not accepted on its own: at that instant the
  * semantic tree must also show the result header at the frozen count, must not show the list face's
- * static `正在搜索…` row, and must hold a result-list node inside the measured band, while the app window
- * keeps the bounds the band was cut from. A tree that is not there yet only postpones acceptance (the
- * loop keeps sampling); a band that holds no result-list node at all is a red.
+ * static `正在搜索…` row, and must hold a node that renders an entry amount inside the measured band,
+ * while the app window keeps the bounds the band was cut from. A tree that is not there yet only
+ * postpones acceptance (the loop keeps sampling); a band that holds no such node at all is a red, and
+ * that red is the fail-closed guard for a region with nothing decidable in it.
  *
  * WHAT IS DELIBERATELY NOT THE TERMINAL: the search port's return time (the first-round baseline, and
  * `D-311` item 2 keeps it as a different endpoint), the accessibility tree's visibility (used only to
@@ -111,7 +114,11 @@ class P802V8RenderInstrumentedTest {
                 }
             samples += sample
             sampleNanos += System.nanoTime()
-            val candidate = p802V8FirstSettledIndex(samples, P802V8RenderFacts.SETTLE_SAMPLES)
+            // The accepted state must be the NEWEST sample: a run of equal samples that ended before it
+            // is an EARLIER plateau (the loading face, typically), and accepting it would pin finalState,
+            // completedIndex and renderFirstPageMs to frames the list face has already replaced while the
+            // only bound on the reading (finite and positive) stayed green.
+            val candidate = p802V8FirstSettledIndex(samples, P802V8RenderFacts.SETTLE_SAMPLES)?.takeIf { index -> index == samples.lastIndex }
             // A settled state that still equals the pre-submit frame is the untouched condition area,
             // not a rendered result list: it is rejected and sampling continues.
             if (candidate != null && !p802V8SameState(samples[candidate], baseline)) {
@@ -136,6 +143,12 @@ class P802V8RenderInstrumentedTest {
                 "lastProbe=${pendingProbe ?: "no candidate settled state"}",
             settledIndex >= 0,
         )
+        // The candidate pin above is a live guard, not a comment: a settled index that is not the newest
+        // sample means the accepted plateau is older than the frame the list face left behind.
+        assertTrue(
+            "the accepted settled state must be the NEWEST sample; an earlier plateau is not the state the reading reports",
+            settledIndex == samples.lastIndex,
+        )
         val view = checkNotNull(settledView) { "the accepted settled state must carry its tree facts" }
         assertEquals(
             "the settled state is only accepted once the result header renders the fixed group's manifest",
@@ -157,6 +170,10 @@ class P802V8RenderInstrumentedTest {
         assertTrue(
             "the completed sample can never follow the settled one",
             completedIndex <= settledIndex,
+        )
+        assertTrue(
+            "the completed sample must start the settled run: a match from before it would report a shorter reading",
+            completedIndex <= settledIndex - (P802V8RenderFacts.SETTLE_SAMPLES - 1),
         )
         assertTrue(
             "the settled state must differ from the pre-submit frame (the surface really changed)",

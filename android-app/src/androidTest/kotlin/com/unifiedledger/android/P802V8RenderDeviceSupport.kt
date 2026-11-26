@@ -41,8 +41,14 @@ import kotlin.time.Instant
  * `D-166` framestats limits) — the tree is used only to VALIDATE that the measured region is the
  * result surface, never to time it. That validation happens at the ONE instant a settled pixel state
  * is accepted: the tree must then show the result header at the frozen count, must not show the list
- * face's static loading copy, and must place a result-list node inside the measured band, while the
- * app window keeps the bounds the band was cut from.
+ * face's static loading copy, and must place a node that renders an entry amount inside the measured
+ * band, while the app window keeps the bounds the band was cut from.
+ *
+ * THE ACCEPTED SAMPLE IS THE NEWEST ONE. A run of equal samples that ended before the newest sample is
+ * an EARLIER plateau — the loading face, typically — and accepting it would pin the settled state, the
+ * completed index and the reading's number to frames the list face has already replaced, while the
+ * gate (a finite, positive reading) sees nothing wrong. A candidate is therefore only probed while it
+ * ends at the newest sample; anything else keeps sampling.
  *
  * NO THRESHOLD. The reading is an upper bound and is recorded, never judged for speed (P8-02 spec
  * section 5 V-8 with D2=A; stage-acceptance design section 3.3 「沿用原判据，不新增耗时阈值」).
@@ -128,6 +134,17 @@ internal object P802V8RenderFacts {
 
     /** The rendered result header, so the case can prove the reading region is the result list. */
     const val RESULTS_HEADER = "搜索结果"
+
+    /**
+     * The marker of a RENDERED entry amount: the product's one row text builder appends the posting's
+     * currency code (`flowRowPostingLineText`, `P503LedgerViewPresentation.kt:437`), and the row feeds
+     * that same text to its visible posting lines AND to its accessibility label
+     * (`P503OverviewScreen.kt:304-324`, rendered unchanged by the search face at
+     * `P503SearchScreen.kt:335`). Every posting of this sample is written in that currency
+     * (`P802V8RenderSeed.writeTransactions`), so a node carrying the code renders row content, never a
+     * mere layout container.
+     */
+    val amountMarker: String = CATALOG_MANAGED_CURRENCY.code
 
     /**
      * The list face's own static loading copy. Nothing about this row changes while the read runs, so
@@ -486,8 +503,7 @@ internal object P802V8RenderSeed {
     }
 
     /** Every transaction carrying an annotation (the merchant arm's denominator), ascending. */
-    private fun annotatedIndexes(): List<Int> =
-        (0 until P802SearchDeviceFacts.TRANSACTION_COUNT).filter { it % P802SearchDeviceFacts.ANNOTATION_STRIDE == 0 }
+    private fun annotatedIndexes(): List<Int> = (0 until P802SearchDeviceFacts.TRANSACTION_COUNT).filter { it % P802SearchDeviceFacts.ANNOTATION_STRIDE == 0 }
 
     /** The `index`-th statistics instant: `base - (index % SPREAD_DAYS) days`, whole seconds. */
     private fun statisticsInstant(
@@ -507,8 +523,7 @@ internal object P802V8RenderSeed {
     ): String = "${transactionId(index)}-posting-$leg"
 
     /** The note arm's marker placement: every 7th transaction, NULL everywhere else. */
-    private fun noteOf(index: Int): String? =
-        if (index % P802SearchDeviceFacts.NOTE_STRIDE == 0) P802SearchDeviceFacts.NOTE_MARKER else null
+    private fun noteOf(index: Int): String? = if (index % P802SearchDeviceFacts.NOTE_STRIDE == 0) P802SearchDeviceFacts.NOTE_MARKER else null
 
     /** Whole-second instants project exactly, so the numeric column and the text agree. */
     private fun projectionNanos(instant: Instant): Long = instant.toEpochMilliseconds() * 1_000_000L
@@ -647,10 +662,12 @@ internal class P802V8PixelSampler(
 
 /**
  * What the semantic tree proved at the instant a settled pixel state was accepted: the rendered
- * result header's total, and the bounds of one result-list node that lies inside the measured band.
+ * result header's total, and the bounds of one node that renders an entry amount and lies inside the
+ * measured band.
  *
- * [rowBounds] is the node the band was checked against, so "the measured region is the result list"
- * is a comparison of two rects, not an assumption about a window percentage.
+ * [rowBounds] is the node the band was checked against, and it was selected because it renders an
+ * entry amount (`carriesAmountMarker`), so "the measured region is the result list" is a comparison of
+ * two rects plus rendered row content, not an assumption about a window percentage.
  */
 internal data class P802V8ResultView(
     val renderedTotal: Long,
@@ -750,13 +767,13 @@ internal class P802V8ResultSurface(
     fun renderedTotal(deadlineMillis: Long = P802V8RenderFacts.SETTLE_TIMEOUT_MILLIS): Long? {
         val deadline = SystemClock.elapsedRealtime() + deadlineMillis
         while (SystemClock.elapsedRealtime() < deadline) {
-            flow.appNodes()
-                .firstOrNull { node -> flow.textOf(node).startsWith(P802V8RenderFacts.RESULTS_HEADER) }
-                ?.let { node ->
-                    val text = flow.textOf(node)
-                    log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} resultHeader=[$text] bounds=${flow.bounds(node)}")
-                    return RENDERED_TOTAL.find(text)?.groupValues?.get(1)?.toLongOrNull()
-                }
+            val header = flow.appNodes().firstOrNull { node -> flow.textOf(node).startsWith(P802V8RenderFacts.RESULTS_HEADER) }
+            if (header != null) {
+                val text = flow.textOf(header)
+                log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} resultHeader=[$text] bounds=${flow.bounds(header)}")
+                val match = RENDERED_TOTAL.find(text)
+                return match?.groupValues?.get(1)?.toLongOrNull()
+            }
             SystemClock.sleep(P802V8RenderFacts.SAMPLE_INTERVAL_MILLIS.toLong())
         }
         return null
@@ -772,11 +789,15 @@ internal class P802V8ResultSurface(
      * 2. the result header `搜索结果 · 共 436 笔` has rendered AND the list face's static `正在搜索…` row
      *    is gone — the loading row does not animate, so a settled grid made of it alone would end the
      *    reading early and quietly report a number that is too small;
-     * 3. at least one result-list node below that header lies inside the measured band, which turns
-     *    "the measured region is the result list" into an assertion about two rects.
+     * 3. at least one node below that header RENDERS AN ENTRY AMOUNT ([carriesAmountMarker]) and lies
+     *    inside the measured band, which turns "the measured region is the result list" into an
+     *    assertion about two rects plus rendered row content.
      *
      * A surface that has not got there YET returns `null` and the caller keeps sampling. A band that
-     * holds no result-list node is a red instead: no later sample can make that true.
+     * holds no node carrying an entry amount is a red instead: it is the FAIL-CLOSED guard that the
+     * measured region holds something decidable, not a settle invariant — the list face can be on
+     * screen for a frame before its rows are laid out, so a red here means the guard fired, not that
+     * every later sample would have stayed empty.
      */
     fun confirmResultView(
         expectedWindow: Rect,
@@ -799,26 +820,40 @@ internal class P802V8ResultSurface(
             return null
         }
         val text = flow.textOf(header)
-        val total = RENDERED_TOTAL.find(text)?.groupValues?.get(1)?.toLongOrNull()
+        val match = RENDERED_TOTAL.find(text)
+        val total = match?.groupValues?.get(1)?.toLongOrNull()
         if (total == null) {
             log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} settled candidate pending: header [$text] carries no total")
             return null
         }
         val headerBounds = flow.bounds(header)
         val belowHeader =
-            nodes
-                .map { node -> flow.bounds(node) }
-                .filter { rect -> rect.top >= headerBounds.bottom && rect.width() > 0 && rect.height() > 0 }
+            nodes.filter { node ->
+                val bounds = flow.bounds(node)
+                bounds.top >= headerBounds.bottom && bounds.width() > 0 && bounds.height() > 0
+            }
         val row =
-            checkNotNull(belowHeader.firstOrNull { rect -> Rect.intersects(rect, band) }) {
-                "the measured band $band holds no result-list node below the header [$text]: " +
-                    "headerBounds=$headerBounds nearest=${belowHeader.minByOrNull { rect -> abs(rect.top - band.top) }}"
+            checkNotNull(belowHeader.firstOrNull { node -> Rect.intersects(flow.bounds(node), band) && carriesAmountMarker(node) }) {
+                "the measured band $band holds no node carrying the entry amount marker " +
+                    "${P802V8RenderFacts.amountMarker} below the header [$text]: headerBounds=$headerBounds " +
+                    "nearest=${belowHeader.minByOrNull { node -> abs(flow.bounds(node).top - band.top) }?.let { node -> flow.bounds(node) }}"
             }
         log(
             "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} settled view header=[$text] headerBounds=$headerBounds " +
-                "rowBounds=$row band=$band",
+                "rowBounds=${flow.bounds(row)} band=$band",
         )
-        return P802V8ResultView(renderedTotal = total, rowBounds = row)
+        return P802V8ResultView(renderedTotal = total, rowBounds = flow.bounds(row))
+    }
+
+    /**
+     * Whether the node renders an entry's AMOUNT, which is what makes it a result row rather than a
+     * container that merely sits in the band: the product's one row text builder appends the posting's
+     * currency code to every posting line (`P503LedgerViewPresentation.kt:437`), and the row passes the
+     * same text to its visible lines and to its accessibility label (`P503OverviewScreen.kt:304-324`).
+     */
+    private fun carriesAmountMarker(node: AccessibilityNodeInfo): Boolean {
+        val marker = P802V8RenderFacts.amountMarker
+        return flow.textOf(node).contains(marker) || flow.descriptionOf(node).contains(marker)
     }
 
     /** Checks the checkbox whose row carries [label] and reports whether the row's box is checked. */
@@ -849,13 +884,13 @@ internal class P802V8ResultSurface(
     private fun checkableNear(label: String): AccessibilityNodeInfo? {
         val labelNode = flow.findAppNode { node -> flow.textOf(node) == label } ?: return null
         val labelBounds = flow.bounds(labelNode)
-        return flow.appNodes()
-            .filter { node -> node.isCheckable }
-            .filter { node ->
+        val candidates = flow.appNodes().filter { node -> node.isCheckable }
+        val overlapping =
+            candidates.filter { node ->
                 val bounds = flow.bounds(node)
                 bounds.top < labelBounds.bottom && bounds.bottom > labelBounds.top
             }
-            .minByOrNull { node -> abs(flow.bounds(node).centerY() - labelBounds.centerY()) }
+        return overlapping.minByOrNull { node -> abs(flow.bounds(node).centerY() - labelBounds.centerY()) }
     }
 
     /** The node's own shape, so a refused click is diagnosable from the log alone. */
