@@ -163,6 +163,24 @@ gh workflow run android-p807-q2.yml --ref <branch> -f expected_sha=<完整40位S
 
 **已知边界**：本 rig 只跑 `-f flow` 指定的那一条用例，不替代普通设备回归，也不进入 required checks。`import_candidate_status_history` 行数、V-11 同参重放 `NoChange` 与 P8-01a §2.5 的「结果未知」分支在界面不可观测，按设计门 Q5 不计入本流程判据，其服务层设备证据在 `P801AccountReconciliationChainInstrumentedTest`；V-10 的「返回保留滚动位」在单条队列上无可观测滚动，引该链的 `theScrollSlotsRoundTripThroughTheReducer` 读面证据。
 
+### Android P8-02 V-8 渲染终点 rig（61k 首屏渲染完成）
+
+`.github/workflows/android-p802-v8.yml` 是**手动触发、非阻塞**的单读数入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于所选 ref 的头）；不加入 required checks，不设定时触发，也不因后续推送取消正在执行的手动运行。
+
+该 rig 回答一个问题：61,000 笔交易样本上，固定四项条件组（关键词「咖啡标记」+ 默认近 90 天窗 + `tag-00` + `merchant-0`）查询的**首屏渲染完成**终点是多少。终点在**进程内**取：提交动作之后按固定间隔调用 `UiAutomation.takeScreenshot()`，每次只保留结果列表区域并缩放成比较网格（原始帧与中间位图立即 `recycle()`），稳定态取连续 `settleSamples` 次互相相等的采样，完成时刻取**首次与最终稳定态相等的那一采样**减提交动作的派发时刻；采样间隔即该读数的时间分辨率，读数按**上界**表述。搜索端口的返回时间、无障碍语义树与 `gfxinfo`/framestats 都不是这个终点（`D-311` 第 2 条与 `D-166` 系列的口径限制）；语义树只用来确认被测区域确实是结果列表、且渲染出的计数等于夹具构造清单。`P802V8RenderInstrumentedTest` 不在普通清单、也不在任何分片内：用例在启动应用之前把样本播种进应用自有稳定存储（`/proc/self/fd` 守卫要求它是本进程首条用例），因此它独占一个 rig 与自己的 AVD 名 `ul-p802-v8`，并登记在 `tools/python/android_scale/inventory.py` 的 `EXCLUDED`（D-366）。普通清单、分片与 required checks 均不变。
+
+`tools/ci/android-p802-v8.py run` 独占设备交互：单设备所有权断言（`emu avd name` 必须答 `ul-p802-v8`，否则拒跑且不碰别的模拟器）、装机前 `am force-stop com.unifiedledger.android`、两个 APK 安装并计 sha256、**唯一**一次 `am instrument -w -r -e class <class#method>`、原始转录逐字落盘、logcat 与设备配置，然后写 `host.json`。两个 APK 在**模拟器会话之外**由本次 checkout 构建，配合 `git rev-parse HEAD` 断言。设备 profile 与普通设备回归一致：`pixel_6`（1080×2400 / 420）、`api-level 36`、`google_apis`、`x86_64`、2 核、2048M、保留平台动画（读数取像素稳定态，冻结动画会换一幅不同的表面）。
+
+模拟器会话之后另设独立 `gate` 步（`if: always()`）：只从磁盘上的转录、logcat 与两个 APK 文件重算判据，不读驱动器自己的数字，因此驱动器自解析错误无法让 job 变绿；对 `host.json` 的自报状态只作**单向**信任。判据：sha 绑定与用例身份、`OK (1 test)`、执行集恰为该一条用例、无失败标记、完成码 `-1`、退出码 0、`api_level == 36` 与 AVD 名、**读数行恰一次**、`fixture=61000`、`condition=fixed-note+tag+merchant0`、`renderFirstPageMs` 为有限正数、`samples >= settleSamples` 且 `settleSamples == 3`、`pageRows == 50`、`totalCount == 436`、读数行 `apk=` 等于**从磁盘重算**的 app APK sha256。任一项缺失即红，读数缺失不会被当成通过。工件 `android-p802-v8-<sha>-<run-id>-<attempt>` 含 `host-apks.txt`、`host.json`、`instrumentation.txt`、`logcat.txt`、`configuration.txt` 与 `gate.json`，保留 7 天。
+
+触发命令（仅在该提交已落到目标分支后）：
+
+```bash
+gh workflow run android-p802-v8.yml --ref <branch> -f expected_sha=<完整40位SHA>
+```
+
+**已知边界**：本 rig 只登记读数与终点，不设耗时阈值、不判快慢，也不构成阶段验收结论。它不证明长账本翻页与滚动、不证明 TalkBack 朗读、不覆盖条件区或结果行的字号与裁切，也不替代普通设备回归与既有 V-8 端口读数（两者是不同证据面，不可相减）。
+
 ### Android font-scale sample（P8-00 V-8 / P8-01a i3b / P8-02 V-9 / P8-03 V-14 / P8-06 V-12）
 
 `.github/workflows/android-fontscale-sample.yml` 是**手动触发、非阻塞**的设备读数入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于 checkout 的 HEAD），可选 `profile`（`empty` 默认 / `seeded` / `refund` / `p806`）与 `font_scale`（默认 `1.3`）；不加入 required checks，不设定时触发。

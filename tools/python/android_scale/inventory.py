@@ -23,6 +23,10 @@ EXCLUDED = {
     "P807Q2Flow2ReconciliationInstrumentedTest",
     # P8-07 Q2 flow 3: the same dedicated rig and the same first-case seed guard.
     "P807Q2Flow3RefundReportInstrumentedTest",
+    # P8-02 V-8 render terminal (P8-07 Q5): its own dedicated rig `android-p802-v8.yml`; it seeds
+    # the 61k sample into the app's real storage before the first launch, so it must be the FIRST
+    # case of its process, and it owns the only "首屏渲染完成" pixel reading.
+    "P802V8RenderInstrumentedTest",
 }
 
 
