@@ -410,8 +410,8 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "homeMonthPrevious",
             "one HOME step must land the domain's first month [${facts.HOME_MONTH_FIRST}]",
             ui.homeMonthStepPrevious(),
-        ) { ui.monthRowReport() }
-        assertStep(ui, "openCalendar", "the calendar's own HOME entry must open it", ui.openCalendar(facts.HOME_MONTH_FIRST))
+        ) { ui.monthRowReport() + " " + ui.oneWayStepReport() }
+        assertStep(ui, "openCalendar", "the calendar's own HOME entry must open it", ui.openCalendar(facts.HOME_MONTH_FIRST)) { ui.oneWayStepReport() }
         assertStep(
             ui,
             "calendarFirstMonth",
@@ -445,7 +445,7 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "the arrival day's cell must render its exact accessibility text",
             ui.awaitExactText(dayCellText, seek = true),
         )
-        assertStep(ui, "openDayCell", "the arrival day's cell must open the day detail", ui.openDayCell(dayCellText))
+        assertStep(ui, "openDayCell", "the arrival day's cell must open the day detail", ui.openDayCell(dayCellText)) { ui.oneWayStepReport() }
         assertStep(
             ui,
             "drilldownCountOne",
@@ -489,13 +489,13 @@ class P807Q2Flow3RefundReportInstrumentedTest {
 
         // ---------------------------------------------------------------- L10: the detail round trip writes nothing
         ui.scrollBackTo(facts.DAY_DETAIL_PREFIX)
-        assertStep(ui, "openRowDetail", "the row's read-only detail must open", ui.openRowDetail(headline))
+        assertStep(ui, "openRowDetail", "the row's read-only detail must open", ui.openRowDetail(headline)) { ui.oneWayStepReport() }
         assertStep(
             ui,
             "backToDayDetail",
             "the first 返回 must land on the same day detail",
             ui.backToDayDetail(),
-        ) { ui.backStepReport() }
+        ) { ui.oneWayStepReport() }
         ui.scrollBackTo(facts.DAY_DETAIL_PREFIX)
         assertStep(
             ui,
@@ -508,7 +508,7 @@ class P807Q2Flow3RefundReportInstrumentedTest {
             "backToCalendar",
             "the second 返回 must close the day detail",
             ui.backToCalendar(),
-        ) { ui.backStepReport() }
+        ) { ui.oneWayStepReport() }
         ui.scrollBackTo(facts.CALENDAR_TITLE)
         assertStep(
             ui,
