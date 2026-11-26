@@ -8206,16 +8206,16 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 
 | 组 | run id | app APK sha256 | test APK sha256 | 设备面 |
 | --- | --- | --- | --- | --- |
-| flow 1 | `45815933353` | `c5820f514d698b3a55734e3d1bbc2b9b33b97de501c53ba3c4d0585de4790aab` | `a755e02b5f7ffb0bd710b579d2770a1f3f50c22f732b01d8f62a72a512080cc2` | 托管 managed AVD（`pixel_6` / API 36 / `1080x2400` / density 420 / x86_64 / font_scale 1.0） |
+| flow 1 | `45815933353` | `c5820f514d698b3a55734e3d1bbc2b9b33b97de501c53ba3c4d0585de4790aab` | `a755e02b5f7ffb0bd710b579d2770a1f3f50c22f732b01d8f62a72a512080cc2` | 托管 managed AVD（`pixel_6` / API 36 / `1080x2400` / density 420 / x86_64 / font_scale：该 workflow 与工件均未登记，本记录不推断） |
 | flow 2 | `45815940009` | `87cfcb45069c595870f8e5a4bb4c8eea8644de60a5081a6e10bbd05982d0ef27` | `3568654d8bd49acdecb870ee1b8baecbace51171f25f51fee3848db6a086ee63` | `ul-p807-q2` / API 36 / `1080x2400` / density 420 / font_scale 1.0 |
 | flow 3 | `45815945534` | `e531e8f5b417e4e661dc61c858002fb57dee44e60d36894ba4101d8dea90202f` | `a6ae816cdfea9ae1cf360860bec2a1e0e888b203e32a5a3445513af94e3cd3f6` | `ul-p807-q2` / API 36 / `1080x2400` / density 420 / font_scale 1.0 |
 | empty | `45816214260` | `b5301e39e75cce4996ae7d17290734f1aa53db4ef7d8dee36ee30faa9f3d0047` | `21800252a7c3f46fbaff4c86e99491278c3b5fb487eaff34c9cd77163a25b185` | `ul-fontscale` / API 36 / font_scale 1.3 |
 | seeded | `45831309476` | `cf5bbc592f7e830fd4f8b445712fdc2695754257c597c7dc49291fd58b94c99a` | `8a79c9706d3d71ef715ea72b39706d34a31151bbc84125f8af2766573a2419b2` | `ul-fontscale` / API 36 / font_scale 1.3 |
 | refund | `45819455920` | `aebaadf2d21d27e53cb46536381a65ddc45ec9bdf0e17cfcb6bdf9bc8054fd1f` | `33ed53255f7140c79a449d5df8410a31c8bcf7ff4305e0a721f24459d2976fea` | `ul-fontscale` / API 36 / font_scale 1.3 |
-| V-7 | `45815969237` | `c5820f514d698b3a55734e3d1bbc2b9b33b97de501c53ba3c4d0585de4790aab` | `a755e02b5f7ffb0bd710b579d2770a1f3f50c22f732b01d8f62a72a512080cc2` | 同 flow 1（同一份复用 APK） |
+| V-7 | `45815969237` | `c5820f514d698b3a55734e3d1bbc2b9b33b97de501c53ba3c4d0585de4790aab` | `a755e02b5f7ffb0bd710b579d2770a1f3f50c22f732b01d8f62a72a512080cc2` | 同 flow 1（同一份复用 APK；font_scale 同 flow 1：该 workflow 与工件均未登记，本记录不推断） |
 | V-8 | `45815977376` | `8f3753637f9fec23570535d7f5477f66ae05443258c3cc4924f8357c8857fd41` | `a2851648d923ed4fc51883e50d80b7b65755f6baaf8e330cd0eef99d903cfeab` | `ul-p802-v8` / API 36 / `1080x2400` / density 420 / font_scale 1.0 |
 
-①`flow 1` 与 `V-7` 的 APK 来自 `ci.yml` run `45813731846`（`source_sha=17700da7d46167073a7ef0656ac7c6541828c11c`，完整受控文件树相同），`provenance.json` 记录了 `build_origin` 与 `reused_from`。②三档 fontscale 各自的 app APK 哈希互异，其余各组亦互异，说明构建不是逐字节可复现，所以证据绑定看的是完整受控文件树相同，而不是 APK 哈希相同。③接受口径：以「完整受控文件树相同」为绑定口径接受这些 APK（与合并树守卫同一标准）。
+①`flow 1` 与 `V-7` 的 APK 来自 `ci.yml` run `45813731846`（`source_sha=17700da7d46167073a7ef0656ac7c6541828c11c`，完整受控文件树相同），`provenance.json` 记录了 `build_origin` 与 `reused_from`。②三档 fontscale 各自的 app APK 哈希互异，其余各组亦互异，说明构建不是逐字节可复现，所以证据绑定看的是完整受控文件树相同，而不是 APK 哈希相同。③接受口径：以「完整受控文件树相同」为绑定口径接受这些 APK（与合并树守卫同一标准）。字号方面另记：`flow 1` 与 `V-7` 的字号无可追溯登记，故不作取值断言；其余六组的字号取自 `gate.json.configuration`／`host.json`。
 
 **八组强制证据。** run id 与决定性读数逐字登记，不合并、不四舍五入。
 
