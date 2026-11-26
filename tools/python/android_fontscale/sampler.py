@@ -31,6 +31,11 @@ sample; the device legs run here against a hosted AVD at the requested `system f
   both the driver and the gate classify each screen as not-obtained / fragments-missing /
   amount-wrong / success. A semantic dump or a focus callback alone is never read as speech.
 
+The three screenshot profiles also drive that same REAL TalkBack pass on one named target per
+screen (P8-07 batch D, the Q3 evidence): the same probe, the same VERBOSE utterance window, the
+same four-value verdict, plus one screenshot per target and the image's own TalkBack versionName.
+Their expected targets come from the frozen profile table, never from a seed.
+
 This rig is NOT a PR gate and never runs on a pull request: dispatch it against a commit that is
 already on a branch, and read the artifact.
 
@@ -147,6 +152,29 @@ SEARCH_RESULTS_MARKER = "搜索结果 ·"
 # The seeded ledger holds the transfer and the refund-leg manual expense, hence 2.
 SEEDED_HOME_COUNT = "流水 · 共 2 笔"
 
+# P8-07 batch D (Q3): one speech target per screen of the three screenshot profiles. Each literal
+# is the product copy that screen actually renders, named with the product file:line so a drift
+# shows up as a reviewable diff; the probe focuses the first node whose text or content description
+# contains it, and TalkBack's own fragments inside that target's window must repeat it.
+# - P8-00: the empty-ledger sentence is the SAME copy on the home and the analysis tab
+#   (P503OverviewScreen.kt:183, P503TabShell.kt:516); the assets tab renders no empty copy, so its
+#   always-composed 总借入 card label (P503AssetsScreen.kt:215) is the screen's main line.
+P8_00_EMPTY_COPY = "账本为空，还没有任何交易。"
+P8_00_ASSET_TARGET = "总借入"
+# - P8-02: the guide face's condition-area copy (P503SearchPresentation.kt:33) and the seeded
+#   transfer's note as it rides the result row's composed description (the 结果行 the design gate
+#   names; the note literal itself is owned by the seed writer, like 早餐 below).
+P8_02_GUIDE_TARGET = "输入条件后开始搜索"
+# - P8-03: the refund candidate row's own expense-leg label with the seed's fixed cap
+#   (P503RefundEntryPresentation.kt:98). The amount FIELD's label carries a currency code that is
+#   unknown until an arrival account is chosen — the switch into 退款到账 always yields a null
+#   arrival account (EntryDraft.kt:435), so that label renders `退款金额（—）` on this screen — and
+#   the row's copy is the stable target. The confirmation target is the inherited-category row
+#   (P503ConfirmationPresentation.kt:124), which the page renders as one `label：value` node
+#   (P503ConfirmationScreen.kt:47).
+P8_03_CANDIDATE_TARGET = "支出腿金额 12.34"
+P8_03_INHERITED_TARGET = "继承分类：早餐"
+
 # P8-06 batch 6 (V-12): the independent `p806` seed is written by
 # `ledger-data/src/jvmTest/.../P806FontscaleSeedWriterTest.kt` through the real manual-expense
 # commit port. Its two fixed amounts and its default-catalog accounts are the only constants the
@@ -233,6 +261,10 @@ SETTING_A11Y_CLICK = "ul_a11y_click"
 # The auto pass must not move focus while a host-commanded window is open: this prefix matches no
 # node (the probe compares with startsWith) and a zero limit caps the pass anyway.
 P806_TALKBACK_AUTO_SENTINEL = "__ul_p806_speech_window__"
+# P8-07 batch D (D4): the one raw device answer the Q3 gate re-parses for the TalkBack versionName
+# and the device API level. It holds the `dumpsys package` output itself, so the version is read
+# from the device's own line rather than from host.json.
+TALKBACK_VERSION_ARTIFACT = "talkback-version.txt"
 TALKBACK_STATUS_LABELS = {
     "not-obtained": "未取得",
     "fragments-missing": "片段缺失",
@@ -1023,6 +1055,35 @@ def talkback_status_label(status: str) -> str:
     return TALKBACK_STATUS_LABELS.get(status, status)
 
 
+def package_version_name(dump: str) -> str:
+    """The `versionName=` answer inside a `dumpsys package` dump, or "" when it carries none.
+
+    Only the package's own line counts: a dump that names no version (the package is absent, or the
+    image stopped printing it) yields no version at all, which the gate fails closed on.
+    """
+    match = re.search(r"^\s*versionName=(\S+)\s*$", dump, re.MULTILINE)
+    return match.group(1) if match is not None else ""
+
+
+def talkback_version_artifact(dump: str, api_level: str) -> str:
+    """The raw device answer the gate re-parses: the package dump plus the API-level `getprop`.
+
+    The two header lines name what the body is; the version itself is never copied into them, so a
+    gate reading this file re-derives it from the dump exactly as the run did.
+    """
+    return (
+        f"# talkback package: {P806_TALKBACK_PACKAGE}\n"
+        f"# device api level: {api_level.strip()}\n"
+        f"{dump}"
+    )
+
+
+def parse_talkback_version_artifact(text: str) -> tuple[str, str]:
+    """`(version, api_level)` re-derived from the recorded raw artifact, never from host.json."""
+    api = re.search(r"^# device api level: (\S+)$", text, re.MULTILINE)
+    return package_version_name(text), (api.group(1) if api is not None else "")
+
+
 def sha256_file(path: Path) -> str:
     """The exact digest of a file's bytes (the seed a run pushed, re-read by a gate)."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -1159,8 +1220,9 @@ class Screen:
     required: tuple[str, ...] = ()
     # The D-292 speech limb: each ordered check names its focus target (substring match on the
     # node's text or content description) and the values TalkBack's fragments inside THAT target's
-    # accepted, completed window must contain. Empty on every non-p806 screen, which keeps those
-    # profiles on the screenshot-only path.
+    # accepted, completed window must contain. Empty keeps the screen on the screenshot-only path,
+    # so a profile can carry the limb on some of its screens only (the seeded profile's detail and
+    # queue screens do).
     speech: tuple[SpeechCheck, ...] = ()
     # Capture-time proof that the marker's WHOLE rect is inside the window, not merely that the
     # string exists in a scrollable tree (the supplemental report frame needs this).
@@ -1177,6 +1239,11 @@ class Profile:
     # Seeded profiles need the prepared v37 database pushed before launch; empty profiles must
     # never touch the app's data directory (a fresh empty install is the state V-8 samples).
     seeded: bool = False
+    # The D-292 speech limb runs for this profile (P8-07 batch D, D3): the switch decides the test
+    # APK install, the probe discovery, the notification-prompt guard and the TalkBack teardown, so
+    # the three screenshot profiles drive real TalkBack exactly as the dynamic p806 profile does.
+    # Which screens actually speak is still the screen's own `speech` tuple.
+    talkback: bool = False
 
 
 # The P8-00 V-8 screens: a fresh install bootstraps one default account, so the accounts tab is
@@ -1184,9 +1251,24 @@ class Profile:
 # tab paints 账本为空 for a ledger with no transactions at all — before that the branch was
 # unreachable and the screen showed 流水 · 共 0 笔 instead. The rig samples what the device shows.
 EMPTY_SCREENS: tuple[Screen, ...] = (
-    Screen("home", (), "账本为空"),
-    Screen("asset", (TapStep("账户"),), "总借入"),
-    Screen("analysis", (TapStep("分析"),), "账本为空"),
+    Screen(
+        "home",
+        (),
+        "账本为空",
+        speech=(SpeechCheck(P8_00_EMPTY_COPY, (P8_00_EMPTY_COPY,)),),
+    ),
+    Screen(
+        "asset",
+        (TapStep("账户"),),
+        "总借入",
+        speech=(SpeechCheck(P8_00_ASSET_TARGET, (P8_00_ASSET_TARGET,)),),
+    ),
+    Screen(
+        "analysis",
+        (TapStep("分析"),),
+        "账本为空",
+        speech=(SpeechCheck(P8_00_EMPTY_COPY, (P8_00_EMPTY_COPY,)),),
+    ),
 )
 
 # The seeded profile's screens: the P8-02 V-9 search leg (D7-10) leads, then the P8-01a i3b detail
@@ -1200,12 +1282,16 @@ EMPTY_SCREENS: tuple[Screen, ...] = (
 # catalog holds no tags and no merchants (SqlDelightCatalogStore seeds accounts and categories
 # only). Adding a tag or a merchant to the seed grows the condition area and can push a marker
 # below the fold, which surfaces as a 180 s wait_for timeout — loud, never a false green.
+#
+# P8-07 batch D gives the guide face (its condition-area copy) and the result face (the seeded
+# transfer's row) one speech target each; the detail and queue screens stay screenshot-only.
 SEEDED_SCREENS: tuple[Screen, ...] = (
     Screen(
         "search-guide",
         (TapStep("搜索账目", contains=True),),
         SEARCH_GUIDE_MARKER,
         absent=(SEEDED_HOME_COUNT,),
+        speech=(SpeechCheck(P8_02_GUIDE_TARGET, (P8_02_GUIDE_TARGET,)),),
     ),
     # D7-8: the submit button is tapped by its unique semantics name — its visible text 搜索 is also
     # the screen title, and `find_center` returns the first node in document order.
@@ -1214,6 +1300,9 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
         (TapStep("提交搜索"),),
         SEARCH_RESULTS_MARKER,
         absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
+        # The 结果行 the design gate names: the seeded transfer, addressed by its own note as the
+        # row's composed description carries it. A header match would only prove the page opened.
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
     ),
     Screen("detail", (BACK, TapStep(SEEDED_TRANSFER_NOTE, contains=True)), SEEDED_DETAIL_MARKER),
     Screen(
@@ -1238,6 +1327,9 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
 # scrolls the continue button into view and taps it. Its marker is the inherited category (only a
 # resolved candidate renders it there) and its negative marker is the entry title, so a 继续 that
 # never left the form, or a confirmation whose original never resolved, is not evidence.
+#
+# P8-07 batch D adds one speech target per screen: the entry's candidate row (the expense-leg cap
+# label and the seed's amount) and the confirmation's inherited-category row.
 REFUND_SCREENS: tuple[Screen, ...] = (
     Screen(
         "refund-entry",
@@ -1246,6 +1338,7 @@ REFUND_SCREENS: tuple[Screen, ...] = (
         # 费用分类 is the expense form's own category selector: the seed category name appears there
         # too, so its absence is what proves the type radio actually switched to the refund form.
         absent=(SEEDED_HOME_COUNT, "费用分类"),
+        speech=(SpeechCheck(P8_03_CANDIDATE_TARGET, (P8_03_CANDIDATE_TARGET,)),),
     ),
     Screen(
         "refund-confirmation",
@@ -1262,6 +1355,7 @@ REFUND_SCREENS: tuple[Screen, ...] = (
         ),
         SEEDED_REFUND_CATEGORY,
         absent=(REFUND_ENTRY_TITLE,),
+        speech=(SpeechCheck(P8_03_INHERITED_TARGET, (P8_03_INHERITED_TARGET,)),),
     ),
 )
 
@@ -1571,15 +1665,29 @@ P806_SCREENS: tuple[Screen, ...] = p806_screens(
 )
 
 PROFILES: dict[str, Profile] = {
-    "empty": Profile("empty", "账本为空", EMPTY_SCREENS),
-    "seeded": Profile("seeded", SEEDED_HOME_COUNT, SEEDED_SCREENS, seeded=True),
-    "refund": Profile("refund", SEEDED_HOME_COUNT, REFUND_SCREENS, seeded=True),
+    "empty": Profile("empty", "账本为空", EMPTY_SCREENS, talkback=True),
+    "seeded": Profile(
+        "seeded", SEEDED_HOME_COUNT, SEEDED_SCREENS, seeded=True, talkback=True
+    ),
+    "refund": Profile(
+        "refund", SEEDED_HOME_COUNT, REFUND_SCREENS, seeded=True, talkback=True
+    ),
     # The screens are placeholders here: run/gate replace them with `p806_screens` built from the
     # pushed seed, so a static literal can never drift out of the evidence.
-    "p806": Profile("p806", SEEDED_HOME_COUNT, P806_SCREENS, seeded=True),
+    "p806": Profile("p806", SEEDED_HOME_COUNT, P806_SCREENS, seeded=True, talkback=True),
 }
 
 DYNAMIC_PROFILES = frozenset({"p806"})
+
+
+def records_talkback_evidence(profile: Profile) -> bool:
+    """Whether this profile writes the separate top-level TalkBack record (P8-07 batch D, D4).
+
+    The dynamic p806 profile already carries its TalkBack block inside `host["p806"]` (batch 6) and
+    that block keeps its exact shape, so only the other talkback profiles record the version, the
+    API level and their per-target windows under `host["talkback"]`.
+    """
+    return profile.talkback and profile.name not in DYNAMIC_PROFILES
 
 
 def profile_screens(profile: Profile, seed: str) -> tuple[Screen, ...]:
@@ -1711,6 +1819,21 @@ class Sampler:
         for match in re.finditer(r"([A-Za-z0-9_.]+\.TalkBackPreferencesActivity)", dump):
             return f"{P806_TALKBACK_PACKAGE}/{match.group(1)}"
         return P806_TALKBACK_PREFS_ACTIVITY
+
+    def record_talkback_version(self) -> dict[str, str]:
+        """Read the image's TalkBack versionName and API level; keep the raw answer as the artifact.
+
+        D4: the Q3 evidence must name the TalkBack the run actually spoke through. The version comes
+        from the same `dumpsys package` the component discovery reads, and the API level from the
+        device's own property; both are written into one raw artifact, so the gate re-derives them
+        from the device answer instead of trusting host.json.
+        """
+        dump = self.adb("shell", "dumpsys", "package", P806_TALKBACK_PACKAGE, best_effort=True)
+        api_level = self.adb("shell", "getprop", "ro.build.version.sdk", best_effort=True).strip()
+        (self.evidence / TALKBACK_VERSION_ARTIFACT).write_text(
+            talkback_version_artifact(dump, api_level), encoding="utf-8"
+        )
+        return {"version": package_version_name(dump), "api_level": api_level}
 
     def prepare_talkback_device(self) -> dict[str, str]:
         """Put the run-owned AVD into a known accessibility state and return the prior one.
@@ -2098,8 +2221,16 @@ class Sampler:
             "lines": window,
         }
 
-    def p806_talkback_screen(self, screen: Screen) -> dict[str, object]:
-        """Drive one screen's ordered speech checks, each bound to its own command window."""
+    def p806_talkback_screen(
+        self, screen: Screen, *, target_screenshots: bool
+    ) -> dict[str, object]:
+        """Drive one screen's ordered speech checks, each bound to its own command window.
+
+        With `target_screenshots` (the P8-07 batch D Q3 profiles) every target's command is followed
+        by one screenshot whose stem carries that target's command id, so a target's picture, its
+        focus command and its utterance window are three artifacts of the same target. The dynamic
+        p806 profile keeps its single per-screen screenshot set and its host record unchanged.
+        """
         artifact_name = f"talkback-{screen.stem}.txt"
         lines: list[str] = [f"# stem: {screen.stem}"]
         enabled: dict[str, object] = {
@@ -2108,7 +2239,7 @@ class Sampler:
             "enabled_components": [],
             "enabled_services_file": f"talkback-enabled-{screen.stem}.txt",
         }
-        driven: list[tuple[SpeechCheck, dict[str, object] | None]] = []
+        driven: list[tuple[SpeechCheck, dict[str, object] | None, str]] = []
         try:
             enabled = self.enable_talkback(screen.stem)
             lines.append(
@@ -2124,7 +2255,14 @@ class Sampler:
                 self.talkback_sequence += 1
                 command_id = self.talkback_sequence
                 window = self.talkback_focus(check.target, command_id)
-                driven.append((check, window))
+                # D5: the picture is taken AFTER the target's own command completed, and its stem
+                # carries the command id, so the gate can bind the png to this exact window.
+                shot = ""
+                if target_screenshots:
+                    shot_stem = f"talkback-{screen.stem}-cmd-{command_id}"
+                    self.screenshot(shot_stem)
+                    shot = f"{shot_stem}.png"
+                driven.append((check, window, shot))
                 lines.append(f"# target: {check.target}")
                 lines.append(f"# command: {command_id}")
                 lines.extend(str(line) for line in window["lines"])
@@ -2143,11 +2281,11 @@ class Sampler:
             self.disable_talkback_accessibility()
             self.wait_accessibility_disabled()
         for check in screen.speech[len(driven) :]:
-            driven.append((check, None))
+            driven.append((check, None, ""))
         artifact = "\n".join(lines) + "\n"
         (self.evidence / artifact_name).write_text(artifact, encoding="utf-8")
         checks = []
-        for check, window in driven:
+        for check, window, shot in driven:
             if window is None:
                 status, fragments, missing, reason = (
                     "not-obtained",
@@ -2159,20 +2297,23 @@ class Sampler:
                 status, fragments, missing, reason = talkback_check_verdict(
                     artifact, int(window["id"]), check.target, check.required
                 )
-            checks.append(
-                {
-                    "target": check.target,
-                    "command_id": int(window["id"]) if window is not None else None,
-                    "required": list(check.required),
-                    "status": status,
-                    "label": talkback_status_label(status),
-                    "completed": bool(window["completed"]) if window is not None else False,
-                    "accepted": bool(window["accepted"]) if window is not None else False,
-                    "fragments": fragments,
-                    "missing": missing,
-                    "reason": reason,
-                }
-            )
+            entry: dict[str, object] = {
+                "target": check.target,
+                "command_id": int(window["id"]) if window is not None else None,
+                "required": list(check.required),
+                "status": status,
+                "label": talkback_status_label(status),
+                "completed": bool(window["completed"]) if window is not None else False,
+                "accepted": bool(window["accepted"]) if window is not None else False,
+                "fragments": fragments,
+                "missing": missing,
+                "reason": reason,
+            }
+            if target_screenshots:
+                # D5: the png this target's own command produced. Only the Q3 profiles capture one,
+                # so the dynamic p806 check record keeps its exact batch-6 shape.
+                entry["screenshot"] = shot
+            checks.append(entry)
         status = overall_speech_status([check["status"] for check in checks])
         return {
             "status": status,
@@ -2529,6 +2670,11 @@ def run(args: argparse.Namespace) -> int:
         if rollover is not None:
             raise SampleError(rollover)
     screens = p806_screens(facts) if facts is not None else profile.screens
+    # The profile-level switch (D3): p806 is unchanged, and the three screenshot profiles now take
+    # the same probe / notification / teardown route. `records_talkback_evidence` owns the separate
+    # top-level record; p806 keeps its own block under host["p806"].
+    talkback = profile.talkback
+    target_screenshots = records_talkback_evidence(profile)
     evidence = Path(args.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
     sampler = Sampler(
@@ -2538,9 +2684,10 @@ def run(args: argparse.Namespace) -> int:
         avd_name=args.avd_name,
     )
     sampler.require_owned_avd()
-    # The notification prompt is an Android Accessibility Suite behavior; only the P806 dynamic
-    # profile enables its handler, and only on this session's owned AVD.
-    sampler.notification_dialog_guard = facts is not None
+    # The notification prompt is an Android Accessibility Suite behavior that appears whenever
+    # TalkBack starts, so every talkback profile enables its handler — and only on this session's
+    # owned AVD (D6: the three screenshot profiles now drive TalkBack too).
+    sampler.notification_dialog_guard = talkback
 
     def dismiss_notification_prompt(context: str) -> None:
         """Deny the Accessibility Suite prompt, naming what was under way when it fails."""
@@ -2555,11 +2702,11 @@ def run(args: argparse.Namespace) -> int:
     talkback_capability: dict[str, object] | None = None
     talkback_log_level: dict[str, object] | None = None
     prior_accessibility: dict[str, str] | None = None
-    if facts is not None:
+    if talkback:
         if not Path(args.test_apk).is_file():
             raise SampleError(
-                f"the p806 profile drives the focus probe from {args.test_apk!r}, which is missing; "
-                "build :android-app:assembleDebugAndroidTest before the emulator session"
+                f"profile {profile.name!r} drives the focus probe from {args.test_apk!r}, which is "
+                "missing; build :android-app:assembleDebugAndroidTest before the emulator session"
             )
         sampler.adb("install", "-r", args.test_apk, timeout=180)
         sampler.talkback_component = sampler.find_talkback_component()
@@ -2617,11 +2764,14 @@ def run(args: argparse.Namespace) -> int:
                 f"screen {screen.stem}: {'; '.join(problems)} at font_scale {applied:g}"
             )
         # The screenshot/dump limbs above are already on disk and independent of this leg: the
-        # speech pass only moves accessibility focus on the live screen.
-        if facts is not None and screen.speech:
-            talkback_screens[screen.stem] = sampler.p806_talkback_screen(screen)
+        # speech pass only moves accessibility focus on the live screen. The profile switch decides
+        # whether the pass exists at all, and the screen's own tuple decides whether it speaks.
+        if talkback and screen.speech:
+            talkback_screens[screen.stem] = sampler.p806_talkback_screen(
+                screen, target_screenshots=target_screenshots
+            )
 
-    if facts is not None:
+    if talkback:
         sampler.disable_talkback_accessibility()
         for key in (
             SETTING_A11Y_COMMAND,
@@ -2645,7 +2795,7 @@ def run(args: argparse.Namespace) -> int:
         "observations": observations,
         "artifacts": {"app_apk": apk_record(args.apk)},
     }
-    if facts is not None:
+    if talkback:
         host["artifacts"]["test_apk"] = apk_record(args.test_apk)
     if profile.seeded and facts is None:
         # The seed contract this evidence was produced against (the ledger id must be the app's
@@ -2675,6 +2825,23 @@ def run(args: argparse.Namespace) -> int:
                 "screens": talkback_screens,
             },
         }
+    if target_screenshots:
+        # P8-07 batch D (Q3): the three screenshot profiles name the TalkBack they spoke through —
+        # the versionName and API level re-parsed from the raw device artifact — and keep every
+        # target's window plus its own png under this record. The dynamic p806 profile writes no
+        # such record and no extra artifact, so its evidence contract stays exactly as batch 6 left
+        # it.
+        version = sampler.record_talkback_version()
+        host["talkback"] = {
+            "package": P806_TALKBACK_PACKAGE,
+            "version": version["version"],
+            "api_level": version["api_level"],
+            "version_artifact": TALKBACK_VERSION_ARTIFACT,
+            "device_service": sampler.talkback_component,
+            "prior_accessibility": prior_accessibility,
+            "log_level": talkback_log_level,
+            "screens": talkback_screens,
+        }
     (evidence / "host.json").write_text(json.dumps(host, indent=2), encoding="utf-8")
     return 0
 
@@ -2697,65 +2864,31 @@ def gate_seed_problems(host: dict[str, object], seed_sha256: str | None) -> list
     return []
 
 
-def p806_gate_problems(
-    host: dict[str, object], facts: P806SeedFacts, evidence: Path
+def talkback_screen_problems(
+    talkback: dict[str, object],
+    screens: tuple[Screen, ...],
+    evidence: Path,
+    derived_from: str,
+    device_service: str,
+    *,
+    require_screenshots: bool = False,
 ) -> list[str]:
-    """Re-derive the p806 hand-off: the seed facts AND every screen's per-target speech windows.
+    """Re-derive every speech screen's enable record and each target's own accepted window.
 
-    Each screen check is bound to its own recorded command id and re-derived from that id's
-    isolated `speech-window-begin`/accepted/`speech-window-end` window in the raw artifact. The
-    required values come from the seed facts, not from host.json: an evidence file that narrowed
-    or swapped a target's requirements fails. Any class other than success (未取得 / 片段缺失 /
-    金额错误) fails the gate. The image capability record is context, not a substitute for speech.
+    Each check is bound to its own recorded command id and re-derived from that id's isolated
+    `speech-window-begin`/accepted/`speech-window-end` window in the raw artifact. The required
+    values come from `derived_from`'s own table (the pushed seed, or the frozen profile), never from
+    host.json: an evidence file that narrowed or swapped a target's requirements fails. Any class
+    other than success (未取得 / 片段缺失 / 金额错误) fails the gate. The image capability record is
+    context, not a substitute for speech. With `require_screenshots` every ordered target must also
+    carry its own png, named by that target's command id, at or above MIN_SCREENSHOT_BYTES.
     """
-    problems: list[str] = []
-    recorded = host.get("p806")
-    if not isinstance(recorded, dict):
-        return ["host.json records no p806 seed facts"]
-    if recorded.get("seed_facts") != facts.as_dict():
-        problems.append(
-            f"host.json records p806 facts {recorded.get('seed_facts')!r}, the seed derives {facts.as_dict()!r}"
-        )
-    talkback = recorded.get("talkback")
-    if not isinstance(talkback, dict):
-        return problems + ["host.json records no TalkBack evidence"]
-    if talkback.get("package") != P806_TALKBACK_PACKAGE:
-        problems.append(
-            f"host.json records TalkBack package {talkback.get('package')!r}, "
-            f"expected {P806_TALKBACK_PACKAGE!r}"
-        )
-    device_service = talkback.get("device_service")
-    if not isinstance(device_service, str) or not device_service:
-        problems.append("host.json records no device TalkBack service component")
-        device_service = ""
-    elif not (
-        device_service.startswith(f"{P806_TALKBACK_PACKAGE}/")
-        and device_service.endswith("TalkBackService")
-    ):
-        problems.append(
-            f"host.json records {device_service!r} as the TalkBack service, "
-            f"which is not a {P806_TALKBACK_PACKAGE} TalkBackService component"
-        )
-    log_level = talkback.get("log_level")
-    if not isinstance(log_level, dict) or log_level.get("status") != "success":
-        problems.append(
-            "TalkBack's VERBOSE log-level route did not succeed: "
-            f"{log_level.get('reason') if isinstance(log_level, dict) else log_level!r}"
-        )
-    else:
-        if log_level.get("value") != P806_TALKBACK_LEVEL:
-            problems.append(
-                f"TalkBack's log-level route records {log_level.get('value')!r}, "
-                f"expected {P806_TALKBACK_LEVEL!r}"
-            )
-        steps = log_level.get("steps")
-        if not isinstance(steps, list) or not steps:
-            problems.append("TalkBack's log-level route records no settings-UI steps")
     screen_records = talkback.get("screens")
     if not isinstance(screen_records, dict):
-        return problems + ["host.json records no per-screen TalkBack evidence"]
+        return ["host.json records no per-screen TalkBack evidence"]
+    problems: list[str] = []
     seen_ids: set[int] = set()
-    for screen in p806_screens(facts):
+    for screen in screens:
         if not screen.speech:
             continue
         artifact = evidence / f"talkback-{screen.stem}.txt"
@@ -2817,7 +2950,7 @@ def p806_gate_problems(
         if not isinstance(checks, list) or len(checks) != len(screen.speech):
             problems.append(
                 f"{screen.stem}: host.json records {len(checks) if isinstance(checks, list) else checks!r} "
-                f"TalkBack checks, the seed derives {len(screen.speech)}"
+                f"TalkBack checks, the {derived_from} derives {len(screen.speech)}"
             )
             continue
         text = artifact.read_text(encoding="utf-8")
@@ -2833,12 +2966,12 @@ def p806_gate_problems(
             if target != expected.target:
                 problems.append(
                     f"{screen.stem}: a TalkBack target is recorded as {target!r}, "
-                    f"the seed derives {expected.target!r}"
+                    f"the {derived_from} derives {expected.target!r}"
                 )
             if check.get("required") != list(expected.required):
                 problems.append(
                     f"{screen.stem}: target {target!r} records requirements "
-                    f"{check.get('required')!r}, the seed derives {list(expected.required)!r}"
+                    f"{check.get('required')!r}, the {derived_from} derives {list(expected.required)!r}"
                 )
             command_id = check.get("command_id")
             if type(command_id) is not int or command_id <= 0:
@@ -2857,6 +2990,27 @@ def p806_gate_problems(
                     "the ordered checks were not driven in order"
                 )
             previous_id = command_id
+            if require_screenshots:
+                # D5: the png's own name carries this target's command id, and the bytes on disk are
+                # re-measured here — a host that points at another screen's picture, or at a blank
+                # frame, cannot satisfy it.
+                expected_shot = f"talkback-{screen.stem}-cmd-{command_id}.png"
+                recorded_shot = check.get("screenshot")
+                if recorded_shot != expected_shot:
+                    problems.append(
+                        f"{screen.stem}: target {target!r} records screenshot {recorded_shot!r}, "
+                        f"the target id names {expected_shot!r}"
+                    )
+                shot_path = evidence / expected_shot
+                if not shot_path.is_file():
+                    problems.append(
+                        f"{screen.stem}: target {target!r} has no screenshot {expected_shot!r}"
+                    )
+                elif shot_path.stat().st_size < MIN_SCREENSHOT_BYTES:
+                    problems.append(
+                        f"{screen.stem}: target {target!r} screenshot {expected_shot!r} is blank "
+                        f"({shot_path.stat().st_size} bytes)"
+                    )
             # The header must bind command to target, and the raw window itself must carry the
             # probe's command with the same losslessly encoded target and a found node: a
             # relabelled host header alone cannot attribute another focus target's speech.
@@ -2895,6 +3049,126 @@ def p806_gate_problems(
                 f"{screen.stem}: host.json records TalkBack status {record.get('status')!r}, "
                 f"the artifact derives {overall!r}"
             )
+    return problems
+
+
+def talkback_device_problems(talkback: dict[str, object]) -> tuple[list[str], str]:
+    """The run-level TalkBack identity: package, device service component and VERBOSE route.
+
+    Shared by the dynamic p806 record and the three screenshot profiles' record, so both gates
+    reject the same substitutions: another package, a service that is not a TalkBackService, or a
+    log level that cannot produce the fragment line the speech limb reads.
+    """
+    problems: list[str] = []
+    if talkback.get("package") != P806_TALKBACK_PACKAGE:
+        problems.append(
+            f"host.json records TalkBack package {talkback.get('package')!r}, "
+            f"expected {P806_TALKBACK_PACKAGE!r}"
+        )
+    device_service = talkback.get("device_service")
+    if not isinstance(device_service, str) or not device_service:
+        problems.append("host.json records no device TalkBack service component")
+        device_service = ""
+    elif not (
+        device_service.startswith(f"{P806_TALKBACK_PACKAGE}/")
+        and device_service.endswith("TalkBackService")
+    ):
+        problems.append(
+            f"host.json records {device_service!r} as the TalkBack service, "
+            f"which is not a {P806_TALKBACK_PACKAGE} TalkBackService component"
+        )
+    log_level = talkback.get("log_level")
+    if not isinstance(log_level, dict) or log_level.get("status") != "success":
+        problems.append(
+            "TalkBack's VERBOSE log-level route did not succeed: "
+            f"{log_level.get('reason') if isinstance(log_level, dict) else log_level!r}"
+        )
+    else:
+        if log_level.get("value") != P806_TALKBACK_LEVEL:
+            problems.append(
+                f"TalkBack's log-level route records {log_level.get('value')!r}, "
+                f"expected {P806_TALKBACK_LEVEL!r}"
+            )
+        steps = log_level.get("steps")
+        if not isinstance(steps, list) or not steps:
+            problems.append("TalkBack's log-level route records no settings-UI steps")
+    return problems, device_service
+
+
+def p806_gate_problems(
+    host: dict[str, object], facts: P806SeedFacts, evidence: Path
+) -> list[str]:
+    """Re-derive the p806 hand-off: the seed facts AND every screen's per-target speech windows.
+
+    The p806 record lives under `host["p806"]` and keeps its batch-6 shape: the seed facts are
+    re-derived from the pushed database and each screen check from its own raw window. The shared
+    helpers below carry the parts the three screenshot profiles also use.
+    """
+    problems: list[str] = []
+    recorded = host.get("p806")
+    if not isinstance(recorded, dict):
+        return ["host.json records no p806 seed facts"]
+    if recorded.get("seed_facts") != facts.as_dict():
+        problems.append(
+            f"host.json records p806 facts {recorded.get('seed_facts')!r}, the seed derives {facts.as_dict()!r}"
+        )
+    talkback = recorded.get("talkback")
+    if not isinstance(talkback, dict):
+        return problems + ["host.json records no TalkBack evidence"]
+    device_problems, device_service = talkback_device_problems(talkback)
+    problems.extend(device_problems)
+    problems.extend(
+        talkback_screen_problems(talkback, p806_screens(facts), evidence, "seed", device_service)
+    )
+    return problems
+
+
+def talkback_gate_problems(
+    host: dict[str, object], screens: tuple[Screen, ...], evidence: Path
+) -> list[str]:
+    """Re-derive the three screenshot profiles' TalkBack record (P8-07 batch D, the Q3 evidence).
+
+    D4: the TalkBack version and the device API level are re-parsed from the raw artifact the run
+    wrote out of the device's own `dumpsys package` and `getprop` answers, so an edited or emptied
+    host.json field fails instead of naming a version no artifact on this run can prove. D5: every
+    ordered target must carry its own png, named by that target's command id and at or above
+    MIN_SCREENSHOT_BYTES, so a picture cannot be reused across targets.
+    """
+    recorded = host.get("talkback")
+    if not isinstance(recorded, dict):
+        return ["host.json records no talkback record"]
+    problems: list[str] = []
+    if recorded.get("version_artifact") != TALKBACK_VERSION_ARTIFACT:
+        problems.append(
+            f"host.json names the TalkBack version artifact {recorded.get('version_artifact')!r}, "
+            f"the run writes {TALKBACK_VERSION_ARTIFACT!r}"
+        )
+    artifact = evidence / TALKBACK_VERSION_ARTIFACT
+    if not artifact.is_file():
+        problems.append(f"the raw TalkBack version artifact {TALKBACK_VERSION_ARTIFACT!r} is missing")
+    else:
+        version, api_level = parse_talkback_version_artifact(artifact.read_text(encoding="utf-8"))
+        if not version or not any(character.isdigit() for character in version):
+            problems.append("the raw TalkBack version artifact records no usable versionName")
+        elif recorded.get("version") != version:
+            problems.append(
+                f"host.json records TalkBack version {recorded.get('version')!r}, "
+                f"the raw artifact says {version!r}"
+            )
+        if not api_level.isdigit() or int(api_level) <= 0:
+            problems.append("the raw TalkBack version artifact records no device API level")
+        elif str(recorded.get("api_level")) != api_level:
+            problems.append(
+                f"host.json records device API level {recorded.get('api_level')!r}, "
+                f"the raw artifact says {api_level!r}"
+            )
+    device_problems, device_service = talkback_device_problems(recorded)
+    problems.extend(device_problems)
+    problems.extend(
+        talkback_screen_problems(
+            recorded, screens, evidence, "profile", device_service, require_screenshots=True
+        )
+    )
     return problems
 
 
@@ -2959,6 +3233,12 @@ def gate(args: argparse.Namespace) -> int:
     if facts is not None:
         problems.extend(p806_gate_problems(host, facts, evidence))
         problems.extend(gate_artifact_problems(host, Path(args.apk), Path(args.test_apk)))
+    elif records_talkback_evidence(profile):
+        # P8-07 batch D (Q3): the three screenshot profiles' own record — the device's TalkBack
+        # version and API level, every target's window and its own png — plus the same APK identity
+        # check the p806 segment runs.
+        problems.extend(talkback_gate_problems(host, screens, evidence))
+        problems.extend(gate_artifact_problems(host, Path(args.apk), Path(args.test_apk)))
     if problems:
         for problem in problems:
             print(f"gate: {problem}", file=sys.stderr)
@@ -2992,7 +3272,7 @@ def main(argv: list[str] | None = None) -> int:
         default="android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk",
         help=(
             "the androidTest APK that hosts the D-292 focus probe; installed and hash-recorded for "
-            "the p806 profile, and hash-compared by the p806 gate"
+            "every talkback profile, and hash-compared by the gate"
         ),
     )
     parser.add_argument("--serial", default="")
