@@ -57,6 +57,7 @@ class P802V8RenderInstrumentedTest {
     @Test
     fun theFirstResultPageRendersAndIsMeasuredInProcessPixels() {
         val log: (String) -> Unit = { line -> Log.i(TAG, line) }
+        val caseStartedElapsed = SystemClock.elapsedRealtime()
 
         // ---------------------------------------------------------------- L1: the sample
         val seeded = P802V8RenderSeed.prepare(targetContext, log)
@@ -83,12 +84,27 @@ class P802V8RenderInstrumentedTest {
                 "schema=${seeded.schemaVersion} window=[${seeded.windowStartInclusive},${seeded.windowEndExclusive}) " +
                 "apk=$apkSha256",
         )
+        log(p802V8BudgetLine("sample", caseStartedElapsed, SystemClock.elapsedRealtime()))
 
         // ---------------------------------------------------------------- L2: launch + the frozen group
         val surface = P802V8ResultSurface(instrumentation, log)
         surface.launchAndOpenSearch()
         surface.applyFixedCondition()
         surface.prepareSubmit()
+        // The rig's outer budget is a KILL, not a red: the driver bounds one `am instrument` and a
+        // case that runs past it leaves no cause on the transcript at all. The case therefore states
+        // where it stands before the terminal starts, and reds here when what is left cannot pay for
+        // the work that remains (the settle loop plus the post-settle header read).
+        log(p802V8BudgetLine("condition", caseStartedElapsed, SystemClock.elapsedRealtime()))
+        val preparedElapsed = SystemClock.elapsedRealtime() - caseStartedElapsed
+        val remainingBudget = P802V8RenderFacts.RIG_TIMEOUT_MILLIS - preparedElapsed
+        assertTrue(
+            "the case must red on its own budget instead of being killed by the rig's " +
+                "${P802V8RenderFacts.RIG_TIMEOUT_MILLIS} ms outer timeout: elapsedMs=$preparedElapsed " +
+                "remainingMs=$remainingBudget and the remaining work needs at least " +
+                "${P802V8RenderFacts.REMAINING_WORK_MILLIS} ms",
+            remainingBudget >= P802V8RenderFacts.REMAINING_WORK_MILLIS,
+        )
 
         // ---------------------------------------------------------------- L3: the pixel terminal
         // The band is cut from the window ONCE, before the submit, and its bounds are recorded so the
@@ -118,6 +134,12 @@ class P802V8RenderInstrumentedTest {
             // is an EARLIER plateau (the loading face, typically), and accepting it would pin finalState,
             // completedIndex and renderFirstPageMs to frames the list face has already replaced while the
             // only bound on the reading (finite and positive) stayed green.
+            //
+            // The `takeIf` below is a semantic anchor, not a redundant restatement. The backward scan
+            // returns the NEWEST run it finds, and that run's last sample need not be the newest one:
+            // samples [A, B, B, B, C] with settleSamples=3 return index 3, not the last index. The
+            // filter rejects that older plateau, so only a run ending at the newest sample can become
+            // `candidate`; the assertion after the loop then cannot fail.
             val candidate = p802V8FirstSettledIndex(samples, P802V8RenderFacts.SETTLE_SAMPLES)?.takeIf { index -> index == samples.lastIndex }
             // A settled state that still equals the pre-submit frame is the untouched condition area,
             // not a rendered result list: it is rejected and sampling continues.
@@ -143,8 +165,11 @@ class P802V8RenderInstrumentedTest {
                 "lastProbe=${pendingProbe ?: "no candidate settled state"}",
             settledIndex >= 0,
         )
-        // The candidate pin above is a live guard, not a comment: a settled index that is not the newest
-        // sample means the accepted plateau is older than the frame the list face left behind.
+        // This assertion states the invariant; it is not the guard. The newest-sample relation is
+        // already enforced where `candidate` is formed: the `takeIf` above rejects any run that does
+        // not end at `samples.lastIndex`, so `settledIndex` can only be assigned that index. The
+        // assertion cannot fail while that construction holds; it would catch only a refactor that
+        // dropped the filter, which is why it stays as an executable statement of the invariant.
         assertTrue(
             "the accepted settled state must be the NEWEST sample; an earlier plateau is not the state the reading reports",
             settledIndex == samples.lastIndex,
@@ -165,16 +190,18 @@ class P802V8RenderInstrumentedTest {
                 "rowBounds=${view.rowBounds} band=$band window=$window",
         )
         val finalState = samples[settledIndex]
+        // This lookup cannot miss and cannot run past the settled sample: `finalState` IS
+        // `samples[settledIndex]`, and `p802V8SameState` is `IntArray.contentEquals`, which is
+        // reflexive, so the first equal sample exists at or before `settledIndex`. Earlier revisions
+        // asserted `completedIndex >= 0` and `completedIndex <= settledIndex`; both follow from the
+        // lookup and the list alone, so they held whatever the pixels did and guarded nothing.
         val completedIndex = samples.indexOfFirst { sample -> p802V8SameState(sample, finalState) }
-        assertTrue("the completed sample must be one of the samples", completedIndex >= 0)
-        assertTrue(
-            "the completed sample can never follow the settled one",
-            completedIndex <= settledIndex,
-        )
-        assertTrue(
-            "the completed sample must start the settled run: a match from before it would report a shorter reading",
-            completedIndex <= settledIndex - (P802V8RenderFacts.SETTLE_SAMPLES - 1),
-        )
+        // WHAT THIS CASE DOES NOT ASSERT: that `completedIndex` is the START of the settled run. The
+        // accept-time candidate is `p802V8FirstSettledIndex(samples, settleSamples)` only while it ends
+        // at the newest sample, so `samples[settledIndex - (SETTLE_SAMPLES - 1)]` always equals
+        // `finalState` and an "earlier isolated equal frame" is admitted by construction. A bound on it
+        // would be derived from this loop's own semantics — true whatever the pixels did — so it is not
+        // asserted at all (D-366 E2 defines the terminal as the FIRST sample equal to the final state).
         assertTrue(
             "the settled state must differ from the pre-submit frame (the surface really changed)",
             !p802V8SameState(finalState, baseline),

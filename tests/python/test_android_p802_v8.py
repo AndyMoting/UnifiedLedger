@@ -11,6 +11,7 @@ from android_p802_v8 import (
     CASE,
     CONFIG_FILE,
     DEFAULT_AVD,
+    DEFAULT_TIMEOUT,
     EXPECTED_API,
     EXPECTED_CONDITION,
     EXPECTED_FIXTURE_TRANSACTIONS,
@@ -662,6 +663,124 @@ class Contract(unittest.TestCase):
                 if depth == 0:
                     return source[opening : index + 1]
         raise AssertionError("the reading-line builder has unbalanced braces")
+
+    def function_body(self, name: str) -> str:
+        """The body of one Kotlin function in the case: a block body brace-balanced from its
+        opening `{`, or the expression after `=` when the function is an expression body."""
+        source = self.case_source()
+        start = source.index(f"fun {name}(")
+        # Skip the parameter list, then the return type, to the signature's `{` or `=`.
+        cursor = start + len(f"fun {name}(") - 1
+        depth = 0
+        while cursor < len(source):
+            if source[cursor] == "(":
+                depth += 1
+            elif source[cursor] == ")":
+                depth -= 1
+                if depth == 0:
+                    cursor += 1
+                    break
+            cursor += 1
+        while cursor < len(source) and source[cursor] not in "{=":
+            cursor += 1
+        if cursor >= len(source):
+            raise AssertionError(f"{name} has no body")
+        if source[cursor] == "{":
+            opening = cursor
+            depth = 0
+            for index in range(opening, len(source)):
+                if source[index] == "{":
+                    depth += 1
+                elif source[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return source[opening : index + 1]
+            raise AssertionError(f"{name} has unbalanced braces")
+        # Expression body: skip the line break after `=`, then stop at the first newline that is
+        # not inside the expression's own brackets.
+        opening = cursor + 1
+        while opening < len(source) and source[opening].isspace():
+            opening += 1
+        depth = 0
+        for index in range(opening, len(source)):
+            character = source[index]
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+            elif character == "\n" and depth == 0:
+                return source[opening:index].strip()
+        raise AssertionError(f"{name} has an unterminated expression body")
+
+    def instrumented_test_source(self) -> str:
+        return (
+            self.root()
+            / "android-app"
+            / "src"
+            / "androidTest"
+            / "kotlin"
+            / "com"
+            / "unifiedledger"
+            / "android"
+            / "P802V8RenderInstrumentedTest.kt"
+        ).read_text()
+
+    def test_the_case_carries_the_rig_timeout_and_reds_on_its_own_budget(self) -> None:
+        # The driver kills one `am instrument` at DEFAULT_TIMEOUT; the case carries the SAME budget and
+        # asserts on what is left before the terminal starts, so a drift between the two reds here
+        # instead of turning into a killed process with no cause on the transcript.
+        self.assertIn(f"RIG_TIMEOUT_MILLIS = {int(DEFAULT_TIMEOUT * 1000):_}L", self.case_source())
+        test_source = self.instrumented_test_source()
+        self.assertIn("p802V8BudgetLine(", self.case_source())
+        self.assertIn("p802V8BudgetLine(", test_source)
+        self.assertIn("remainingBudget >= P802V8RenderFacts.REMAINING_WORK_MILLIS", test_source)
+
+    def test_both_control_placements_share_one_verified_channel(self) -> None:
+        # The tag and the merchant are the same defect class: one implementation proves both.
+        for name in ("toggleTag", "selectMerchant"):
+            self.assertIn("checkVerified(", self.function_body(name), name)
+
+    def test_the_toggle_predicate_sees_selected_state_and_radio_rows(self) -> None:
+        # the merchant row is a Material3 RadioButton whose state is `selected`, not `checked`
+        # (`P503SearchScreen.kt:247`). Reverting `isToggle` to an `isCheckable`-only predicate drops
+        # both tokens below, so the row becomes invisible to `toggleNear`; this contract reds instead
+        # of waiting for a device round to explain a red.
+        body = self.function_body("isToggle")
+        self.assertIn("isSelected", body)
+        self.assertIn("RadioButton", body)
+
+    def test_the_merchant_effect_judges_the_selected_state(self) -> None:
+        # the same row reports `selected`, so an effect reverted to `node.isChecked` would wait
+        # out its whole poll and red on the device after a landed click. The effect is owned by
+        # `selectMerchant`, which hands it to `checkVerified`; dropping `isSelected` from that
+        # argument reds here.
+        body = self.function_body("selectMerchant")
+        self.assertIn("effect =", body)
+        self.assertIn("isSelected", body[body.index("effect =") :])
+
+    def test_a_control_placement_judges_state_from_a_forced_current_tree(self) -> None:
+        body = self.function_body("checkVerified")
+        self.assertIn("refreshTreeForRead()", body)
+        self.assertIn("toggleNear(", body)
+        self.assertIn("clickSemantic(", body)
+        self.assertIn("tapAt(", body)
+        self.assertIn("awaitEffect(", body)
+
+    def test_a_refused_placement_names_expected_read_and_clicked_bounds_in_one_line(self) -> None:
+        body = self.function_body("checkVerified")
+        self.assertIn("check-failed", body)
+        for token in ("expected=", "read=", "clickedBounds="):
+            self.assertIn(token, body)
+
+    def test_the_state_poll_is_bounded_and_forces_the_tree_current(self) -> None:
+        body = self.function_body("awaitEffect")
+        self.assertIn("CHECK_TIMEOUT_MILLIS", body)
+        self.assertIn("CHECK_POLL_MILLIS", body)
+        self.assertIn("CHECK_REFRESH_EVERY", body)
+        self.assertIn("refreshTreeForRead()", body)
+
+    def test_the_accept_time_tree_read_is_forced_current(self) -> None:
+        self.assertIn("refreshTreeForRead()", self.function_body("confirmResultView"))
 
     def test_the_case_emits_every_field_the_rig_requires(self) -> None:
         # The check reads the reading-line builder ONLY: a field that survives in a diagnostic line

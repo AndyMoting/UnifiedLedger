@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.unifiedledger.application.CATALOG_MANAGED_CURRENCY
 import com.unifiedledger.application.DEFAULT_EXPENSE_LEAF_ID
@@ -91,6 +93,39 @@ internal object P802V8RenderFacts {
 
     /** The case's own bound on the settle loop; a band that never settles fails loudly instead. */
     const val SETTLE_TIMEOUT_MILLIS = 20_000L
+
+    /**
+     * The rig's own bound on the ONE `am instrument` it runs: `DEFAULT_TIMEOUT` (2400 s) in
+     * `tools/python/android_p802_v8.py`, which kills the session when it expires. The case compares
+     * its own elapsed time against it while it is still in the prepare stage, so an exhausted budget
+     * reds as an assertion instead of ending as a killed process with no cause on the transcript.
+     */
+    const val RIG_TIMEOUT_MILLIS = 2_400_000L
+
+    /**
+     * What the case still needs after the frozen condition group is placed: the settle loop and the
+     * post-settle header read, each bounded by [SETTLE_TIMEOUT_MILLIS], plus a margin for the reading
+     * line. A prepare stage that leaves less than this reds on its own budget.
+     */
+    const val REMAINING_WORK_MILLIS = SETTLE_TIMEOUT_MILLIS * 2 + 60_000L
+
+    /** How many times one condition-area control is attempted before its placement fails. */
+    const val CHECK_ATTEMPTS = 3
+
+    /** The bound on one state poll after one injected click on a condition-area control. */
+    const val CHECK_TIMEOUT_MILLIS = 4_000L
+
+    /** The state poll's own step. */
+    const val CHECK_POLL_MILLIS = 250L
+
+    /** How many polls pass between two forced-current tree reads inside one state poll. */
+    const val CHECK_REFRESH_EVERY = 2
+
+    /** How many ancestors a structural control lookup climbs from its label node (flow 3's bound). */
+    const val CHECK_ANCESTOR_DEPTH = 5
+
+    /** The one bound on a structural subtree walk (the frozen flow-3 anchor's own bound). */
+    const val CHECK_TREE_NODES = 2_000
 
     /**
      * The minimum spacing between two accept-time semantic-tree probes, in nanoseconds.
@@ -684,7 +719,7 @@ internal data class P802V8ResultView(
  * class taps the submit node itself and hands the dispatch instant back to the caller.
  */
 internal class P802V8ResultSurface(
-    instrumentation: Instrumentation,
+    private val instrumentation: Instrumentation,
     private val log: (String) -> Unit,
 ) {
     private val flow = P807Q2Flow1Ui(instrumentation, log)
@@ -707,8 +742,9 @@ internal class P802V8ResultSurface(
      * Places V-8's frozen condition group: the note keyword, the DEFAULT 90-day window (untouched,
      * which is what the frozen group means), the tag and the merchant.
      *
-     * Each placement is verified from the node's own state after the click, so a click the product
-     * never received fails here instead of leaving a silently different condition behind.
+     * Each placement is verified from the CONTROL'S OWN STATE after the click, so a click the product
+     * never received fails here instead of leaving a silently different condition behind. The state is
+     * read from a forced-current tree and only the state is the success test ([checkVerified]).
      */
     fun applyFixedCondition() {
         log(
@@ -719,6 +755,8 @@ internal class P802V8ResultSurface(
             "the search surface must open with the keyword field as its only editable field (the frozen default " +
                 "window), saw ${flow.editableFieldCount()}"
         }
+        // The keyword is addressed by position because the frozen default window leaves exactly one
+        // editable field; `setFieldText` reads the value back, so a rejected write never passes here.
         check(flow.setFieldText(1, P802V8RenderFacts.noteMarker)) {
             "the note keyword must land in the field"
         }
@@ -726,8 +764,8 @@ internal class P802V8ResultSurface(
         // but its coordinate fallback would land on the keyboard, and the pre-submit frame must be free
         // of the IME so the comparison band is the app's own surface.
         check(flow.hideKeyboardIfShown()) { "the input method must be gone after the keyword was typed" }
-        check(toggleTag()) { "the tag ${P802V8RenderFacts.tagName} must be checked after the click" }
-        check(selectMerchant()) { "the merchant ${P802V8RenderFacts.merchantName} must be selected after the click" }
+        check(toggleTag()) { "the tag ${P802V8RenderFacts.tagName} must be checked after the click; see the check-failed line" }
+        check(selectMerchant()) { "the merchant ${P802V8RenderFacts.merchantName} must be selected after the click; see the check-failed line" }
         check(flow.hideKeyboardIfShown()) { "the input method must be gone before the reading" }
         log(
             "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} condition keyword=${P802V8RenderFacts.noteMarker} " +
@@ -745,15 +783,24 @@ internal class P802V8ResultSurface(
      *
      * The instant is taken before the accessibility action, so the gesture's own dispatch cost counts
      * INTO the reading — the number is an upper bound and can never be flattered.
+     *
+     * The tree is forced current before the node is located and its bounds are checked to be on
+     * screen: the frozen click path falls back to the node's coordinates, and a node read from an
+     * earlier traversal can carry bounds that are no longer where it is, so the tap would land on
+     * whatever moved underneath it. The click's EFFECT is deliberately NOT awaited here — waiting for
+     * the result surface is exactly the interval this reading is about.
      */
     fun submitDispatchNanos(): Long {
+        refreshTreeForRead()
         val node =
             checkNotNull(flow.findAppNode { candidate -> flow.descriptionOf(candidate) == P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION }) {
                 "the submit affordance (${P807Q2Flow1Facts.SEARCH_SUBMIT_DESCRIPTION}) must be on this surface"
             }
+        val bounds = flow.bounds(node)
         check(node.isEnabled && node.isVisibleToUser) { "the submit affordance must be enabled and visible before the reading" }
+        check(isOnScreen(bounds)) { "the submit affordance must lie inside the app window before the reading, saw $bounds" }
         val dispatched = System.nanoTime()
-        log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} submit dispatchNanos=$dispatched")
+        log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} submit dispatchNanos=$dispatched bounds=$bounds")
         flow.tap(node)
         log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} submit returnedNanos=${System.nanoTime()}")
         return dispatched
@@ -763,16 +810,25 @@ internal class P802V8ResultSurface(
      * The total the surface RENDERS in its result header (`搜索结果 · 共 N 笔`), or `null` when the list
      * face has not rendered yet. This RE-READS the header after the settle so the reading line can be
      * bound to the count it was measured with; the accept-time region proof is [confirmResultView].
+     *
+     * A header that has rendered WITHOUT a readable total is a transient, not a verdict: the read is
+     * forced current and the poll keeps going, so the frozen copy `搜索结果 · 共 N 笔` is never read as
+     * "no result surface" in its first frame.
      */
     fun renderedTotal(deadlineMillis: Long = P802V8RenderFacts.SETTLE_TIMEOUT_MILLIS): Long? {
         val deadline = SystemClock.elapsedRealtime() + deadlineMillis
         while (SystemClock.elapsedRealtime() < deadline) {
+            refreshTreeForRead()
             val header = flow.appNodes().firstOrNull { node -> flow.textOf(node).startsWith(P802V8RenderFacts.RESULTS_HEADER) }
             if (header != null) {
                 val text = flow.textOf(header)
-                log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} resultHeader=[$text] bounds=${flow.bounds(header)}")
                 val match = RENDERED_TOTAL.find(text)
-                return match?.groupValues?.get(1)?.toLongOrNull()
+                val total = match?.groupValues?.get(1)?.toLongOrNull()
+                if (total != null) {
+                    log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} resultHeader=[$text] bounds=${flow.bounds(header)}")
+                    return total
+                }
+                log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} resultHeader=[$text] carries no total yet")
             }
             SystemClock.sleep(P802V8RenderFacts.SAMPLE_INTERVAL_MILLIS.toLong())
         }
@@ -783,7 +839,7 @@ internal class P802V8ResultSurface(
      * The accept-time tree gate: a settled pixel state is accepted only when the surface is, at that
      * very instant, the rendered result list.
      *
-     * ONE tree read answers three questions, and all three are needed:
+     * ONE forced-current tree read answers three questions, and all three are needed:
      * 1. the app window still has the bounds the band was cut from, so the band measures the same
      *    window it was derived from (a window that re-laid out mid-reading would silently re-aim it);
      * 2. the result header `搜索结果 · 共 436 笔` has rendered AND the list face's static `正在搜索…` row
@@ -798,11 +854,26 @@ internal class P802V8ResultSurface(
      * measured region holds something decidable, not a settle invariant — the list face can be on
      * screen for a frame before its rows are laid out, so a red here means the guard fired, not that
      * every later sample would have stayed empty.
+     *
+     * The tree is forced current FIRST, before the window bounds are read: the window, the header,
+     * the absent loading row and the in-band amount row must all be read after ONE forced refresh.
+     * Reading the window first let a cached root equal the expected bounds while the refreshed nodes
+     * behind it already belonged to the next frame, so the equality was judged on the stale tree.
+     *
+     * The forced refresh makes the root current at that call, and only there: the two reads behind it
+     * each take a root of their own — `windowBounds()` from `flow.ui.root()`, `appNodes()` from
+     * `P807Q2Flow1DeviceSupport.kt:1432` by way of `AndroidScaleUi.kt:181` — so a re-layout landing
+     * between them decides the window equality on a root one read older than the nodes it is paired
+     * with. That is a narrow race, not a closed gap, and the rest of this gate is what bounds it: the
+     * amount row must still hold inside the band cut from that window, and a rejected probe keeps
+     * sampling, so the next probe (`TREE_PROBE_INTERVAL_NANOS`, 500 ms) re-reads both, and the pixel
+     * change behind the settle candidate still has to agree.
      */
     fun confirmResultView(
         expectedWindow: Rect,
         band: Rect,
     ): P802V8ResultView? {
+        refreshTreeForRead()
         val window = windowBounds()
         check(window == expectedWindow) {
             "the app window moved during the reading: the band $band was cut from $expectedWindow, " +
@@ -856,51 +927,313 @@ internal class P802V8ResultSurface(
         return flow.textOf(node).contains(marker) || flow.descriptionOf(node).contains(marker)
     }
 
-    /** Checks the checkbox whose row carries [label] and reports whether the row's box is checked. */
-    private fun toggleTag(): Boolean {
-        flow.seekApp(P802V8RenderFacts.tagName)
-        val target = checkableNear(P802V8RenderFacts.tagName) ?: return false
-        log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} tag checkbox ${describe(target)}")
-        flow.tap(target)
-        flow.settle()
-        return checkableNear(P802V8RenderFacts.tagName)?.isChecked == true
-    }
+    /** Checks the tag row's box, proving the row's own state flipped; the state is the only test. */
+    private fun toggleTag(): Boolean =
+        checkVerified(
+            step = "tag",
+            label = P802V8RenderFacts.tagName,
+            expectedState = "checked=true",
+            effect = { node -> node.isChecked },
+        )
 
-    /** Selects the merchant radio whose row carries [label] and reports whether it is selected. */
-    private fun selectMerchant(): Boolean {
-        flow.seekApp(P802V8RenderFacts.merchantName)
-        val target = checkableNear(P802V8RenderFacts.merchantName) ?: return false
-        log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} merchant radio ${describe(target)}")
-        flow.tap(target)
-        flow.settle()
-        return checkableNear(P802V8RenderFacts.merchantName)?.isChecked == true
+    /**
+     * Selects the merchant row's radio, proving the row's own state flipped; same shape as the tag.
+     *
+     * The row is a Material3 `RadioButton` declared with `selected` for its state and `onClick` for its
+     * action (`P503SearchScreen.kt:247`), so the successful state is `selected` — the checkbox row at
+     * `P503SearchScreen.kt:211` reports `checked` instead. Both are read from the same node the click
+     * was aimed at.
+     */
+    private fun selectMerchant(): Boolean =
+        checkVerified(
+            step = "merchant",
+            label = P802V8RenderFacts.merchantName,
+            expectedState = "checked=true|selected=true",
+            effect = { node -> node.isChecked || node.isSelected },
+        )
+
+    /**
+     * Places ONE condition-area control and proves the surface took it: forced-current read, the
+     * row's own toggle node (structural first, the whole tree's band-mates last), ONE semantic click,
+     * a bounded poll of the control's own state, and — only after that poll has read the pre-click
+     * state for its whole window — ONE coordinate tap on the toggle node's own centre.
+     *
+     * WHY THE CLICK IS NOT THE EVIDENCE (the first device run red on `applyFixedCondition`). This
+     * stack accepts `ACTION_CLICK` without any state change, and `AndroidScaleUi.clickNode` discards
+     * the action's answer (`AndroidScaleUi.kt:412-445`); a read served from the client accessibility
+     * cache then answers the PRE-click state (`AndroidScaleUi.kt:223-273`, the D-203 signature). So
+     * the action's answer is an observation, the CONTROL'S OWN STATE is the only success test, and
+     * every read a judgement depends on is forced current first ([refreshTreeForRead]).
+     *
+     * WHY THE COORDINATE TAP WAITS FOR A FAILED POLL. A checkbox is a TOGGLE: a second injection after
+     * a click that did land would UNCHECK the row, and the case would report a refusal it caused. The
+     * fallback therefore fires only once the bounded poll has read the pre-click state throughout.
+     */
+    private fun checkVerified(
+        step: String,
+        label: String,
+        expectedState: String,
+        effect: (AccessibilityNodeInfo) -> Boolean,
+    ): Boolean {
+        var readState = "target=ABSENT"
+        var targetBounds: Rect? = null
+        var lastPoint: Pair<Int, Int>? = null
+        repeat(P802V8RenderFacts.CHECK_ATTEMPTS) { round ->
+            if (!flow.ui.has(label)) runCatching { flow.seekApp(label) }
+            refreshTreeForRead()
+            val target = toggleNear(label)
+            val bounds = target?.let { node -> flow.bounds(node) }
+            readState = target?.let { node -> describe(node) } ?: "target=ABSENT"
+            if (target == null || bounds == null || !isOnScreen(bounds)) {
+                log(
+                    "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check step=$step round=$round expected=$expectedState " +
+                        "read=$readState channel=none reason=no-on-screen-toggle",
+                )
+                flow.dumpUiSnapshot("$step:round$round")
+                return@repeat
+            }
+            if (effect(target)) {
+                log(
+                    "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check step=$step round=$round expected=$expectedState " +
+                        "read=$readState channel=none reason=already-in-expected-state",
+                )
+                return true
+            }
+            val accepted = clickSemantic(target)
+            log(
+                "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check step=$step round=$round channel=semantic " +
+                    "actionClick=$accepted expected=$expectedState read=$readState",
+            )
+            if (awaitEffect(step, round, "semantic", label, effect)) return true
+            val point = bounds.centerX() to bounds.centerY()
+            tapAt(point)
+            lastPoint = point
+            targetBounds = bounds
+            log(
+                "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check step=$step round=$round channel=coordinate-target " +
+                    "point=(${point.first},${point.second}) bounds=$bounds",
+            )
+            if (awaitEffect(step, round, "coordinate-target", label, effect)) return true
+            flow.dumpUiSnapshot("$step:round$round")
+            flow.settle()
+        }
+        log(
+            "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check-failed step=$step label=[$label] expected=$expectedState " +
+                "read=$readState clickedBounds=${targetBounds ?: "none"} lastPoint=${lastPoint ?: "none"} " +
+                "attempts=${P802V8RenderFacts.CHECK_ATTEMPTS}",
+        )
+        return false
     }
 
     /**
-     * The checkable node of the row that carries [label]: the checkbox/radio is a SEPARATE semantics node
-     * from its label text, so it is addressed structurally — same row by vertical overlap, nearest
-     * vertical centre — instead of by the label's text (a text node is not clickable).
+     * Polls the control's own state for at most [P802V8RenderFacts.CHECK_TIMEOUT_MILLIS], forcing the
+     * tree current every [P802V8RenderFacts.CHECK_REFRESH_EVERY] polls: without that, a landed click
+     * can stay invisible for the poll's whole window because the client cache still answers the
+     * pre-click tree. The first and the last reading are logged; the middle ones are not.
      */
-    private fun checkableNear(label: String): AccessibilityNodeInfo? {
-        val labelNode = flow.findAppNode { node -> flow.textOf(node) == label } ?: return null
-        val labelBounds = flow.bounds(labelNode)
-        val candidates = flow.appNodes().filter { node -> node.isCheckable }
-        val overlapping =
-            candidates.filter { node ->
-                val bounds = flow.bounds(node)
-                bounds.top < labelBounds.bottom && bounds.bottom > labelBounds.top
+    private fun awaitEffect(
+        step: String,
+        round: Int,
+        channel: String,
+        label: String,
+        effect: (AccessibilityNodeInfo) -> Boolean,
+    ): Boolean {
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + P802V8RenderFacts.CHECK_TIMEOUT_MILLIS
+        var polls = 0
+        var lastRead = "target=ABSENT"
+        while (true) {
+            if (polls % P802V8RenderFacts.CHECK_REFRESH_EVERY == 0) refreshTreeForRead()
+            val target = toggleNear(label)
+            lastRead = target?.let { node -> describe(node) } ?: "target=ABSENT"
+            val reached = target != null && effect(target)
+            polls++
+            if (reached) {
+                log(
+                    "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check-poll step=$step round=$round channel=$channel " +
+                        "reached=true polls=$polls elapsedMs=${SystemClock.elapsedRealtime() - started}",
+                )
+                return true
             }
-        return overlapping.minByOrNull { node -> abs(flow.bounds(node).centerY() - labelBounds.centerY()) }
+            if (polls == 1) {
+                log(
+                    "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check-poll step=$step round=$round channel=$channel " +
+                        "reached=false polls=$polls read=$lastRead",
+                )
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) break
+            SystemClock.sleep(P802V8RenderFacts.CHECK_POLL_MILLIS)
+        }
+        log(
+            "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} check-poll step=$step round=$round channel=$channel " +
+                "reached=false polls=$polls elapsedMs=${SystemClock.elapsedRealtime() - started} read=$lastRead",
+        )
+        return false
+    }
+
+    /**
+     * Forces the tree current before a state is JUDGED: only a MISS goes through the frozen helper's
+     * forcing passes (`root.refresh()` with bypassCache, then the rate-limited cache reset,
+     * `AndroidScaleUi.kt:223-273`), while a lookup of a PRESENT text is cache-served and refreshes
+     * nothing — which is why the sentinel is a guaranteed miss.
+     */
+    private fun refreshTreeForRead() {
+        flow.ui.has(REFRESH_SENTINEL)
+    }
+
+    /**
+     * The toggle node of the row that carries [label]: STRUCTURE FIRST — climb the label's parent
+     * chain and take the one checkable/selectable node on the label's band — then every toggle in the
+     * visible tree on that band, nearest vertical centre last.
+     *
+     * The label is a TEXT node and a text node is not clickable, so the box is addressed
+     * structurally. A Y-only tie-break returns the band-mate of the NEXT row (flow 3's
+     * `P807Q2Flow3DeviceSupport.kt:2012-2015`), so several candidates on one band are separated by the
+     * horizontal gap to the label, with a toggle to the RIGHT of the label pushed behind every left one.
+     */
+    private fun toggleNear(label: String): AccessibilityNodeInfo? {
+        val labelNode = flow.findAppNode { node -> flow.textOf(node) == label } ?: return null
+        val band = flow.bounds(labelNode)
+        var container = labelNode.parent
+        var depth = 0
+        while (depth < P802V8RenderFacts.CHECK_ANCESTOR_DEPTH) {
+            val current = container ?: break
+            val candidates =
+                collectNodes(current).filter { node ->
+                    node != labelNode && node.isVisibleToUser && isToggle(node) && onBand(node, band)
+                }
+            if (candidates.size == 1) return candidates.single()
+            if (candidates.isNotEmpty()) return nearestToggle(candidates, band)
+            container = current.parent
+            depth++
+        }
+        val toggles = flow.appNodes().filter { node -> isToggle(node) && onBand(node, band) }
+        return toggles.minByOrNull { node -> abs(flow.bounds(node).centerY() - band.centerY()) }
+    }
+
+    /**
+     * Among several toggles sharing [band], the one that belongs to the label's own row: the smallest
+     * horizontal gap between the toggle's right edge and the label's left edge, with a toggle to the
+     * RIGHT of the label pushed behind every left one by [TOGGLE_RIGHT_OF_LABEL_PENALTY]. The vertical
+     * distance only separates rows that a re-measured band lets in.
+     */
+    private fun nearestToggle(
+        toggles: List<AccessibilityNodeInfo>,
+        band: Rect,
+    ): AccessibilityNodeInfo? {
+        val nearest =
+            toggles
+                .map { node -> node to flow.bounds(node) }
+                .filter { (_, rect) -> rect.width() > 0 }
+                .minByOrNull { (_, rect) ->
+                    val gap = band.left - rect.right
+                    val horizontal = if (gap >= 0) gap else TOGGLE_RIGHT_OF_LABEL_PENALTY + (-gap)
+                    horizontal + abs(rect.centerY() - band.centerY())
+                }
+        return nearest?.first
+    }
+
+    /**
+     * Whether [node] can carry a control's state: checkable, checked or selected, or the platform's
+     * radio/check class. A `RadioButton` declares `selected` rather than `checked` as its state
+     * (`P503SearchScreen.kt:247`), so an `isCheckable`-only filter cannot see the merchant row's box
+     * at all — that is why the predicate keeps all five shapes.
+     */
+    private fun isToggle(node: AccessibilityNodeInfo): Boolean {
+        val className = node.className?.toString().orEmpty()
+        return node.isCheckable || node.isChecked || node.isSelected || className.endsWith("RadioButton") || className.endsWith("CheckBox")
+    }
+
+    /** Whether [node]'s centre sits on [band]'s row, with the slack a re-measured row needs. */
+    private fun onBand(
+        node: AccessibilityNodeInfo,
+        band: Rect,
+    ): Boolean {
+        val bounds = flow.bounds(node)
+        return bounds.centerY() in (band.top - BAND_SLACK_PX)..(band.bottom + BAND_SLACK_PX) && bounds.width() > 0
+    }
+
+    /** Whether [bounds] lie inside the display AND the app window, so a coordinate tap can land. */
+    private fun isOnScreen(bounds: Rect): Boolean {
+        if (bounds.width() <= 0 || bounds.height() <= 0) return false
+        val metrics = instrumentation.targetContext.resources.displayMetrics
+        if (bounds.left >= metrics.widthPixels || bounds.top >= metrics.heightPixels || bounds.right <= 0 || bounds.bottom <= 0) {
+            return false
+        }
+        val window = runCatching { windowBounds() }.getOrNull() ?: return true
+        return bounds.left < window.right && window.left < bounds.right && bounds.top < window.bottom && window.top < bounds.bottom
+    }
+
+    /**
+     * The semantic channel with its answer KEPT: ACTION_CLICK on [node], then on up to
+     * [P802V8RenderFacts.CHECK_ANCESTOR_DEPTH] clickable ancestors (the discipline
+     * `AndroidScaleUi.clickNode` uses). `false` is an observation, not a failure.
+     */
+    private fun clickSemantic(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        repeat(P802V8RenderFacts.CHECK_ANCESTOR_DEPTH) {
+            val candidate = current ?: return false
+            val usable = candidate.isEnabled && candidate.isVisibleToUser
+            if (usable && candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            current = candidate.parent
+        }
+        return false
+    }
+
+    /** Injects one touchscreen tap at [point] (the D-217 coordinate path `AndroidScaleUi.clickNode` uses). */
+    private fun tapAt(point: Pair<Int, Int>) {
+        val (x, y) = point
+        val down = SystemClock.uptimeMillis()
+        val events =
+            listOf(
+                MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+                MotionEvent.obtain(down, down + TOUCH_HOLD_MILLIS, MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN },
+            )
+        try {
+            events.forEach { event ->
+                check(instrumentation.uiAutomation.injectInputEvent(event, true)) { "coordinate tap injection refused at ($x, $y)" }
+            }
+        } finally {
+            events.forEach { event -> event.recycle() }
+        }
+        SystemClock.sleep(180)
+    }
+
+    /** Breadth-first walk of [root], bounded by [P802V8RenderFacts.CHECK_TREE_NODES] (flow 3's shape). */
+    private fun collectNodes(root: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+        val result = ArrayList<AccessibilityNodeInfo>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty() && result.size < P802V8RenderFacts.CHECK_TREE_NODES) {
+            val node = queue.removeFirst()
+            result.add(node)
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let(queue::add)
+            }
+        }
+        return result
     }
 
     /** The node's own shape, so a refused click is diagnosable from the log alone. */
     private fun describe(node: AccessibilityNodeInfo): String =
-        "class=${node.className} enabled=${node.isEnabled} visible=${node.isVisibleToUser} " +
-            "checkable=${node.isCheckable} checked=${node.isChecked} bounds=${flow.bounds(node)}"
+        "class=${node.className} clickable=${node.isClickable} enabled=${node.isEnabled} visible=${node.isVisibleToUser} " +
+            "checkable=${node.isCheckable} checked=${node.isChecked} selected=${node.isSelected} bounds=${flow.bounds(node)}"
 
     private companion object {
         /** The rendered result header's own copy: `搜索结果 · 共 N 笔`. */
         val RENDERED_TOTAL = Regex(P802V8RenderFacts.RESULTS_HEADER + " · 共 ([0-9]+) 笔")
+
+        /** A guaranteed-miss text whose lookup is what takes the frozen helper's forcing passes. */
+        const val REFRESH_SENTINEL = "\u0000P802-V8-refresh"
+
+        /** How far a toggle that sits right OF its label is pushed behind the left ones. */
+        const val TOGGLE_RIGHT_OF_LABEL_PENALTY = 10_000
+
+        /** How far a node's centre may sit off the label's band and still count as its row. */
+        const val BAND_SLACK_PX = 16
+
+        /** The coordinate tap's hold time (the frozen drivers' own value). */
+        const val TOUCH_HOLD_MILLIS = 60L
     }
 }
 
@@ -925,6 +1258,24 @@ internal data class P802V8Reading(
     val schemaVersion: Long,
     val apkSha256: String,
 )
+
+/**
+ * One diagnostic line stating where the case stands against the rig's outer budget: the elapsed time
+ * since the case started, what is left of [P802V8RenderFacts.RIG_TIMEOUT_MILLIS], and the least the
+ * remaining work needs. The case reads it during the prepare stage, so a budget too small to finish
+ * reds on an assertion here instead of ending as a process the driver killed.
+ */
+internal fun p802V8BudgetLine(
+    stage: String,
+    startedElapsedMs: Long,
+    nowElapsedMs: Long,
+): String {
+    val elapsed = nowElapsedMs - startedElapsedMs
+    val remaining = P802V8RenderFacts.RIG_TIMEOUT_MILLIS - elapsed
+    return "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} budget stage=$stage elapsedMs=$elapsed " +
+        "remainingMs=$remaining rigTimeoutMs=${P802V8RenderFacts.RIG_TIMEOUT_MILLIS} " +
+        "remainingWorkMs=${P802V8RenderFacts.REMAINING_WORK_MILLIS}"
+}
 
 /**
  * Emits the reading line and returns it, so the caller can log it in one place and the gate can find
