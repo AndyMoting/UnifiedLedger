@@ -14,6 +14,7 @@ from android_fontscale.sampler import (
     InputTextStep,
     MIN_SCREENSHOT_BYTES,
     NOTIFICATION_DIALOG_QUIET_READS,
+    NOTIFICATION_DIALOG_SETTLE_INTERVAL_S,
     NOTIFICATION_DIALOG_SETTLE_ROUNDS,
     P806SeedFacts,
     P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,
@@ -1747,6 +1748,92 @@ class TargetScreenshots(unittest.TestCase):
         )
 
 
+class ReadinessGateOrder(unittest.TestCase):
+    """QK-1: the rig runs enable -> ready -> settle -> its first command, in that order.
+
+    The doubles that pin the per-target png pairing and the retry bound stub the two r4 gates
+    without recording them, so deleting the readiness call from `p806_talkback_screen` — or moving
+    it after the command loop — left every earlier case green. This double records each step name,
+    so the recorded sequence itself is the assertion.
+    """
+
+    TARGETS = ("结余 -17.34 CNY", "-12.34 CNY")
+
+    def test_the_rig_gates_readiness_and_settle_before_its_first_command(self) -> None:
+        import tempfile
+
+        class _OrderSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.calls: list[str] = []
+
+            def enable_talkback(self, stem: str) -> dict[str, object]:
+                self.calls.append("enable")
+                return {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": f"talkback-enabled-{stem}.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+
+            def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+                self.calls.append("ready")
+                return {"status": "ready", "waited_s": 0.0, "polls": 1, "fragments": 1}
+
+            def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+                self.calls.append("settle")
+                return {"clears": 0, "quiet_reads": 2, "quiet_after_round": 2, "rounds": 2}
+
+            def handle_notification_permission_dialog(self) -> bool:
+                self.calls.append("dialog")
+                return False
+
+            def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+                self.calls.append(f"focus:{target}")
+                return {
+                    "id": command_id,
+                    "target": target,
+                    "completed": True,
+                    "accepted": True,
+                    "problem": "",
+                    "lines": P806Profile._window(
+                        [target], command_id=command_id, target=target
+                    ).splitlines(),
+                }
+
+            def disable_talkback_accessibility(self) -> None:
+                pass
+
+            def wait_accessibility_disabled(self) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _OrderSampler(Path(temp))
+            screen = Screen(
+                "day-detail",
+                (),
+                "共 2 笔明细",
+                speech=tuple(SpeechCheck(target, (target,)) for target in self.TARGETS),
+            )
+            record = sampler.p806_talkback_screen(screen, target_screenshots=False)
+        self.assertEqual("success", record["status"])
+        # enable -> ready -> settle -> the first command, with the second command only after it: a
+        # deleted readiness call loses "ready" here, a postponed one lands after the first focus.
+        self.assertEqual(
+            [
+                "enable",
+                "ready",
+                "settle",
+                "focus:结余 -17.34 CNY",
+                "focus:-12.34 CNY",
+            ],
+            sampler.calls,
+        )
+
+
 class TalkbackReadyGate(unittest.TestCase):
     """T1: the first command waits for TalkBack's own utterance, and a timeout fails closed."""
 
@@ -1863,6 +1950,60 @@ class NotificationPromptSettle(unittest.TestCase):
             self.assertIn(
                 f"quiet_required={NOTIFICATION_DIALOG_QUIET_READS}", artifact
             )
+
+    def test_the_round_bound_and_the_growing_interval_are_what_the_device_waits(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._SettleSampler(evidence, [True] * 8)
+            # The interval is NOT patched to zero here: the sleeps the settle asks for are the
+            # values the device really waits, so a smaller round bound or one flat wait changes the
+            # recorded list. Only the sleeping itself is replaced, to keep the case instant.
+            with patch("android_fontscale.sampler.time.sleep") as sleeper:
+                record = sampler.settle_notification_permission_dialog("home")
+            waits = [call.args[0] for call in sleeper.call_args_list]
+            artifact = (evidence / "notification-dialog-home.txt").read_text(encoding="utf-8")
+        self.assertEqual([2.0, 4.0, 6.0], waits)
+        self.assertEqual(4, record["rounds"])
+        self.assertEqual(4, sampler.reads)
+        # The documented promise: at most 4 rounds, spaced 2 / 4 / 6 s.
+        self.assertEqual(4, NOTIFICATION_DIALOG_SETTLE_ROUNDS)
+        self.assertEqual(2.0, NOTIFICATION_DIALOG_SETTLE_INTERVAL_S)
+        self.assertIn("space=2 s rounds=4 quiet_required=2", artifact)
+
+    def test_two_consecutive_quiet_reads_stop_the_settle_short_of_the_bound(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._SettleSampler(evidence, [True, False, False, False, False])
+            with patch("android_fontscale.sampler.time.sleep"):
+                record = sampler.settle_notification_permission_dialog("home")
+            artifact = (evidence / "notification-dialog-home.txt").read_text(encoding="utf-8")
+        self.assertEqual(2, NOTIFICATION_DIALOG_QUIET_READS)
+        self.assertEqual(3, record["quiet_after_round"])
+        self.assertEqual(3, record["rounds"])
+        self.assertEqual(3, sampler.reads)
+        self.assertIn("quiet_reads=2", artifact)
+        self.assertIn("quiet_after_round=3", artifact)
+        # A fourth read would exist if the stop needed more quiet reads, or only if the bound ended
+        # the loop.
+        self.assertNotIn("round=4", artifact)
+
+    def test_one_quiet_read_does_not_stop_the_settle(self) -> None:
+        import tempfile
+
+        # Alternating reads: every quiet one is broken by a returning prompt, so the counter never
+        # reaches two in a row and only the round bound ends the loop.
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._SettleSampler(evidence, [False, True, False, True, True])
+            with patch("android_fontscale.sampler.time.sleep"):
+                record = sampler.settle_notification_permission_dialog("home")
+        self.assertEqual(4, record["rounds"])
+        self.assertEqual(4, sampler.reads)
+        self.assertIsNone(record["quiet_after_round"])
 
 
 class FocusRetryBound(unittest.TestCase):
