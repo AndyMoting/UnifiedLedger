@@ -152,10 +152,12 @@ SEARCH_RESULTS_MARKER = "搜索结果 ·"
 # The seeded ledger holds the transfer and the refund-leg manual expense, hence 2.
 SEEDED_HOME_COUNT = "流水 · 共 2 笔"
 
-# P8-07 batch D (Q3): one speech target per screen of the three screenshot profiles. Each literal
-# is the product copy that screen actually renders, named with the product file:line so a drift
-# shows up as a reviewable diff; the probe focuses the first node whose text or content description
-# contains it, and TalkBack's own fragments inside that target's window must repeat it.
+# P8-07 batch D (Q3): one speech target per SPEAKING screen of the three screenshot profiles (the
+# seeded profile's detail and reconciliation screens declare no speech and stay on the screenshot
+# track). Each literal is the product copy that screen actually renders, named with the product
+# file:line so a drift shows up as a reviewable diff; the probe focuses the first node whose text
+# or content description contains it, and TalkBack's own fragments inside that target's window
+# must repeat it.
 # - P8-00: the empty-ledger sentence is the SAME copy on the home and the analysis tab
 #   (P503OverviewScreen.kt:183, P503TabShell.kt:516); the assets tab renders no empty copy, so its
 #   always-composed 总借入 card label (P503AssetsScreen.kt:215) is the screen's main line.
@@ -164,16 +166,21 @@ P8_00_ASSET_TARGET = "总借入"
 # - P8-02: the guide face's condition-area copy (P503SearchPresentation.kt:33), and the seeded
 #   transfer's row on the result face — the 结果行 the design gate names, addressed by the note its
 #   composed description carries (the note literal is owned by the seed writer, like 早餐 below).
-#   That description also carries EVERY posting line of the row (flowRowContentDescription,
+#   That description lists every posting line of the row (flowRowContentDescription,
 #   P503LedgerViewPresentation.kt:405-421), each one as `<account> <signed value> <code>`
-#   (:431-437), while the design gate requires 金额逐项核对正负号、数值与币种
+#   (:431-437), and the design gate requires 金额逐项核对正负号、数值与币种
 #   (docs/specs/2026-11-22-p8-07-stage-acceptance-design.md:71). The seed writer fixes the transfer
 #   at 1_234 minor units out of the default payment account (P801FontscaleSeedWriterTest.kt:504,
-#   :318-330) in CNY/2 (CatalogManagementUseCases.kt:21, :30), so the outgoing leg announces
-#   `默认支付账户 -12.34 CNY`: the row's own window must contain that signed value with its code,
-#   and the note alone would accept a row whose amounts were never spoken.
+#   :318-330) in CNY/2 (CatalogManagementUseCases.kt:21, :30), so its two legs announce
+#   `默认支付账户 -12.34 CNY` and `对账样本账户 12.34 CNY` (source leg negative, destination leg
+#   positive: :330 / :318). The target therefore requires BOTH legs' signed amounts with their
+#   codes: the note alone accepts a row whose amounts were never spoken, and one leg alone
+#   accepts a row whose other leg was never spoken. The credit leg spells its account name
+#   because the bare `12.34 CNY` also occurs inside the debit leg's `-12.34 CNY`:
+#   `_speech_contains` compares whitespace-free text, where the leading sign is no digit boundary.
 P8_02_GUIDE_TARGET = "输入条件后开始搜索"
-P8_02_RESULT_AMOUNT = "-12.34 CNY"
+P8_02_RESULT_DEBIT = "-12.34 CNY"
+P8_02_RESULT_CREDIT = f"{SEEDED_ACCOUNT_NAME} 12.34 CNY"
 # - P8-03: the refund candidate row's own expense-leg label with the seed's fixed cap
 #   (P503RefundEntryPresentation.kt:98). The amount FIELD's label carries a currency code that is
 #   unknown until an arrival account is chosen — the switch into 退款到账 always yields a null
@@ -1310,10 +1317,14 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
         SEARCH_RESULTS_MARKER,
         absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
         # The 结果行 the design gate names: the seeded transfer, addressed by its own note as the
-        # row's composed description carries it. A header match would only prove the page opened,
-        # and the note alone would accept a row whose amounts were never spoken.
+        # row's composed description carries it, with one required string per leg. A header match
+        # would only prove the page opened, the note alone would accept a row whose amounts were
+        # never spoken, and one leg alone would accept a row whose other leg was never spoken.
         speech=(
-            SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE, P8_02_RESULT_AMOUNT)),
+            SpeechCheck(
+                SEEDED_TRANSFER_NOTE,
+                (SEEDED_TRANSFER_NOTE, P8_02_RESULT_DEBIT, P8_02_RESULT_CREDIT),
+            ),
         ),
     ),
     Screen("detail", (BACK, TapStep(SEEDED_TRANSFER_NOTE, contains=True)), SEEDED_DETAIL_MARKER),

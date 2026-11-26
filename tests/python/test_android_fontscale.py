@@ -613,9 +613,15 @@ class TalkbackProfileLimbs(unittest.TestCase):
         ],
         "seeded": [
             ("search-guide", "输入条件后开始搜索", ("输入条件后开始搜索",)),
-            # The result row's own window must also carry the transfer's outgoing leg — the
-            # seed's 1_234 minor units in CNY/2 as the row renders them, sign and code preserved.
-            ("search-results", "对账样本转账", ("对账样本转账", "-12.34 CNY")),
+            # The result row's own window must carry BOTH legs of the seed's two-leg transfer —
+            # the seed's 1_234 minor units in CNY/2 as the row renders them, sign and code kept.
+            # The credit leg spells its account name: a bare `12.34 CNY` also occurs inside the
+            # debit leg's `-12.34 CNY`, so the name is what binds the amount to its own leg.
+            (
+                "search-results",
+                "对账样本转账",
+                ("对账样本转账", "-12.34 CNY", "对账样本账户 12.34 CNY"),
+            ),
         ],
         "refund": [
             ("refund-entry", "支出腿金额 12.34", ("支出腿金额 12.34",)),
@@ -1645,7 +1651,8 @@ class TalkbackProfileGate(unittest.TestCase):
             self.assertEqual(
                 [
                     "search-results: target '对账样本转账' records requirements "
-                    "['对账样本转账'], the profile derives ['对账样本转账', '-12.34 CNY']"
+                    "['对账样本转账'], the profile derives "
+                    "['对账样本转账', '-12.34 CNY', '对账样本账户 12.34 CNY']"
                 ],
                 [problem for problem in problems if "records requirements" in problem],
             )
