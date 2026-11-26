@@ -3511,6 +3511,12 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     fragment between that command's own begin and end markers.
 
     Each test names the single edit that turns it red.
+
+    The r5 round closes what these contracts left unguarded and unreadable: the service config that
+    makes the event arrive at all, the clock the receipt is stamped with, the ring bound, the branch
+    the wait sits in, the upper bound on an event's stamp, and the rect the bounds basis is measured
+    against. Each of those is pinned on an executable Java statement or on the service XML itself,
+    never on a comment.
     """
 
     _ROOT = Path(__file__).resolve().parents[2]
@@ -3524,15 +3530,50 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         / "android"
         / "A11yFocusProbeService.java"
     )
+    _PROBE_CONFIG = (
+        Path("android-app")
+        / "src"
+        / "androidTest"
+        / "res"
+        / "xml"
+        / "ul_a11y_probe_config.xml"
+    )
+    _TEST_MANIFEST = Path("android-app") / "src" / "androidTest" / "AndroidManifest.xml"
 
     def _source(self) -> str:
         return (self._ROOT / self._PROBE).read_text(encoding="utf-8")
+
+    def _config(self) -> str:
+        return (self._ROOT / self._PROBE_CONFIG).read_text(encoding="utf-8")
+
+    def _manifest(self) -> str:
+        return (self._ROOT / self._TEST_MANIFEST).read_text(encoding="utf-8")
+
+    def _config_attribute(self, name: str) -> str:
+        """One `android:<name>="..."` value of the probe's accessibility-service config."""
+        config = self._config()
+        marker = f'android:{name}="'
+        start = config.index(marker) + len(marker)
+        return config[start : config.index('"', start)]
 
     def _method_body(self, signature: str) -> str:
         """One Java method body: from its signature to the first method-closing brace line."""
         source = self._source()
         start = source.index(signature)
         return source[start : source.index("\n    }\n", start)]
+
+    def _java_block(self, body: str, opener: str) -> tuple[int, int]:
+        """The `{` offset and its matching `}` offset of the block that opens with `opener`."""
+        start = body.index(opener) + len(opener) - 1
+        depth = 0
+        for index in range(start, len(body)):
+            if body[index] == "{":
+                depth += 1
+            elif body[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return start, index
+        raise AssertionError(f"unclosed block after {opener!r}")
 
     def test_the_visibility_gate_reads_the_platform_flag(self) -> None:
         """Turn it red: drop `isVisibleToUser()` from `visibleInWindow`."""
@@ -3587,9 +3628,9 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         """Turn it red: log one indistinguishable line for node, ancestor and missing ancestor."""
         body = self._method_body("private AccessibilityNodeInfo focusTarget(")
         self.assertIn('"focus-target id="', body)
-        self.assertIn('" target=node focusable=true"', body)
+        self.assertIn('" target=node focusable=true focusNodeBounds="', body)
         self.assertIn('" target=ancestor depth="', body)
-        self.assertIn('" target=none reason=no-focusable-ancestor"', body)
+        self.assertIn('" target=none reason=no-focusable-ancestor focusNodeBounds="', body)
 
     def test_the_ancestor_line_carries_the_sentence_it_will_speak(self) -> None:
         """Turn it red: log the ancestor's bounds without the text TalkBack will read from it."""
@@ -3623,13 +3664,13 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         """Turn it red: accept any focus event inside the window, whatever node it moved to."""
         body = self._method_body("private static String matchBasis(")
         self.assertIn(
-            "event.text.contains(needle) || event.description.contains(needle)", body
+            "carriedText(event, needle) || event.description.contains(needle)", body
         )
-        self.assertIn("Rect.intersects(event.bounds, targetBounds)", body)
+        self.assertIn("Rect.intersects(event.bounds, focusBounds)", body)
         # Both matchers refuse to pass on their degenerate input: `contains("")` is always true and
         # an empty rect intersects nothing, so a missing needle or unreadable source stays a refusal.
         self.assertIn("!needle.isEmpty()", body)
-        self.assertIn("!targetBounds.isEmpty()", body)
+        self.assertIn("!focusBounds.isEmpty()", body)
         self.assertIn('return "";', body)
 
     def test_the_action_is_bracketed_by_an_event_count_and_a_bounded_wait(self) -> None:
@@ -3644,7 +3685,7 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         self.assertLess(
             body.index(focus),
             body.index(
-                "awaitFocusEvent(id, needle, target, sequenceBeforeAction, actionAt)"
+                "awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt)"
             ),
         )
         self.assertIn("FOCUS_EVENT_WAIT_MS = 2500L;", self._source())
@@ -3671,6 +3712,124 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         wait = self._method_body("private String awaitFocusEvent(")
         self.assertIn('" matched=none afterActionMs="', wait)
         self.assertIn('return "";', wait)
+
+    def test_the_probe_service_config_subscribes_to_the_focus_event(self) -> None:
+        """Turn it red: revert the event mask to the two window types alone.
+
+        Under `224abfb8` the service config carries neither `typeViewAccessibilityFocused` nor
+        `flagIncludeNotImportantViews`; with both gone the event mask has no focus type, so
+        `onAccessibilityEvent` is never called for the event the refused-action verdict reads and
+        every refused command decays to `source=none` after the full wait. The mask is parsed into
+        its `|`-separated types, so "kept the two window types" is asserted, not assumed.
+        """
+        mask = self._config_attribute("accessibilityEventTypes").split("|")
+        self.assertIn("typeViewAccessibilityFocused", mask)
+        self.assertIn("typeWindowStateChanged", mask)
+        self.assertIn("typeWindowContentChanged", mask)
+        self.assertIn(
+            "flagIncludeNotImportantViews", self._config_attribute("accessibilityFlags").split("|")
+        )
+        # The config only matters while the manifest still binds it to this service.
+        self.assertIn('android:resource="@xml/ul_a11y_probe_config"', self._manifest())
+        self.assertIn(
+            'android:name="com.unifiedledger.android.A11yFocusProbeService"', self._manifest()
+        )
+
+    def test_the_receipt_clock_is_the_monotonic_clock_of_the_action(self) -> None:
+        """Turn it red: stamp the receipt with `System.currentTimeMillis()`.
+
+        `224abfb8` already reads `elapsedRealtime()` here, so this is a mutation guard rather than a
+        revert guard: the literal that disappears is
+        `long receivedAt = SystemClock.elapsedRealtime();`. `receivedAt` is compared against the
+        action's stamp, so a wall clock that is reset or moves backwards turns a same-command event
+        into a "before this action" one; `currentTimeMillis` must stay out of this service.
+        """
+        body = self._method_body("private void recordFocusEvent(")
+        self.assertIn("long receivedAt = SystemClock.elapsedRealtime();", body)
+        self.assertNotIn("currentTimeMillis", self._source())
+        run = self._method_body("private void runCommand(")
+        self.assertIn("long actionAt = SystemClock.elapsedRealtime();", run)
+
+    def test_the_event_ring_is_bounded_and_evicts_the_oldest(self) -> None:
+        """Turn it red: keep every focus event, or evict from the newest end.
+
+        `224abfb8` already bounds the ring, so this is a mutation guard: the literals that disappear
+        are `while (focusEvents.size() > MAX_FOCUS_EVENTS) {` and `focusEvents.removeFirst();`.
+        Without them the deque grows for the whole bound session and each command re-scans every
+        event it ever saw, which is what the bounded window is supposed to make unnecessary.
+        """
+        body = self._method_body("private void recordFocusEvent(")
+        self.assertIn("MAX_FOCUS_EVENTS = 32;", self._source())
+        self.assertIn("while (focusEvents.size() > MAX_FOCUS_EVENTS) {", body)
+        self.assertIn("focusEvents.removeFirst();", body)
+
+    def test_the_wait_sits_inside_the_refused_action_branch(self) -> None:
+        """Turn it red: wait for the event outside the `} else {` of `if (answered)`.
+
+        `224abfb8` already waits only on the refused path, so this is a mutation guard: the literal
+        that disappears under the mutation is the single `awaitFocusEvent(` call inside that block.
+        An unconditional wait would add the full window to every accepted command while letting a
+        stale event decide a focus the action itself already reported. The branch is located by
+        walking braces from `if (answered) {`, so a wait moved after the block is outside it — the
+        `focus` argument the call carries is pinned by the bounds-basis contract.
+        """
+        run = self._method_body("private void runCommand(")
+        self.assertEqual(1, run.count("awaitFocusEvent("))
+        gate = run.index("if (answered) {")
+        else_at = run.index("} else {", gate)
+        self.assertIn('source = "action";', run[gate:else_at])
+        self.assertIn("Log.i(TAG, \"focus-action id=\" + id + \" returned=false\");", run[else_at:])
+        else_start, else_end = self._java_block(run, "} else {")
+        call = run.index("awaitFocusEvent(")
+        self.assertLess(else_start, call)
+        self.assertLess(call, else_end)
+
+    def test_a_focus_event_stamped_after_the_window_is_not_accepted(self) -> None:
+        """Turn it red: drop the upper bound on the event's own stamp.
+
+        Reverting `224abfb8` loses `if (candidate.receivedAt > deadline) {` — the loop then judges
+        only `receivedAt >= actionAt`, so a poll that wakes past the deadline accepts an event
+        stamped after the window closed and prints `afterActionMs` greater than `waitMs` on the very
+        line that claims the window. The matched line keeps printing the event's own stamp, and the
+        timeout line caps its wait at the window, so `afterActionMs <= waitMs` is readable on every
+        line of the transcript.
+        """
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("long deadline = actionAt + FOCUS_EVENT_WAIT_MS;", wait)
+        self.assertIn("if (candidate.receivedAt > deadline) {", wait)
+        self.assertLess(
+            wait.index("if (candidate.receivedAt > deadline) {"),
+            wait.index("matchBasis(candidate, needle, focusBounds)"),
+        )
+        self.assertIn("+ (candidate.receivedAt - actionAt)", wait)
+        self.assertIn("long waited = Math.min(now - actionAt, FOCUS_EVENT_WAIT_MS);", wait)
+        self.assertIn("if (now >= deadline)", wait)
+
+    def test_the_bounds_basis_uses_the_rect_the_action_was_sent_to(self) -> None:
+        """Turn it red: hand `matchBasis` the pre-action target's rect again.
+
+        Reverting `224abfb8` restores `targetBounds` (absent from this source now) and drops every
+        `focusNodeBounds=` field, so `assertNotIn` fails and the `focus` argument disappears from the
+        call. Under that shape any node overlapping where the needle was FOUND — an ancestor's
+        neighbour, an overlapping sibling — proves this command's focus, which is the false green
+        this contract exists to stop; the acted node's own rect is the only one an event may overlap.
+        """
+        self.assertNotIn("targetBounds", self._source())
+        run = self._method_body("private void runCommand(")
+        self.assertIn("AccessibilityNodeInfo focus = focusTarget(target, id);", run)
+        self.assertIn(
+            "awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt)", run
+        )
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("AccessibilityNodeInfo focusNode,", wait)
+        self.assertIn("focusNode.getBoundsInScreen(focusBounds)", wait)
+        self.assertIn("matchBasis(candidate, needle, focusBounds)", wait)
+        basis = self._method_body("private static String matchBasis(")
+        self.assertIn("Rect.intersects(event.bounds, focusBounds)", basis)
+        self.assertNotIn("event.bounds, targetBounds", basis)
+        resolved = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertEqual(3, resolved.count(' focusNodeBounds="'))
+
 
 
 if __name__ == "__main__":

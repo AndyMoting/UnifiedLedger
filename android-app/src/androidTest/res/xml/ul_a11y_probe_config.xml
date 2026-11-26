@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   P7-09 A-03 / A-VIS device probe (test-only): the configuration for A11yFocusProbeService.
-  canRetrieveWindowContent is the single capability the probe needs; no feedback type is
-  meaningful because the fixture never speaks (TalkBack does).
+  canRetrieveWindowContent is the single capability the probe needs for its own tree reads, and the
+  two window types stay because the probe still reads the active window.
+
+  typeViewAccessibilityFocused is the one event type this service matches on, because it is the
+  only second evidence path a Q3 analysis-screen command has (P8-07 Q3): candidate 4064dbfc logged
+  `focus-result id=3 found=true accepted=false`, and the platform still posted that event for the
+  same node so TalkBack read the sentence out. A refused ACTION_ACCESSIBILITY_FOCUS is therefore
+  proven by this event and by nothing else the probe can observe — with the type left out of the
+  mask the service is never called for it, and every refused command decays to `source=none`
+  after the full 2500 ms wait.
+
+  flagIncludeNotImportantViews is what makes that event reach the service at all: the analysis line
+  is a bare Compose `Text`, which is neither clickable nor flagged important for accessibility, and
+  the platform drops a not-important view's event from an important-views-only stream. The debug
+  capture service (android-app/src/debug/res/xml/capture_a11y_service.xml) subscribes to the same
+  type under the same flag for the same reason.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewAccessibilityFocused"
     android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
     android:notificationTimeout="100" />
