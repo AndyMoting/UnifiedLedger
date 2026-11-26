@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   P7-09 A-03 / A-VIS device probe (test-only): the configuration for A11yFocusProbeService.
-  canRetrieveWindowContent is the single capability the probe needs for its own tree reads, and the
-  two window types stay because the probe still reads the active window.
+
+  canRetrieveWindowContent is what lets the probe read the active window at all. The window read is
+  a capability, not an event type: no entry of accessibilityEventTypes causes it and no flag gates
+  it, so the two window types below neither provide nor prove it. They stay as retained behaviour,
+  not as a focus-evidence path — the config carried them before this round, onAccessibilityEvent
+  discards every type but the focus one, and the rest of the pipeline was proven against this
+  stream, so dropping them would change what was measured and gain nothing.
 
   typeViewAccessibilityFocused is the one event type this service matches on, because it is the
   only second evidence path a Q3 analysis-screen command has (P8-07 Q3): candidate 4064dbfc logged
@@ -10,13 +15,22 @@
   same node so TalkBack read the sentence out. A refused ACTION_ACCESSIBILITY_FOCUS is therefore
   proven by this event and by nothing else the probe can observe — with the type left out of the
   mask the service is never called for it, and every refused command decays to `source=none`
-  after the full 2500 ms wait.
+  after the full 2500 ms wait. Event delivery is the mask: accessibilityEventTypes is the filter
+  the framework applies before it calls the service, and the value this connection actually got is
+  logged once on connect as `service-info eventTypes=...`, so the artifact can prove the mask
+  instead of restating this file's intent.
 
-  flagIncludeNotImportantViews is what makes that event reach the service at all: the analysis line
-  is a bare Compose `Text`, which is neither clickable nor flagged important for accessibility, and
-  the platform drops a not-important view's event from an important-views-only stream. The debug
-  capture service (android-app/src/debug/res/xml/capture_a11y_service.xml) subscribes to the same
-  type under the same flag for the same reason.
+  flagIncludeNotImportantViews does not deliver that event. It widens one gate only: inside
+  View#includeForAccessibility it ORs over isImportantForAccessibility(), so a view the app never
+  marked important — the analysis line is a bare Compose `Text`, neither clickable nor important —
+  is still part of the tree this service reads and still counts as an event source. Its boundary:
+  it cannot add an event subtype (that is the mask), it cannot make that `Text` focusable
+  (isFocusable() is a separate property, see MAX_FOCUS_ANCESTOR_DEPTH), and it does not override
+  the app's own tree statements — a subtree marked importantForAccessibility=noHideDescendants
+  still clears its own accessibility focus and still stops relaying its subtree-change events
+  upward. The debug capture service
+  (android-app/src/debug/res/xml/capture_a11y_service.xml) sets the same type under the same flag
+  for the same reason: it needs the bare `Text` as a node, not a new event type.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewAccessibilityFocused"

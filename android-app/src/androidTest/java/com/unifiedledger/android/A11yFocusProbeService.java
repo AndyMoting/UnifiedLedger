@@ -1,6 +1,7 @@
 package com.unifiedledger.android;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Rect;
@@ -189,6 +190,26 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         },
                         "ul-a11y-probe")
                 .start();
+        // The mask this connection actually got, not the XML's intent: a stale or reparsed
+        // AccessibilityServiceInfo shows up here as a different hex value, so a `seen=0` window has
+        // an immediate cause instead of blaming the platform. The focus event this probe accepts is
+        // AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED (bit 15, 0x8000); the config's two
+        // retained window types are TYPE_WINDOW_STATE_CHANGED (bit 5, 0x20) and
+        // TYPE_WINDOW_CONTENT_CHANGED (bit 11, 0x800), so the configured mask prints as 0x8820, and
+        // the one configured flag is FLAG_INCLUDE_NOT_IMPORTANT_VIEWS (bit 1, 0x2). A focus proof
+        // needs 0x8000 in that value: without the bit onAccessibilityEvent is never called for it
+        // and every refused command decays to `source=none` after the full wait.
+        AccessibilityServiceInfo info = getServiceInfo();
+        if (info == null) {
+            Log.i(TAG, "service-info eventTypes=none flags=none");
+        } else {
+            Log.i(
+                    TAG,
+                    "service-info eventTypes=0x"
+                            + Integer.toHexString(info.eventTypes)
+                            + " flags=0x"
+                            + Integer.toHexString(info.flags));
+        }
         Log.i(TAG, "service connected");
     }
 
@@ -266,15 +287,26 @@ public final class A11yFocusProbeService extends AccessibilityService {
      * Waits [FOCUS_EVENT_WAIT_MS] for a focus event that provably belongs to THIS command's target
      * and returns the basis it matched on (`text` / `bounds`), or `""` when none arrived in time.
      *
-     * <p>Four conditions, all logged so a reviewer can re-check them from the raw window: the event
-     * is recorded under a count HIGHER than the one read before the action and its arrival time is
-     * not earlier than the action's (`afterActionMs` is that difference, never negative); it arrived
-     * no LATER than `actionAt + FOCUS_EVENT_WAIT_MS`, so a poll that wakes past the deadline cannot
-     * accept an event stamped after the window closed (`afterActionMs` never exceeds `waitMs`);
-     * it matches this command's target (the `matched=` basis); and it overlaps the rect of
-     * [focusNode] — the node this command's action was actually sent to, which is an ancestor when
-     * the chosen `Text` is unfocusable, not the pre-action target. A timeout logs `matched=none`
-     * with how many post-action events were seen and returns `""` — the caller keeps
+     * <p>Four conditions decide, and each is read back from a named key of the raw window rather
+     * than trusted from here: the event was recorded under a count HIGHER than the one read before
+     * the action (that gate is the predecessor of every field below, so a matched line is a
+     * post-action event by construction; the count itself is not a log field);
+     * `0 <= afterActionMs <= waitMs` on the matched line places its arrival after the action and
+     * inside the window, the same shape the timeout line has with its own capped wait; `matched=`
+     * names the basis, and BOTH bases are re-derivable — `eventText64=` decodes to the event's own
+     * text, which must contain the `needle64` of this command's `command` line for `matched=text`,
+     * while `eventBounds=` must intersect the `focusNodeBounds=` of its `focus-target` line for
+     * `matched=bounds` (`eventBounds=[]` — an unreadable or empty source rect — intersects nothing,
+     * so it can never sit on a bounds match); and that `focusNodeBounds=` is the rect of
+     * [focusNode], the node this command's action was actually sent to, which is an ancestor when
+     * the chosen `Text` is unfocusable, not the pre-action target.
+     *
+     * <p>The event's own rect and text are printed for exactly that last check: `matched=text` /
+     * `matched=bounds` named the basis but not the event, so an ancestor's, a container's or an
+     * overlay's event that merely overlapped the acted node read the same as the acted node's own
+     * (P8-07 Q3 r6). `eventBounds=` is always present and `eventText64=` is omitted when the event
+     * carried no text, so a reviewer can tell which node's event was accepted. A timeout logs
+     * `matched=none` with how many post-action events were seen and returns `""` — the caller keeps
      * `accepted=false` rather than inventing a focus.
      */
     private String awaitFocusEvent(
@@ -316,7 +348,12 @@ public final class A11yFocusProbeService extends AccessibilityService {
                                 + " afterActionMs="
                                 + (candidate.receivedAt - actionAt)
                                 + " waitMs="
-                                + FOCUS_EVENT_WAIT_MS);
+                                + FOCUS_EVENT_WAIT_MS
+                                + " eventBounds="
+                                + rectToken(candidate.bounds)
+                                + (candidate.text.isEmpty()
+                                        ? ""
+                                        : " eventText64=" + encode(candidate.text)));
                 return basis;
             }
             long now = SystemClock.elapsedRealtime();
@@ -738,6 +775,30 @@ public final class A11yFocusProbeService extends AccessibilityService {
         Rect bounds = new Rect();
         node.getBoundsInScreen(bounds);
         return bounds.toShortString();
+    }
+
+    /**
+     * One observed event's rect as a log token: `[left,top,right,bottom]`, or `[]` for no rect.
+     *
+     * <p>A focus event's source may be unreadable (see [recordFocusEvent]) and an empty rect
+     * intersects nothing, so `[]` is both "the service could not read it" and "this rect cannot be
+     * the bounds basis" — never a zero-size rect at the origin, which is what
+     * `Rect#toShortString` would print for an unreadable source. Four comma-separated sides (rather
+     * than two bracketed pairs) keep the empty case distinguishable and still space-free.
+     */
+    private static String rectToken(Rect bounds) {
+        if (bounds.isEmpty()) {
+            return "[]";
+        }
+        return "["
+                + bounds.left
+                + ","
+                + bounds.top
+                + ","
+                + bounds.right
+                + ","
+                + bounds.bottom
+                + "]";
     }
 
     private static boolean contains(CharSequence text, String needle) {

@@ -3517,6 +3517,14 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     the wait sits in, the upper bound on an event's stamp, and the rect the bounds basis is measured
     against. Each of those is pinned on an executable Java statement or on the service XML itself,
     never on a comment.
+
+    The r6 round closes the three evidence gaps that would otherwise leave a `seen=0` window
+    unanswerable: the matched line carries the event's OWN rect and text (so `matched=` can be
+    re-derived instead of trusted), the service config's comment blames the event mask for delivery
+    rather than the retrieval flag, and a connect-time `service-info` line reports the mask and the
+    flags this bind actually received. Each of the three is pinned on the code or the XML text, and
+    the assertions strip comment-only lines so the KDoc that explains a field cannot satisfy the
+    contract that pins it.
     """
 
     _ROOT = Path(__file__).resolve().parents[2]
@@ -3574,6 +3582,19 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
                 if depth == 0:
                     return start, index
         raise AssertionError(f"unclosed block after {opener!r}")
+
+    def _code(self, java: str) -> str:
+        """Java with its comment-only lines dropped, so an assertion can only bind code.
+
+        This service keeps every comment on its own `//`, `/*` or `*` line and never trails one after
+        a statement, so dropping those lines is exact here — and it is what stops a contract from
+        being satisfied by the KDoc that explains the very field it pins.
+        """
+        return "\n".join(
+            line
+            for line in java.splitlines()
+            if line.strip() and not line.strip().startswith(("//", "/*", "*"))
+        )
 
     def test_the_visibility_gate_reads_the_platform_flag(self) -> None:
         """Turn it red: drop `isVisibleToUser()` from `visibleInWindow`."""
@@ -3829,6 +3850,81 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         self.assertNotIn("event.bounds, targetBounds", basis)
         resolved = self._method_body("private AccessibilityNodeInfo focusTarget(")
         self.assertEqual(3, resolved.count(' focusNodeBounds="'))
+
+    def test_the_matched_event_logs_its_own_rect_and_text(self) -> None:
+        """Turn it red: log `matched=` alone, without the event's own rect and text.
+
+        `matched=text|bounds` names the basis, not the event, so a container's or an overlay's event
+        that merely overlapped the acted node read exactly like the acted node's own and the artifact
+        could not tell them apart. The matched line now carries `eventBounds=` (the event source's
+        rect, `[]` when the service could not read it) and `eventText64=` (base64 of the space-joined
+        text, absent when the event carried none), which is what lets a reviewer re-derive BOTH
+        bases: decode `eventText64` against the `needle64` of this command's `command` line, or
+        intersect `eventBounds` with the `focusNodeBounds` of its `focus-target` line. Reverting
+        `d2e76863` loses `eventBounds=`, `eventText64=` and `rectToken` together. Every key the
+        matched line already had is asserted alongside them, so a field cannot be traded for another.
+        """
+        wait = self._code(self._method_body("private String awaitFocusEvent("))
+        head = wait.index('String head = "focus-event id="')
+        matched = wait[head : wait.index("return basis;", head)]
+        for kept in ('" subtype="', '" matched="', '" afterActionMs="', '" waitMs="'):
+            self.assertIn(kept, matched)
+        self.assertIn('" eventBounds="', matched)
+        self.assertIn('" eventText64="', matched)
+        # The rect is the EVENT's own, printed through a helper that keeps "unreadable" apart from a
+        # zero-size rect at the origin.
+        self.assertIn("rectToken(candidate.bounds)", matched)
+        self.assertIn('return "[]";', self._method_body("private static String rectToken("))
+        self.assertIn("encode(candidate.text)", matched)
+
+    def test_the_config_comment_blames_the_mask_not_the_flag(self) -> None:
+        """Turn it red: restore the two causal claims about the window read and the flag.
+
+        `d2e76863` says the two window types stay "because the probe still reads the active window"
+        and that the flag "is what makes that event reach the service at all". Both are backwards:
+        the window read is `canRetrieveWindowContent`, and event delivery is the mask; the flag only
+        widens what this service may read. Only the rationale was wrong, so the two attributes are
+        asserted unchanged beside the rewritten comment — the mask keeps `typeViewAccessibilityFocused`
+        and the flag keeps its name, and the comment is flattened because it wraps.
+        """
+        config = self._config()
+        comment = " ".join(config[: config.index("-->")].split())
+        self.assertNotIn(
+            "the two window types stay because the probe still reads the active window", comment
+        )
+        self.assertNotIn("is what makes that event reach the service at all", comment)
+        self.assertIn("The window read is a capability, not an event type", comment)
+        self.assertIn("retained behaviour, not as a focus-evidence path", comment)
+        self.assertIn("Event delivery is the mask", comment)
+        self.assertIn("ORs over isImportantForAccessibility()", comment)
+        self.assertIn(
+            "typeViewAccessibilityFocused",
+            self._config_attribute("accessibilityEventTypes").split("|"),
+        )
+        self.assertIn(
+            "flagIncludeNotImportantViews",
+            self._config_attribute("accessibilityFlags").split("|"),
+        )
+
+    def test_the_connection_reports_the_effective_event_mask(self) -> None:
+        """Turn it red: drop the connect-time `service-info` line.
+
+        `seen=0` is the signature the next device round has to explain, and without this line the
+        artifact cannot separate "the mask never reached this bind" from "the platform posted no
+        event": the XML states an intent, not what the framework handed this connection. The
+        assertion is on the executable statements with comment lines stripped, so the KDoc that names
+        the focus bit cannot satisfy it, and the values are hex so the reader can compare them with
+        the platform's own bit constants. `service connected` stays its own unchanged line — the host
+        recognises readiness by that exact message, never by this one.
+        """
+        body = self._code(self._method_body("protected void onServiceConnected()"))
+        self.assertIn("AccessibilityServiceInfo info = getServiceInfo();", body)
+        self.assertLess(body.index("getServiceInfo()"), body.index('"service-info eventTypes=0x"'))
+        self.assertIn('"service-info eventTypes=0x"', body)
+        self.assertIn('" flags=0x"', body)
+        self.assertIn("Integer.toHexString(info.eventTypes)", body)
+        self.assertIn("Integer.toHexString(info.flags)", body)
+        self.assertIn('Log.i(TAG, "service connected");', body)
 
 
 
