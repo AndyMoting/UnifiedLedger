@@ -3527,18 +3527,21 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
 
     def test_the_census_is_logged_and_the_target_line_carries_its_bounds(self) -> None:
         """Turn it red: log `found=true` alone, without the census or the chosen node's bounds."""
-        source = self._source()
-        self.assertIn('"candidates id="', source)
-        self.assertIn('" candidates="', source)
-        self.assertIn('" visible="', source)
-        self.assertIn('" chosen="', source)
-        self.assertIn("found=true visible=true bounds=", source)
+        body = self._method_body("private void runCommand(")
+        self.assertIn('"candidates id="', body)
+        self.assertIn('" candidates="', body)
+        self.assertIn('" visible="', body)
+        self.assertIn('" chosen="', body)
+        self.assertIn("found=true visible=true bounds=", body)
 
     def test_an_invisible_candidate_is_never_focused(self) -> None:
         """Turn it red: focus whatever matched, without the `target == null` early return."""
         body = self._method_body("private void runCommand(")
-        self.assertLess(body.index("visible=0"), body.index("ACTION_ACCESSIBILITY_FOCUS"))
-        self.assertEqual(1, body.count("ACTION_ACCESSIBILITY_FOCUS"))
+        # The bare constant `ACTION_ACCESSIBILITY_FOCUS` also appears in this method's own prose
+        # comment, so the invocation form is the only needle that indexes a code site.
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        self.assertLess(body.index("visible=0"), body.index(focus))
+        self.assertEqual(1, body.count(focus))
 
     def test_the_first_match_choice_is_gone(self) -> None:
         """Turn it red: restore `target = node;` inside the needle loop."""
