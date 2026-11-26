@@ -994,14 +994,23 @@ internal class P807Q2Flow3Ui(
     /**
      * [proceedToConfirmation]'s POSITIVE gate: the refund edit surface carries its own refund-only
      * amount label at the currency the arrival account names ([P807Q2Flow3Facts.LABEL_AMOUNT_CNY],
-     * `P503EditScreen.kt:530-533`) and [P807Q2Flow3Facts.CONTINUE] is on it. Both halves are bounded
-     * by this file's own text wait ([NODE_TIMEOUT_MILLIS]) and both read the tree without moving it
-     * (`seek = false`): the label is read with the containing test the field-chain assertions use,
-     * because Compose merges a field's label into its own node.
+     * `P503EditScreen.kt:530-533`) and [P807Q2Flow3Facts.CONTINUE] is on it. The label is read with
+     * the containing test the field-chain assertions use, because Compose merges a field's label into
+     * its own node. Both halves are bounded by this file's own text wait ([NODE_TIMEOUT_MILLIS]).
+     *
+     * BOTH HALVES ALSO SEEK. Both sit in one one-way scrolling column (`P503EditScreen.kt:198-203`)
+     * whose bottom is the action row carrying 继续 (`:702-718`), and every field edit first seeks the
+     * surface to its own field ([setFieldByLabel], `:1330`), so at this point that row is routinely
+     * below the fold — a viewport-only wait would answer a timeout on a surface that is ready, the
+     * case [awaitExactText] documents (`:1654-1657`). Seeking moves nothing when the target is
+     * already shown (the helper looks before it scrolls, `P807Q2Flow1DeviceSupport.kt:1383`) and only
+     * re-aims the viewport, so the judgement here stays [hasAnywhereText]/[hasExactText]. A miss pays
+     * the helper's own budget inside that one poll — the cost this file records for a whole-surface
+     * seek ([commitCustomWindow], `:1059-1083`).
      */
     private fun refundEditActionReady(): Boolean {
-        if (!awaitAnywhereText(P807Q2Flow3Facts.LABEL_AMOUNT_CNY, seek = false)) return false
-        return awaitExactText(P807Q2Flow3Facts.CONTINUE)
+        if (!awaitAnywhereText(P807Q2Flow3Facts.LABEL_AMOUNT_CNY, seek = true)) return false
+        return awaitExactText(P807Q2Flow3Facts.CONTINUE, seek = true)
     }
 
     /**
