@@ -3991,14 +3991,16 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         cannot tell whether the clear ran or the request was made on top of a live focus. The
         literals that disappear under a revert are `"focus-before id="` and `"focus-clear id="`
         (each 0 -> 1 on `57a40254`), plus `"focus-read id="` for the post-action re-read. Both reads
-        carry the node's own `bounds=`/`text64=` when one exists, and a read this service cannot take
-        writes `found=false` and continues — no `return;` may sit between the read and the request.
+        carry the node's own `bounds=`/`text64=`/`desc64=` when one exists — the two encoded fields
+        quoted, so the host's own `_decode_node_field` reads them — and a read this service cannot
+        take writes `found=false reason=…` and continues: no `return;` may sit between the read and
+        the request.
         """
         run = self._code(self._method_body("private void runCommand("))
         self.assertIn('"focus-before id="', run)
         before_at = run.index('"focus-before id="')
         before = run[before_at : run.index('"focus-clear id="')]
-        for key in ('" found="', '" bounds="', '" text64="'):
+        for key in ('" found="', '" bounds="', 'text64=\\"'):
             self.assertIn(key, before)
         self.assertIn("focusNodeBounds(current)", before)
         self.assertIn("encode(current.getText())", before)
@@ -4009,14 +4011,17 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         self.assertIn("cleared = current.performAction(", run)
         read_at = run.index('"focus-read id="')
         read = run[read_at : run.index("if (isCommandTarget(readBack", read_at)]
-        for key in ('" found="', '" bounds="', '" text64="'):
+        for key in ('" found="', '" bounds="', 'text64=\\"'):
             self.assertIn(key, read)
         self.assertIn("focusNodeBounds(readBack)", read)
         self.assertIn("encode(readBack.getText())", read)
-        helper = self._method_body("private AccessibilityNodeInfo currentAccessibilityFocus(")
+        helper = self._method_body("private FocusRead currentAccessibilityFocus(")
         self.assertIn("getRootInActiveWindow()", helper)
         self.assertIn("root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)", helper)
-        self.assertIn("return null;", helper)
+        # The read also carries WHY it has nothing (QR7-3), so "no active window" and "no focus
+        # set" are no longer the same `null`.
+        self.assertIn("new FocusRead(null, FOCUS_READ_ROOT_NULL)", helper)
+        self.assertIn("new FocusRead(null, FOCUS_READ_FOCUS_NONE)", helper)
 
     def test_the_found_node_line_carries_the_actions_mask_and_the_flags(self) -> None:
         """Turn it red: log the found node without its action mask or its two flags.
@@ -4152,6 +4157,104 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         )
         # The capture is the connect read itself — the field the artifact reads its line from.
         self.assertEqual(connect_log, connect.probe_connection_log)
+
+    def test_a_focus_read_is_accepted_only_when_this_command_moved_the_focus(self) -> None:
+        """Turn it red: accept the read-back whenever it matches, whatever the start state was.
+
+        The post-action read is the third source: the action answered false, no matching event
+        arrived, and the platform now reports this command's target. That read is evidence only when
+        THIS command moved the focus — the target did not already hold it, or this command's clear
+        took it away. `d5b24cbf` accepts it unconditionally, so a target that already held the focus
+        and refused the clear logs `accepted=true source=focus-read` with nothing moved. The
+        literals that disappear under a revert are `boolean startedOnTarget = isCommandTarget(current,
+        needle, chosenBounds);`, `if (startedOnTarget) {`, `boolean moved = !startedOnTarget ||
+        cleared;` and `&& moved` (0 -> 1 each).
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        self.assertIn(
+            "boolean startedOnTarget = isCommandTarget(current, needle, chosenBounds);", run
+        )
+        self.assertIn("if (startedOnTarget) {", run)
+        self.assertIn("boolean moved = !startedOnTarget || cleared;", run)
+        # The admission fact is decided before the request goes out: it cannot be read off the
+        # read-back it is meant to judge.
+        self.assertLess(run.index("boolean moved ="), run.index('"speech-window-begin id="'))
+        # The assignment lives inside this block and nowhere else, so hoisting it above the guard —
+        # or dropping the move test from the condition — reds here.
+        condition_at = run.index("if (isCommandTarget(readBack")
+        self.assertIn("&& moved", run[condition_at : run.index("{", condition_at)])
+        open_at, close_at = self._java_block(run, "if (isCommandTarget(readBack")
+        self.assertIn('source = "focus-read";', run[open_at:close_at])
+        self.assertNotIn('source = "focus-read";', run[:condition_at])
+        self.assertEqual(1, run.count('source = "focus-read";'))
+        # `accepted` keeps its single derivation, and that derivation reads only `source`.
+        self.assertIn('boolean accepted = !"none".equals(source);', run)
+
+    def test_the_focus_read_line_says_whether_the_focus_moved(self) -> None:
+        """Turn it red: log the read-back without the facts that decided it.
+
+        `focus-read ... found=true` alone cannot answer "why accepted": the r7 review had to
+        reconstruct that from a local variable the log never carried. The line now names
+        `startedOnTarget=` (did the platform hold this target when the command began), `cleared=`
+        (did this command's clear answer true) and `moved=` (`!startedOnTarget || cleared`), each a
+        single space-free token, so one line explains the verdict either way. The literals that
+        disappear under a revert are `" startedOnTarget="`, `" cleared="` and `" moved="`
+        (0 -> 1 each).
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        line = run[run.index('"focus-read id="') : run.index("if (isCommandTarget(readBack")]
+        for key in ('" startedOnTarget="', '" cleared="', '" moved="'):
+            self.assertIn(key, line)
+        self.assertIn("+ startedOnTarget", line)
+        self.assertIn("+ cleared", line)
+        self.assertIn("+ moved", line)
+        # `moved` is not a free-standing claim: it is the very expression the guard tests.
+        self.assertIn("boolean moved = !startedOnTarget || cleared;", run)
+
+    def test_the_clear_and_the_request_bracket_the_speech_window_begin(self) -> None:
+        """Turn it red: move the pre-read and its clear below `speech-window-begin`.
+
+        The old anchor was `focusTarget(...)`, which moves together with the block: a clear placed
+        after `speech-window-begin` kept every assertion true while the clear's own announcement
+        could enter this command's fragment set. Two index comparisons pin the contract itself —
+        both pre-request lines are written BEFORE the window opens, and the request is sent AFTER
+        it. No literal disappears under a `d5b24cbf` revert, because that order is already correct
+        there; this pin reds when the block is moved below `begin`, so the fix is checked by
+        mutation rather than by revert.
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        begin_at = run.index('"speech-window-begin id="')
+        self.assertLess(run.index('"focus-before id="'), begin_at)
+        self.assertLess(run.index('"focus-clear id="'), begin_at)
+        self.assertLess(run.index("ACTION_CLEAR_ACCESSIBILITY_FOCUS"), begin_at)
+        request = "focus.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        self.assertLess(begin_at, run.index(request))
+
+    def test_each_empty_focus_read_names_its_reason_and_the_nodes_description(self) -> None:
+        """Turn it red: log a bare `found=false`, or log only the node's text.
+
+        `d5b24cbf` writes `found=false` for "no active window", "the root does not resolve" and "no
+        focus set" alike, so the artifact cannot say which read failed; and both read lines carry
+        only `text64=` while `isCommandTarget` also accepts a content-description hit, so a
+        description-based clear or acceptance cannot be re-derived. The literals that disappear
+        under a revert are `" reason="` on both read lines (0 -> 2), the quoted `desc64=` field on
+        both (0 -> 2), and `FOCUS_READ_ROOT_NULL = "root-null";` / `FOCUS_READ_FOCUS_NONE =
+        "focus-none";` (0 -> 1 each).
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        before = run[run.index('"focus-before id="') : run.index('"focus-clear id="')]
+        read = run[run.index('"focus-read id="') : run.index("if (isCommandTarget(readBack")]
+        for line in (before, read):
+            self.assertIn('" reason="', line)
+            self.assertIn('desc64=\\"', line)
+            self.assertIn("encode(", line)
+        self.assertEqual(2, run.count('" reason="'))
+        source = self._source()
+        self.assertIn('FOCUS_READ_ROOT_NULL = "root-null";', source)
+        self.assertIn('FOCUS_READ_FOCUS_NONE = "focus-none";', source)
+        reader = self._method_body("private FocusRead currentAccessibilityFocus(")
+        self.assertIn("FOCUS_READ_ROOT_NULL", reader)
+        self.assertIn("FOCUS_READ_FOCUS_NONE", reader)
 
 
 if __name__ == "__main__":

@@ -148,6 +148,18 @@ public final class A11yFocusProbeService extends AccessibilityService {
     /** How many recent focus events stay readable for matching; a burst cannot grow unbounded. */
     private static final int MAX_FOCUS_EVENTS = 32;
 
+    /** The reason value of a focus read that found a node: the node itself is the whole answer. */
+    private static final String FOCUS_READ_NONE = "none";
+
+    /**
+     * The read's reason when this service could not resolve an active window's root at all (no
+     * active window, or a tree that refuses `findFocus`): nothing is known about the focus then.
+     */
+    private static final String FOCUS_READ_ROOT_NULL = "root-null";
+
+    /** The read's reason when the active window's root reports no accessibility focus. */
+    private static final String FOCUS_READ_FOCUS_NONE = "focus-none";
+
     /**
      * The focus events observed since this instance connected, newest last, each stamped with the
      * count it was recorded under. A command reads the count BEFORE its action and accepts only an
@@ -690,11 +702,16 @@ public final class A11yFocusProbeService extends AccessibilityService {
         // the event and returns false on that branch), and an action that changed nothing posts no
         // TYPE_VIEW_ACCESSIBILITY_FOCUSED at all: that is the analysis leg's `returned=false` with
         // `seen=0` and no fragment inside the window. The host counts a fragment only strictly
-        // between this command's begin and end, so the focus has to MOVE inside the window — a
-        // target that already held it was spoken before `speech-window-begin`, and merely accepting
-        // such a command would still read `fragments-missing`. That is why the clear belongs before
-        // the request, not after a refusal.
-        AccessibilityNodeInfo current = currentAccessibilityFocus();
+        // between this command's begin and end, so the utterance has to come from a move this
+        // command made. And a fragment inside that window does not even prove that much: speech
+        // started before begin can be logged after it (the wave-5 analysis window carries a
+        // pre-command utterance between begin and end). The clear is therefore not a trick to make a
+        // fragment appear — it is what makes the post-action read a record of a MOVE: with the
+        // standing focus taken away, a focus that is back afterwards is one this command asked for,
+        // and a standing focus the clear could not remove proves nothing and accepts nothing. That
+        // is why the clear belongs before the request, not after a refusal.
+        FocusRead before = currentAccessibilityFocus();
+        AccessibilityNodeInfo current = before.node;
         Log.i(
                 TAG,
                 "focus-before id="
@@ -702,16 +719,25 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         + " found="
                         + (current != null)
                         + (current == null
-                                ? ""
+                                ? " reason=" + before.reason
                                 : " bounds="
                                         + focusNodeBounds(current)
-                                        + " text64="
-                                        + encode(current.getText())));
-        if (isCommandTarget(current, needle, chosenBounds)) {
+                                        + " text64=\""
+                                        + encode(current.getText())
+                                        + "\" desc64=\""
+                                        + encode(current.getContentDescription())
+                                        + "\""));
+        // P8-07 r8 QR7-1: what the platform held when this command STARTED, and whether this
+        // command's own clear took it away, are facts the verdict at the end of the method needs —
+        // so they live as long as the method instead of inside the clear's `if` block. A target that
+        // already held the focus and kept it never moved for this command: reading the same node
+        // back afterwards is the same focus, not the platform's record of a move.
+        boolean startedOnTarget = isCommandTarget(current, needle, chosenBounds);
+        boolean cleared = false;
+        if (startedOnTarget) {
             // A failed clear is not fatal: the request below still goes out, and the verdict is
             // re-derived from the action answer, the focus event and the post-action read, never
             // from this line.
-            boolean cleared = false;
             try {
                 cleared = current.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
             } catch (RuntimeException failure) {
@@ -719,6 +745,11 @@ public final class A11yFocusProbeService extends AccessibilityService {
             }
             Log.i(TAG, "focus-clear id=" + id + " answered=" + cleared);
         }
+        // The admission fact for [source] = "focus-read", NOT an observation: the focus was either
+        // not on the target when the command began, or the clear above took it away, so the request
+        // below starts from "not focused" and a read-back can only be the platform's record of a
+        // move this command asked for. Both false means nothing moved and no read may accept it.
+        boolean moved = !startedOnTarget || cleared;
         AccessibilityNodeInfo focus = focusTarget(target, id);
         Log.i(TAG, "speech-window-begin id=" + id);
         // The action's answer is measured, never assumed, and the count/time below are the boundary
@@ -742,12 +773,14 @@ public final class A11yFocusProbeService extends AccessibilityService {
             if (!awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt).isEmpty()) {
                 source = "accessibility-event";
             } else {
-                // Third and last source (P8-07 r7 D0): the action answered false AND no matching
-                // event arrived, so the platform's current focus is read once more. A focus that
-                // now IS this command's target is the platform's own record that the move landed —
-                // judged by the same two bases the event matcher uses — and the read is logged so
-                // the value can be re-derived from this file instead of trusted.
-                AccessibilityNodeInfo readBack = currentAccessibilityFocus();
+                // Third and last source (P8-07 r7 D0, admitted only when the focus moved): the action
+                // answered false AND no matching event arrived, so the platform's current focus is
+                // read once more. A focus that now IS this command's target is the platform's own
+                // record that the move landed — but only a focus this command moved counts, so the
+                // read is accepted with [moved] and logged with it, and a standing focus that was
+                // never cleared stays [source] = "none" however this read answers.
+                FocusRead reread = currentAccessibilityFocus();
+                AccessibilityNodeInfo readBack = reread.node;
                 Log.i(
                         TAG,
                         "focus-read id="
@@ -755,12 +788,21 @@ public final class A11yFocusProbeService extends AccessibilityService {
                                 + " found="
                                 + (readBack != null)
                                 + (readBack == null
-                                        ? ""
+                                        ? " reason=" + reread.reason
                                         : " bounds="
                                                 + focusNodeBounds(readBack)
-                                                + " text64="
-                                                + encode(readBack.getText())));
-                if (isCommandTarget(readBack, needle, chosenBounds)) {
+                                                + " text64=\""
+                                                + encode(readBack.getText())
+                                                + "\" desc64=\""
+                                                + encode(readBack.getContentDescription())
+                                                + "\"")
+                                + " startedOnTarget="
+                                + startedOnTarget
+                                + " cleared="
+                                + cleared
+                                + " moved="
+                                + moved);
+                if (isCommandTarget(readBack, needle, chosenBounds) && moved) {
                     source = "focus-read";
                 }
             }
@@ -844,22 +886,55 @@ public final class A11yFocusProbeService extends AccessibilityService {
     }
 
     /**
-     * The node the platform currently reports as accessibility-focused, or null when this service
-     * cannot read it (no active window, a root that does not resolve, or no focus set).
+     * The node the platform currently reports as accessibility-focused, or the reason there is none
+     * (P8-07 r7 D0, split into its two failure modes in r8 QR7-3).
      *
-     * <p>P8-07 r7 D0 reads it twice and both reads are evidence: the one BEFORE the request decides
-     * whether the focus has to be cleared so the move starts from "not focused" (see
-     * [runCommand]), and the one AFTER a silent action and a silent event lets a focus that did land
-     * be accepted without an event. A read this service cannot take is not a verdict — a null answer
-     * writes `found=false` on its own line and the command still runs the action and the bounded
-     * wait — so a tree that refuses `findFocus` can never invent an acceptance.
+     * <p>Both reads are evidence: the one BEFORE the request decides whether the focus has to be
+     * cleared so the move starts from "not focused" (see [runCommand]), and the one AFTER a silent
+     * action and a silent event lets a focus that did land be accepted without an event. A read this
+     * service cannot take is not a verdict — a null answer writes `found=false` plus [FocusRead]'s
+     * reason on its own line and the command still runs the action and the bounded wait — so a tree
+     * that refuses `findFocus` can never invent an acceptance.
+     *
+     * <p>`found=false` used to conflate "no active window", "the root does not resolve" and "the
+     * window has no focus set", and only the last one says anything about the target. The reason
+     * token separates them, so the artifact can be re-read without guessing which read failed.
      */
-    private AccessibilityNodeInfo currentAccessibilityFocus() {
+    private FocusRead currentAccessibilityFocus() {
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
-            return root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+            if (root == null) {
+                return new FocusRead(null, FOCUS_READ_ROOT_NULL);
+            }
+            AccessibilityNodeInfo focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+            return focused == null
+                    ? new FocusRead(null, FOCUS_READ_FOCUS_NONE)
+                    : new FocusRead(focused, FOCUS_READ_NONE);
         } catch (RuntimeException unavailable) {
-            return null;
+            // A tree that refuses the read is a root this service never reached, not "no focus".
+            return new FocusRead(null, FOCUS_READ_ROOT_NULL);
+        }
+    }
+
+    /**
+     * One focus read: the node when the platform reports one, and otherwise WHICH read came up
+     * empty (P8-07 r8 QR7-3).
+     *
+     * <p>[reason] is exactly one space-free token (`none`, `root-null`, `focus-none`), so it can sit
+     * on a probe log line without splitting any other field and without colliding with a stage
+     * token the host scans for.
+     */
+    private static final class FocusRead {
+
+        /** The accessibility-focused node, or null when this read has none to report. */
+        private final AccessibilityNodeInfo node;
+
+        /** `none` with a node; `root-null` or `focus-none` without one. */
+        private final String reason;
+
+        FocusRead(AccessibilityNodeInfo node, String reason) {
+            this.node = node;
+            this.reason = reason;
         }
     }
 
