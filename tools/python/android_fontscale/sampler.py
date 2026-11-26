@@ -1871,6 +1871,9 @@ class Sampler:
     talkback_sequence: int = 0
     # The image's own TalkBackService component (empty when the image does not ship one).
     talkback_component: str = ""
+    # The gesture sequence tried by the LAST prompt-guard call. The shared gesture file is
+    # overwritten by every call, so a caller that keeps one failure's record reads it from here.
+    permission_dialog_gestures: tuple[str, ...] = ()
     # The image's exported preferences activity, discovered from its package dump.
     talkback_prefs_activity: str = P806_TALKBACK_PREFS_ACTIVITY
     # The Accessibility Suite notification-prompt guard: on for every TalkBack profile (p806, and
@@ -2130,6 +2133,7 @@ class Sampler:
         bound = False
         dump = ""
         bind_failures: list[str] = []
+        bind_gestures: tuple[str, ...] = ()
         while time.monotonic() < deadline:
             # Enabling TalkBack starts the service that raises its notification prompt. Clear it in
             # these first seconds, before any focus command exists, or the probe's active window is
@@ -2142,6 +2146,7 @@ class Sampler:
                 self.handle_notification_permission_dialog()
             except SampleError as error:
                 bind_failures.append(str(error))
+                bind_gestures = self.permission_dialog_gestures
             dump = self.accessibility_dumpsys()
             if talkback_bound_service(self._bound_accessibility_section(dump)):
                 bound = True
@@ -2152,12 +2157,16 @@ class Sampler:
         )
         bind_artifact = f"notification-dialog-bind-{stem}.txt"
         if bind_failures:
-            # `closed=false` plus the reason, and the gesture record itself is the artifact the
-            # guard already wrote (`permission-dialog-gesture.txt`: every gesture tried, in order).
+            # `guard_failures` counts GUARD CALLS, not gestures: one call already tries the whole
+            # double/single/double sequence. The sequence that belongs to the recorded failure is
+            # written here, because `permission-dialog-gesture.txt` is shared and overwritten by
+            # every guard call, so it cannot be read back for this failure later.
             (self.evidence / bind_artifact).write_text(
                 "closed=false\n"
-                f"attempts={len(bind_failures)}\n"
-                "gesture_artifact=permission-dialog-gesture.txt\n"
+                f"guard_failures={len(bind_failures)}\n"
+                f"gestures={','.join(bind_gestures) if bind_gestures else 'unknown'}\n"
+                "gesture_artifact=permission-dialog-gesture.txt "
+                "(shared; overwritten by every guard call)\n"
                 "authority=the screen's post-readiness settle re-reads the same prompt identity\n"
                 f"reason={bind_failures[-1]}\n",
                 encoding="utf-8",
@@ -2171,7 +2180,8 @@ class Sampler:
             # from every target's own window.
             "notification_prompt_binding": {
                 "closed": not bind_failures,
-                "attempts": len(bind_failures),
+                "guard_failures": len(bind_failures),
+                "gestures": list(bind_gestures),
                 "artifact": bind_artifact if bind_failures else "",
                 "reason": bind_failures[-1] if bind_failures else "",
             },
@@ -2197,6 +2207,19 @@ class Sampler:
             "\n".join(f"{key}={value}" for key, value in facts.items()) + "\n",
             encoding="utf-8",
         )
+
+    def record_level_outcome(
+        self, attempt_index: int, tree: str, attempt: dict[str, object]
+    ) -> None:
+        """Record the frame's VERBOSE entry and keep the frame plus its decided facts.
+
+        Every outcome writes both files (QL-4): a branch that only `continue`d left the pre-tap
+        frame on disk with no `outcome` line, so the artifact could not show what that attempt
+        actually saw. `verbose_entry` is the frame's own fact, computed before the save on every
+        branch (CONTRIBUTING: the tree's VERBOSE entry lands in the `.txt`).
+        """
+        attempt["verbose_entry"] = find_center(tree, P806_TALKBACK_LEVEL) is not None
+        self.save_level_attempt(attempt_index, tree, attempt)
 
     def talkback_log_level_setup(self) -> dict[str, object]:
         """Select TalkBack's own Log output level VERBOSE through its exported settings UI.
@@ -2291,6 +2314,7 @@ class Sampler:
                 attempt["summary"] = summary
                 if center is None:
                     attempt["outcome"] = "no-row"
+                    self.record_level_outcome(attempt_index, tree, attempt)
                     last_reason = "the developer preferences screen exposed no Log output level row"
                     continue
                 self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
@@ -2315,7 +2339,7 @@ class Sampler:
                     # to hit, and the next attempt re-reads and re-taps it.
                     attempt["level_list_rendered"] = False
                     attempt["outcome"] = "list-not-opened"
-                    self.save_level_attempt(attempt_index, tree, attempt)
+                    self.record_level_outcome(attempt_index, tree, attempt)
                     last_reason = (
                         "the tap on the Log output level row left the preference list rendered "
                         f"({stale} consecutive reads still carry its own summary)"
@@ -2334,18 +2358,18 @@ class Sampler:
                             opened = True
                             break
                 attempt["level_list_rendered"] = opened
-                attempt["verbose_entry"] = opened
                 if not opened:
                     attempt["outcome"] = "entry-missing"
-                    self.save_level_attempt(attempt_index, tree, attempt)
+                    self.record_level_outcome(attempt_index, tree, attempt)
                     last_reason = "the level list never rendered a VERBOSE entry"
                     continue
                 center = find_center(tree, P806_TALKBACK_LEVEL)
                 if center is None:
                     attempt["outcome"] = "no-entry-centre"
-                    self.save_level_attempt(attempt_index, tree, attempt)
+                    self.record_level_outcome(attempt_index, tree, attempt)
                     last_reason = "the VERBOSE entry has no tappable centre"
                     continue
+                attempt["verbose_entry"] = find_center(tree, P806_TALKBACK_LEVEL) is not None
                 self.save_level_attempt(attempt_index, tree, attempt)
                 self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
                 steps.append(f"attempt {attempt_index}: select the literal VERBOSE entry")
@@ -2374,6 +2398,7 @@ class Sampler:
                     time.sleep(1)
                 if not confirmed:
                     attempt["outcome"] = "unconfirmed"
+                    self.record_level_outcome(attempt_index, tree, attempt)
                     last_reason = "the level change showed no confirmation dialog and no new summary"
                     continue
                 deadline = time.monotonic() + 30
@@ -2392,6 +2417,7 @@ class Sampler:
                         return record
                     time.sleep(1)
                 attempt["outcome"] = "summary-not-updated"
+                self.record_level_outcome(attempt_index, tree, attempt)
                 last_reason = "the developer screen's summary never rendered VERBOSE"
             raise SampleError(
                 f"{last_reason} after {TALKBACK_LEVEL_ATTEMPTS} attempts ("
@@ -2489,7 +2515,9 @@ class Sampler:
         With `target_screenshots` (the P8-07 batch D Q3 profiles) every target's command is followed
         by one screenshot whose stem carries that target's command id, so a target's picture, its
         focus command and its utterance window are three artifacts of the same target. The dynamic
-        p806 profile keeps its single per-screen screenshot set and its host record unchanged.
+        p806 profile keeps its single per-screen screenshot set; its host record may gain read-only
+        diagnostic keys (such as the enable step's `notification_prompt_binding`), and its gate
+        criterion is unchanged.
 
         The three r4 gates sit between the enable write and the first command, in this order: the
         bounded readiness wait (TalkBack must have spoken), the bounded notification-prompt settle
@@ -2804,6 +2832,7 @@ class Sampler:
             attempts.append((gesture, closed))
             if closed:
                 break
+        self.permission_dialog_gestures = tuple(gesture for gesture, _closed in attempts)
         self.write_permission_dialog_gesture(enabled_services, attempts)
         if not closed:
             raise SampleError(

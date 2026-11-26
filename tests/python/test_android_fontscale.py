@@ -2047,6 +2047,79 @@ class NotificationPromptSettle(unittest.TestCase):
         self.assertEqual(4, sampler.reads)
         self.assertIsNone(record["quiet_after_round"])
 
+    class _RoundTolerantSampler(Sampler):
+        """The real settle over a guard that raises in round 1 and answers "gone" afterwards."""
+
+        def __init__(self, evidence: Path) -> None:
+            super().__init__(
+                adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+            )
+            self.reads = 0
+            self.focus_ids: list[int] = []
+
+        def enable_talkback(self, stem: str) -> dict[str, object]:
+            return {
+                "status": "success",
+                "enabled_components": ["component"],
+                "enabled_services_file": f"talkback-enabled-{stem}.txt",
+                "talkback_bound": True,
+                "reason": "",
+            }
+
+        def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+            return {"status": "ready", "waited_s": 1.0, "polls": 1, "fragments": 1}
+
+        def handle_notification_permission_dialog(self) -> bool:
+            self.reads += 1
+            if self.reads == 1:
+                raise SampleError(
+                    "the Accessibility Suite notification prompt did not close after "
+                    "3 gestures (double, single, double)"
+                )
+            return False
+
+        def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+            self.focus_ids.append(command_id)
+            return {
+                "id": command_id,
+                "target": target,
+                "completed": True,
+                "accepted": True,
+                "problem": "",
+                "lines": P806Profile._window(
+                    [target], command_id=command_id, target=target
+                ).splitlines(),
+            }
+
+        def disable_talkback_accessibility(self) -> None:
+            pass
+
+        def wait_accessibility_disabled(self) -> bool:
+            return True
+
+    def test_one_round_whose_three_gestures_fail_is_retried_not_fatal(self) -> None:
+        """Old implementation: the round's SampleError propagates, so the screen reports not-obtained."""
+        import tempfile
+
+        target = "账本为空，还没有任何交易。"
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._RoundTolerantSampler(evidence)
+            screen = Screen("home", (), "账本为空", speech=(SpeechCheck(target, (target,)),))
+            with patch("android_fontscale.sampler.time.sleep"):
+                record = sampler.p806_talkback_screen(screen, target_screenshots=False)
+            settle = (evidence / "notification-dialog-home.txt").read_text(encoding="utf-8")
+            artifact = (evidence / "talkback-home.txt").read_text(encoding="utf-8")
+        # The failing round is an observation: it is recorded as still-present, the next rounds
+        # re-read, and the screen still succeeds on the target's own window.
+        self.assertEqual("success", record["status"])
+        self.assertEqual(3, sampler.reads)
+        self.assertIn("round=1 prompt=still-present", settle)
+        self.assertIn("quiet_after_round=3", settle)
+        self.assertIn("# notification-prompt: clears=0 quiet_after_round=3", artifact)
+        self.assertEqual([1], sampler.focus_ids)
+        self.assertEqual("success", record["checks"][0]["status"])
+
 
 class NotificationPromptAuthority(unittest.TestCase):
     """r6 T1: the enable-boundary clear is best effort; the screen's own settle decides.
@@ -2156,9 +2229,19 @@ class NotificationPromptAuthority(unittest.TestCase):
         # target's own window still decides.
         self.assertEqual("success", record["status"])
         self.assertEqual([1], sampler.focus_ids)
-        self.assertFalse(record["enable"]["notification_prompt_binding"]["closed"])
+        binding = record["enable"]["notification_prompt_binding"]
+        self.assertFalse(binding["closed"])
+        # `guard_failures` counts guard calls (one call already tries all three gestures), and this
+        # failure's own sequence is in the bind artifact itself.
+        self.assertEqual(1, binding["guard_failures"])
+        self.assertEqual(["double", "single", "double"], binding["gestures"])
         self.assertIn("closed=false", bind)
-        self.assertIn("gesture_artifact=permission-dialog-gesture.txt", bind)
+        self.assertIn("guard_failures=1", bind)
+        self.assertIn("gestures=double,single,double", bind)
+        self.assertIn(
+            "gesture_artifact=permission-dialog-gesture.txt (shared; overwritten by every guard call)",
+            bind,
+        )
         # The existing artifact carries the tried gesture sequence, and none of them closed it.
         self.assertIn("attempt=1 gesture=double closed=false", gestures)
         self.assertIn("attempt=2 gesture=single closed=false", gestures)
@@ -2184,7 +2267,8 @@ class NotificationPromptAuthority(unittest.TestCase):
                     "talkback_bound": True,
                     "notification_prompt_binding": {
                         "closed": False,
-                        "attempts": 1,
+                        "guard_failures": 1,
+                        "gestures": ["double", "single", "double"],
                         "artifact": f"notification-dialog-bind-{stem}.txt",
                         "reason": "the notification prompt did not close after 3 gestures",
                     },
@@ -2345,6 +2429,9 @@ class LogLevelRouteRetry(unittest.TestCase):
                 record = sampler.talkback_log_level_setup()
             last = evidence / f"talkback-prefs-level-{TALKBACK_LEVEL_ATTEMPTS}.xml"
             last_frame = last.read_text(encoding="utf-8")
+            # The frame's presence has to be read while the temporary directory still exists: a
+            # check outside the `with` block asks a deleted path and is False by construction.
+            last_exists = last.is_file()
         self.assertEqual("not-obtained", record["status"])
         self.assertEqual("", record["value"])
         self.assertEqual(
@@ -2353,7 +2440,7 @@ class LogLevelRouteRetry(unittest.TestCase):
         )
         self.assertIn(f"after {TALKBACK_LEVEL_ATTEMPTS} attempts", str(record["reason"]))
         # The last attempt's own frame is on disk and is the preference screen that never changed.
-        self.assertTrue(last.is_file())
+        self.assertTrue(last_exists)
         self.assertIn("Log output level", last_frame)
         self.assertTrue(
             any(
@@ -2361,6 +2448,49 @@ class LogLevelRouteRetry(unittest.TestCase):
                 for problem in self._gate_problems(record)
             )
         )
+
+    def test_the_unconfirmed_and_summary_outcomes_keep_their_own_frame_and_facts(self) -> None:
+        """Old implementation: both branches only `continue`, so no per-attempt artifact existed."""
+        import tempfile
+
+        # The confirm/after waits are real seconds; a per-call clock ends them without changing
+        # which frame the loop reads (the sleeping itself is replaced separately).
+        clock = [0.0]
+
+        def tick() -> float:
+            clock[0] += 1.0
+            return clock[0]
+
+        cases = {
+            "unconfirmed": {
+                "talkback-prefs-before": [_prefs_level_tree("ERROR")],
+                "talkback-prefs-dialog": [_LEVEL_LIST_DIALOG],
+                "talkback-prefs-confirm": [_prefs_level_tree("ERROR")],
+            },
+            "summary-not-updated": {
+                "talkback-prefs-before": [_prefs_level_tree("ERROR")],
+                "talkback-prefs-dialog": [_LEVEL_LIST_DIALOG],
+                "talkback-prefs-confirm": [_LEVEL_CONFIRM_DIALOG],
+                "talkback-prefs-after": [_prefs_level_tree("INFO")],
+            },
+        }
+        for outcome, frames in cases.items():
+            with tempfile.TemporaryDirectory() as temp:
+                evidence = Path(temp)
+                sampler = _LevelRouteSampler(evidence, frames)
+                with patch("android_fontscale.sampler.time.sleep"), patch(
+                    "android_fontscale.sampler.time.monotonic", side_effect=tick
+                ), patch("android_fontscale.sampler.TALKBACK_LEVEL_ATTEMPTS", 1):
+                    record = sampler.talkback_log_level_setup()
+                frame = evidence / "talkback-prefs-level-1.xml"
+                facts = (evidence / "talkback-prefs-level-1.txt").read_text(encoding="utf-8")
+                frame_exists = frame.is_file()
+            self.assertEqual("not-obtained", record["status"])
+            self.assertEqual([outcome], [entry["outcome"] for entry in record["attempts"]])
+            self.assertTrue(frame_exists)
+            # Both outcomes now carry the frame they decided on plus the frame's own facts.
+            self.assertIn(f"outcome={outcome}", facts)
+            self.assertIn("verbose_entry=False", facts)
 
 
 class FocusRetryBound(unittest.TestCase):
