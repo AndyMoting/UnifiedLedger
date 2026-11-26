@@ -49,12 +49,16 @@ from pathlib import Path
 PACKAGE = "com.unifiedledger.android"
 TEST_RUNNER = PACKAGE + ".test/androidx.test.runner.AndroidJUnitRunner"
 
-# The one flow this rig drives, and the ONE case it runs in ONE `am instrument` call. Keyed by the
-# `--flow` value the workflow passes, so an unknown flow is refused before any device is touched.
+# The flows this rig drives, and the ONE case each one runs in ONE `am instrument` call. Keyed by
+# the `--flow` value the workflow passes, so an unknown flow is refused before any device is touched.
 FLOWS: dict[int, str] = {
     2: (
         "com.unifiedledger.android.P807Q2Flow2ReconciliationInstrumentedTest"
         "#theImportedEvidenceBindsToTheExistingPostingAndSurvivesAuditReentry"
+    ),
+    3: (
+        "com.unifiedledger.android.P807Q2Flow3RefundReportInstrumentedTest"
+        "#theManualRefundLandsInItsArrivalMonthAndReadsBackThroughTheDayDetail"
     ),
 }
 

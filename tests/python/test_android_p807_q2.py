@@ -1,4 +1,4 @@
-"""Offline proofs for the P8-07 Q2 flow-2 device rig (cloud AVD chain). No device is touched."""
+"""Offline proofs for the P8-07 Q2 device rig (cloud AVD chain). No device is touched."""
 from __future__ import annotations
 
 import json
@@ -210,13 +210,17 @@ class Judging(unittest.TestCase):
 
 
 class FlowTable(unittest.TestCase):
-    def test_flow_two_maps_to_the_one_case_and_nothing_else(self) -> None:
-        self.assertEqual([2], list(FLOWS))
+    def test_the_flow_table_maps_both_cases_and_nothing_else(self) -> None:
+        self.assertEqual([2, 3], list(FLOWS))
         self.assertIn("#", CASE)
         self.assertTrue(CASE.startswith("com.unifiedledger.android.P807Q2Flow2ReconciliationInstrumentedTest#"))
+        case_three = flow_case(3)
+        self.assertEqual(FLOWS[3], case_three)
+        self.assertTrue(case_three.startswith("com.unifiedledger.android.P807Q2Flow3RefundReportInstrumentedTest#"))
+        self.assertNotEqual(CASE, case_three)
 
     def test_an_unknown_flow_is_refused(self) -> None:
-        for value in (0, 1, 3, 99):
+        for value in (0, 1, 4, 99):
             with self.assertRaises(Q2Error):
                 flow_case(value)
 
@@ -651,11 +655,14 @@ class Workflow(unittest.TestCase):
         shards = (root / "tools" / "ci" / "android-instrumented-shards.txt").read_text()
         self.assertNotIn("P807Q2Flow2ReconciliationInstrumentedTest", inventory)
         self.assertNotIn("P807Q2Flow2ReconciliationInstrumentedTest", shards)
+        self.assertNotIn("P807Q2Flow3RefundReportInstrumentedTest", inventory)
+        self.assertNotIn("P807Q2Flow3RefundReportInstrumentedTest", shards)
 
     def test_the_class_is_excluded_from_the_device_inventory_with_its_reason(self) -> None:
         from android_scale.inventory import EXCLUDED
 
         self.assertIn("P807Q2Flow2ReconciliationInstrumentedTest", EXCLUDED)
+        self.assertIn("P807Q2Flow3RefundReportInstrumentedTest", EXCLUDED)
 
     def test_the_python_module_is_registered_in_shard_two(self) -> None:
         root = Path(__file__).resolve().parents[2]

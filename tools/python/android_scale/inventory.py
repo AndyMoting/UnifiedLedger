@@ -21,6 +21,8 @@ EXCLUDED = {
     # P8-07 Q2 flow 2 (D-365): its own dedicated rig `android-p807-q2.yml`, because the seed
     # guard requires this case to be the FIRST case of its instrumentation process.
     "P807Q2Flow2ReconciliationInstrumentedTest",
+    # P8-07 Q2 flow 3: the same dedicated rig and the same first-case seed guard.
+    "P807Q2Flow3RefundReportInstrumentedTest",
 }
 
 

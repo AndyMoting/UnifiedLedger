@@ -142,11 +142,13 @@ gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位S
 
 **已知边界**：本门不覆盖 `P704GP-D-SCALE-01`（小组不回归需要另一份夹具与另一轮运行），也不对任何未画在屏幕上的层作结论。开发机不再为该门启动模拟器——本机 adb 面归用户的 MuMu 使用，云端托管 runner 是唯一执行环境（显式本地诊断通道不适用于本门）。
 
-### Android P8-07 Q2 验收 rig（导入证据 → 对账 → 审计回看）
+### Android P8-07 Q2 验收 rig（导入证据 → 对账 → 审计回看；手工退款 → 跨月报表 → 日明细）
 
-`.github/workflows/android-p807-q2.yml` 是**手动触发、非阻塞**的单流程入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于所选 ref 的头）与可选 `flow`（默认 `2`；`tools/python/android_p807_q2.py` 的 `FLOWS` 表当前只有 flow 2，未知 flow 在占用设备前拒跑）；不加入 required checks，不设定时触发，也不因后续推送取消正在执行的手动运行。
+`.github/workflows/android-p807-q2.yml` 是**手动触发、非阻塞**的单流程入口：只提供 `workflow_dispatch`，必填 `expected_sha`（完整 40 位 SHA，必须等于所选 ref 的头）与可选 `flow`（默认 `2`；`tools/python/android_p807_q2.py` 的 `FLOWS` 表当前有 flow 2 与 flow 3，未知 flow 在占用设备前拒跑）；不加入 required checks，不设定时触发，也不因后续推送取消正在执行的手动运行。
 
-该 rig 跑阶段验收设计门的第二条跨切片流程（`docs/P807_DESIGN_GATE.local.md` 的「已批准的跨切片流程」第二行；行为判据是 P8-01a 规格 §2.2–2.7 与 §4 的 V-8 / V-10 / V-11）。同一个用例内先走入口 A（账户流水 → 账户对账队列）读队列与审计，再走入口 B（导入审核候选行的「用于核对既有分录」）完成绑定、候选与确认，最后回导入审核面核对「已用于核对既有分录」标记，并用同源候选再确认一次，要求被 `IMPORT_EVIDENCE_ALREADY_RECONCILED` 拒绝且正式账本零变化。`P807Q2Flow2ReconciliationInstrumentedTest` 不在普通清单内、也不在任何分片里：用例在启动应用之前播种应用自有存储，种子守卫要求它是本进程的第一条用例，而普通两片每片只有一次 `am instrument`、两片首位都已占用，因此它独占一个 rig 与本流程自己的 AVD 名 `ul-p807-q2`（D-365）。
+`-f flow=2`（默认）跑阶段验收设计门的第二条跨切片流程（`docs/P807_DESIGN_GATE.local.md` 的「已批准的跨切片流程」第二行；行为判据是 P8-01a 规格 §2.2–2.7 与 §4 的 V-8 / V-10 / V-11）。同一个用例内先走入口 A（账户流水 → 账户对账队列）读队列与审计，再走入口 B（导入审核候选行的「用于核对既有分录」）完成绑定、候选与确认，最后回导入审核面核对「已用于核对既有分录」标记，并用同源候选再确认一次，要求被 `IMPORT_EVIDENCE_ALREADY_RECONCILED` 拒绝且正式账本零变化。`P807Q2Flow2ReconciliationInstrumentedTest` 不在普通清单内、也不在任何分片里：用例在启动应用之前播种应用自有存储，种子守卫要求它是本进程的第一条用例，而普通两片每片只有一次 `am instrument`、两片首位都已占用，因此它独占一个 rig 与本流程自己的 AVD 名 `ul-p807-q2`（D-365）。
+
+`-f flow=3` 派发第三条跨切片流程（同一设计门的第三行；行为判据是 P8-03 退款规格与 P8-06 报表下钻规格）。`P807Q2Flow3RefundReportInstrumentedTest` 在同一个用例内先输入超额退款并确认一次，要求界面显示冻结的拒绝句，且正式账本（含每交易版本）、退款候选与报表/日历/明细三面读值零变化；再把金额改为满额 21.00 确认，要求新增恰好一笔 `REFUND_RECEIPT`、到账时刻即统计时刻；随后用自定义窗分别读原支出月与到账月，要求原支出月逐项不变、到账月出现同笔退款的负净支出；最后从首页月游标与日历自身游标到达 2026-11，点到达日格进入日明细并往返只读交易详情，全程正式账本再读一次仍等于写入后的读数。该用例与 flow 2 同因（种子守卫要求本进程首条用例）登记在 `tools/python/android_scale/inventory.py` 的 `EXCLUDED`，因此同样不在普通清单与分片内，并复用同一个 AVD 名。
 
 `tools/ci/android-p807-q2.py run` 独占设备交互：单设备所有权断言（`emu avd name` 必须答 `ul-p807-q2`，否则拒跑且不碰别的模拟器）、装机前 `am force-stop com.unifiedledger.android`、两个 APK 安装并计 sha256、**唯一**一次 `am instrument -w -r -e class <class#method>`、原始转录逐字落盘、logcat 与设备配置，然后写 `host.json`（schema 版本、sha、flow、case、avd、serial、api_level、起止时间、status、各证据文件名与 APK 哈希）。两个 APK 在**模拟器会话之外**由本次 checkout 构建，配合 `git rev-parse HEAD` 断言，无需 APK 工件链。设备 profile 与普通设备回归一致：`pixel_6`（1080×2400 / 420）、`api-level 36`、`google_apis`、`x86_64`、2 核、2048M、保留平台动画（程序化滚动依赖动画推进）。
 
@@ -156,9 +158,10 @@ gh workflow run android-b6-card.yml --ref <branch> -f expected_sha=<完整40位S
 
 ```bash
 gh workflow run android-p807-q2.yml --ref <branch> -f expected_sha=<完整40位SHA> -f flow=2
+gh workflow run android-p807-q2.yml --ref <branch> -f expected_sha=<完整40位SHA> -f flow=3
 ```
 
-**已知边界**：本 rig 只跑 flow 表里的那一条用例，不替代普通设备回归，也不进入 required checks。`import_candidate_status_history` 行数、V-11 同参重放 `NoChange` 与 P8-01a §2.5 的「结果未知」分支在界面不可观测，按设计门 Q5 不计入本流程判据，其服务层设备证据在 `P801AccountReconciliationChainInstrumentedTest`；V-10 的「返回保留滚动位」在单条队列上无可观测滚动，引该链的 `theScrollSlotsRoundTripThroughTheReducer` 读面证据。
+**已知边界**：本 rig 只跑 `-f flow` 指定的那一条用例，不替代普通设备回归，也不进入 required checks。`import_candidate_status_history` 行数、V-11 同参重放 `NoChange` 与 P8-01a §2.5 的「结果未知」分支在界面不可观测，按设计门 Q5 不计入本流程判据，其服务层设备证据在 `P801AccountReconciliationChainInstrumentedTest`；V-10 的「返回保留滚动位」在单条队列上无可观测滚动，引该链的 `theScrollSlotsRoundTripThroughTheReducer` 读面证据。
 
 ### Android font-scale sample（P8-00 V-8 / P8-01a i3b / P8-02 V-9 / P8-03 V-14 / P8-06 V-12）
 
