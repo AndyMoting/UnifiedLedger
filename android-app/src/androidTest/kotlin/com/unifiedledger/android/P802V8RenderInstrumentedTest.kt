@@ -57,6 +57,7 @@ class P802V8RenderInstrumentedTest {
     @Test
     fun theFirstResultPageRendersAndIsMeasuredInProcessPixels() {
         val log: (String) -> Unit = { line -> Log.i(TAG, line) }
+        val caseStartedElapsed = SystemClock.elapsedRealtime()
 
         // ---------------------------------------------------------------- L1: the sample
         val seeded = P802V8RenderSeed.prepare(targetContext, log)
@@ -83,12 +84,27 @@ class P802V8RenderInstrumentedTest {
                 "schema=${seeded.schemaVersion} window=[${seeded.windowStartInclusive},${seeded.windowEndExclusive}) " +
                 "apk=$apkSha256",
         )
+        log(p802V8BudgetLine("sample", caseStartedElapsed, SystemClock.elapsedRealtime()))
 
         // ---------------------------------------------------------------- L2: launch + the frozen group
         val surface = P802V8ResultSurface(instrumentation, log)
         surface.launchAndOpenSearch()
         surface.applyFixedCondition()
         surface.prepareSubmit()
+        // The rig's outer budget is a KILL, not a red: the driver bounds one `am instrument` and a
+        // case that runs past it leaves no cause on the transcript at all. The case therefore states
+        // where it stands before the terminal starts, and reds here when what is left cannot pay for
+        // the work that remains (the settle loop plus the post-settle header read).
+        log(p802V8BudgetLine("condition", caseStartedElapsed, SystemClock.elapsedRealtime()))
+        val preparedElapsed = SystemClock.elapsedRealtime() - caseStartedElapsed
+        val remainingBudget = P802V8RenderFacts.RIG_TIMEOUT_MILLIS - preparedElapsed
+        assertTrue(
+            "the case must red on its own budget instead of being killed by the rig's " +
+                "${P802V8RenderFacts.RIG_TIMEOUT_MILLIS} ms outer timeout: elapsedMs=$preparedElapsed " +
+                "remainingMs=$remainingBudget and the remaining work needs at least " +
+                "${P802V8RenderFacts.REMAINING_WORK_MILLIS} ms",
+            remainingBudget >= P802V8RenderFacts.REMAINING_WORK_MILLIS,
+        )
 
         // ---------------------------------------------------------------- L3: the pixel terminal
         // The band is cut from the window ONCE, before the submit, and its bounds are recorded so the
@@ -171,10 +187,12 @@ class P802V8RenderInstrumentedTest {
             "the completed sample can never follow the settled one",
             completedIndex <= settledIndex,
         )
-        assertTrue(
-            "the completed sample must start the settled run: a match from before it would report a shorter reading",
-            completedIndex <= settledIndex - (P802V8RenderFacts.SETTLE_SAMPLES - 1),
-        )
+        // WHAT THIS CASE DOES NOT ASSERT: that `completedIndex` is the START of the settled run. The
+        // accept-time candidate is `p802V8FirstSettledIndex(samples, settleSamples)` only while it ends
+        // at the newest sample, so `samples[settledIndex - (SETTLE_SAMPLES - 1)]` always equals
+        // `finalState` and an "earlier isolated equal frame" is admitted by construction. A bound on it
+        // would be derived from this loop's own semantics — true whatever the pixels did — so it is not
+        // asserted at all (D-366 E2 defines the terminal as the FIRST sample equal to the final state).
         assertTrue(
             "the settled state must differ from the pre-submit frame (the surface really changed)",
             !p802V8SameState(finalState, baseline),

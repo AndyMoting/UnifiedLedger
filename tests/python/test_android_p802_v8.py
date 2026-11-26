@@ -11,6 +11,7 @@ from android_p802_v8 import (
     CASE,
     CONFIG_FILE,
     DEFAULT_AVD,
+    DEFAULT_TIMEOUT,
     EXPECTED_API,
     EXPECTED_CONDITION,
     EXPECTED_FIXTURE_TRANSACTIONS,
@@ -662,6 +663,73 @@ class Contract(unittest.TestCase):
                 if depth == 0:
                     return source[opening : index + 1]
         raise AssertionError("the reading-line builder has unbalanced braces")
+
+    def function_body(self, name: str) -> str:
+        """The body of one Kotlin function in the case, brace-balanced from its first `{`."""
+        source = self.case_source()
+        start = source.index(f"fun {name}(")
+        opening = source.index("{", start)
+        depth = 0
+        for index in range(opening, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[opening : index + 1]
+        raise AssertionError(f"{name} has unbalanced braces")
+
+    def instrumented_test_source(self) -> str:
+        return (
+            self.root()
+            / "android-app"
+            / "src"
+            / "androidTest"
+            / "kotlin"
+            / "com"
+            / "unifiedledger"
+            / "android"
+            / "P802V8RenderInstrumentedTest.kt"
+        ).read_text()
+
+    def test_the_case_carries_the_rig_timeout_and_reds_on_its_own_budget(self) -> None:
+        # The driver kills one `am instrument` at DEFAULT_TIMEOUT; the case carries the SAME budget and
+        # asserts on what is left before the terminal starts, so a drift between the two reds here
+        # instead of turning into a killed process with no cause on the transcript.
+        self.assertIn(f"RIG_TIMEOUT_MILLIS = {int(DEFAULT_TIMEOUT * 1000):_}L", self.case_source())
+        test_source = self.instrumented_test_source()
+        self.assertIn("p802V8BudgetLine(", self.case_source())
+        self.assertIn("p802V8BudgetLine(", test_source)
+        self.assertIn("remainingBudget >= P802V8RenderFacts.REMAINING_WORK_MILLIS", test_source)
+
+    def test_both_control_placements_share_one_verified_channel(self) -> None:
+        # The tag and the merchant are the same defect class: one implementation proves both.
+        for name in ("toggleTag", "selectMerchant"):
+            self.assertIn("checkVerified(", self.function_body(name), name)
+
+    def test_a_control_placement_judges_state_from_a_forced_current_tree(self) -> None:
+        body = self.function_body("checkVerified")
+        self.assertIn("refreshTreeForRead()", body)
+        self.assertIn("toggleNear(", body)
+        self.assertIn("clickSemantic(", body)
+        self.assertIn("tapAt(", body)
+        self.assertIn("awaitEffect(", body)
+
+    def test_a_refused_placement_names_expected_read_and_clicked_bounds_in_one_line(self) -> None:
+        body = self.function_body("checkVerified")
+        self.assertIn("check-failed", body)
+        for token in ("expected=", "read=", "clickedBounds="):
+            self.assertIn(token, body)
+
+    def test_the_state_poll_is_bounded_and_forces_the_tree_current(self) -> None:
+        body = self.function_body("awaitEffect")
+        self.assertIn("CHECK_TIMEOUT_MILLIS", body)
+        self.assertIn("CHECK_POLL_MILLIS", body)
+        self.assertIn("CHECK_REFRESH_EVERY", body)
+        self.assertIn("refreshTreeForRead()", body)
+
+    def test_the_accept_time_tree_read_is_forced_current(self) -> None:
+        self.assertIn("refreshTreeForRead()", self.function_body("confirmResultView"))
 
     def test_the_case_emits_every_field_the_rig_requires(self) -> None:
         # The check reads the reading-line builder ONLY: a field that survives in a diagnostic line
