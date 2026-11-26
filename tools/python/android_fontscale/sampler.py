@@ -277,6 +277,22 @@ P806_TALKBACK_DEVELOPER_FRAGMENT = (
 # than by a locale-dependent title.
 P806_TALKBACK_LEVEL_NAMES = ("NONE", "ASSERT", "ERROR", "WARN", "INFO", "DEBUG", "VERBOSE")
 P806_TALKBACK_LEVEL = "VERBOSE"
+# P8-07 batch D r6 (T2): the tap that opens the level list is the one step the run cannot prove
+# from its own commands. Run 45760191802 left `talkback-prefs-dialog.xml` as the preference list
+# itself — its `…:id/summary` row still rendering ERROR — and the single attempt gave up with "the
+# level list never rendered a VERBOSE entry". The route is now retried, and every attempt re-reads
+# the preference tree and re-taps the row, keeping its own tree as `talkback-prefs-level-<n>.xml`.
+# Three attempts, then the route fails exactly as before: the gate still requires
+# `status=success` and `value=VERBOSE`, and this bound only removes the single-jitter death.
+TALKBACK_LEVEL_ATTEMPTS = 3
+TALKBACK_LEVEL_ENTRY_TIMEOUT_S = 30
+TALKBACK_LEVEL_ENTRY_POLL_S = 2.0
+# Two consecutive reads that still render the preference row's OWN summary mean the tap never
+# opened the list: the single-choice list renders level names as plain rows, never as `:id/summary`,
+# so the summary row's continued presence is the exact "the list did not open" signal.
+TALKBACK_LEVEL_STALE_READS = 2
+TALKBACK_LEVEL_DIALOG_SWIPES = 4
+TALKBACK_LEVEL_RETRY_INTERVAL_S = 2.0
 # The test-only probe that moves accessibility focus (D-292). It lives in the androidTest APK; the
 # settings component string is the platform's flattened form of that manifest entry.
 P806_PROBE_PACKAGE = "com.unifiedledger.android.test"
@@ -2113,11 +2129,19 @@ class Sampler:
         deadline = time.monotonic() + 45
         bound = False
         dump = ""
+        bind_failures: list[str] = []
         while time.monotonic() < deadline:
-            # Enabling TalkBack starts the service that raises its notification prompt. Dismiss it
-            # in these first seconds, before any focus command exists, or the probe's active window
-            # is the dialog and the command reports found=false.
-            self.handle_notification_permission_dialog()
+            # Enabling TalkBack starts the service that raises its notification prompt. Clear it in
+            # these first seconds, before any focus command exists, or the probe's active window is
+            # the dialog and the command reports found=false. This clear is BEST EFFORT (P8-07
+            # batch D r6): a prompt that outlives its three gestures is recorded on disk and the
+            # wait continues. The authority is the screen's own settle after the readiness gate,
+            # which re-reads the same `notification_permission_dialog_identity` tree — the two never
+            # disagree about what the prompt is, only about when it is fatal.
+            try:
+                self.handle_notification_permission_dialog()
+            except SampleError as error:
+                bind_failures.append(str(error))
             dump = self.accessibility_dumpsys()
             if talkback_bound_service(self._bound_accessibility_section(dump)):
                 bound = True
@@ -2126,13 +2150,53 @@ class Sampler:
         (self.evidence / "talkback-accessibility.txt").write_text(
             self._bound_accessibility_section(dump) + "\n", encoding="utf-8"
         )
+        bind_artifact = f"notification-dialog-bind-{stem}.txt"
+        if bind_failures:
+            # `closed=false` plus the reason, and the gesture record itself is the artifact the
+            # guard already wrote (`permission-dialog-gesture.txt`: every gesture tried, in order).
+            (self.evidence / bind_artifact).write_text(
+                "closed=false\n"
+                f"attempts={len(bind_failures)}\n"
+                "gesture_artifact=permission-dialog-gesture.txt\n"
+                "authority=the screen's post-readiness settle re-reads the same prompt identity\n"
+                f"reason={bind_failures[-1]}\n",
+                encoding="utf-8",
+            )
         return {
             "status": "success",
             "enabled_components": enabled_components,
             "enabled_services_file": enabled_file,
             "talkback_bound": bound,
+            # Additive context, never a gate input: the gate still derives red from the settle and
+            # from every target's own window.
+            "notification_prompt_binding": {
+                "closed": not bind_failures,
+                "attempts": len(bind_failures),
+                "artifact": bind_artifact if bind_failures else "",
+                "reason": bind_failures[-1] if bind_failures else "",
+            },
             "reason": "" if bound else "TalkBack was enabled but is not listed as a bound service",
         }
+
+    def save_level_attempt(
+        self, attempt: int, tree: str, facts: dict[str, object]
+    ) -> None:
+        """Keep one log-level attempt's own frame and the facts that decide it.
+
+        The red round could only show `talkback-prefs-dialog.xml` as the preference list itself, so
+        the tap's target and the tree's VERBOSE entry are written next to that frame per attempt:
+        `talkback-prefs-level-<n>.xml` is the frame, `talkback-prefs-level-<n>.txt` the two facts.
+        """
+        stem = f"talkback-prefs-level-{attempt}"
+        self.save_tree(stem, tree)
+        self.save_level_facts(attempt, facts)
+
+    def save_level_facts(self, attempt: int, facts: dict[str, object]) -> None:
+        """Write one attempt's decided facts beside the frame they were read from."""
+        (self.evidence / f"talkback-prefs-level-{attempt}.txt").write_text(
+            "\n".join(f"{key}={value}" for key, value in facts.items()) + "\n",
+            encoding="utf-8",
+        )
 
     def talkback_log_level_setup(self) -> dict[str, object]:
         """Select TalkBack's own Log output level VERBOSE through its exported settings UI.
@@ -2142,14 +2206,23 @@ class Sampler:
         one of the literal level names, choose VERBOSE from the list (literal entries), and confirm
         the framework dialog's positive button. The final developer-screen dump proves the summary
         now renders VERBOSE; no private file is copied and no preference key is typed.
+
+        The whole tap-open-choose-confirm route is bounded at TALKBACK_LEVEL_ATTEMPTS attempts
+        (r6): every attempt re-reads the preference frame and re-taps the row, and keeps its own
+        tree plus the two facts the red run could not show — which node it tapped and whether the
+        tree carried a VERBOSE entry — as `talkback-prefs-level-<attempt>.xml`/`.txt`. Only a route
+        that fails every attempt reports `not-obtained`, so the gate's `success` + `VERBOSE`
+        requirement is exactly as strict as before; the bound only removes one-gesture death.
         """
         record: dict[str, object] = {
             "status": "not-obtained",
             "value": "",
             "reason": "",
             "steps": [],
+            "attempts": [],
         }
         steps: list[str] = record["steps"]  # type: ignore[assignment]
+        attempts: list[dict[str, object]] = record["attempts"]  # type: ignore[assignment]
         started = False
         try:
             self.adb(
@@ -2192,65 +2265,142 @@ class Sampler:
             if current == P806_TALKBACK_LEVEL:
                 record.update(status="success", value=P806_TALKBACK_LEVEL, reason="already selected")
                 return record
-            center = find_talkback_level_summary(tree)
-            if center is None:
-                raise SampleError("the Log output level row has no tappable centre")
-            self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
-            steps.append("open the level list")
-            time.sleep(2)
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                tree = self.dump("talkback-prefs-dialog")
-                if find_center(tree, P806_TALKBACK_LEVEL) is not None:
-                    break
+            last_reason = "the Log output level row was never tappable"
+            for attempt_index in range(1, TALKBACK_LEVEL_ATTEMPTS + 1):
+                if attempt_index > 1:
+                    # "Short wait, then a forced fresh read and a fresh tap": a tap that missed has
+                    # no observable cause, so the next attempt re-derives the row from a new frame
+                    # instead of reusing the frame that already failed.
+                    time.sleep(TALKBACK_LEVEL_RETRY_INTERVAL_S)
+                attempt: dict[str, object] = {
+                    "attempt": attempt_index,
+                    "artifact": f"talkback-prefs-level-{attempt_index}.xml",
+                }
+                attempts.append(attempt)
+                tree = self.dump("talkback-prefs-before")
+                if talkback_level_summary_value(tree) is None:
+                    # Not the preference screen: a failed attempt can leave the level list (or a
+                    # confirmation dialog) above it, so BACK first and re-read.
+                    self.press_back()
+                    tree = self.dump("talkback-prefs-before")
+                # The row is addressed by its OWN summary node, never by the first level-named node
+                # in the tree: an accidentally open level list renders all seven names as rows.
+                summary = talkback_level_summary_value(tree)
+                center = find_talkback_level_summary(tree) if summary is not None else None
+                attempt["row_center"] = list(center) if center is not None else []
+                attempt["summary"] = summary
+                if center is None:
+                    attempt["outcome"] = "no-row"
+                    last_reason = "the developer preferences screen exposed no Log output level row"
+                    continue
+                self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+                steps.append(f"attempt {attempt_index}: tap the Log output level row at {center}")
                 time.sleep(2)
-            else:
-                # At 1.3x the last entry can sit below the dialog's fold; the single-choice list
-                # itself scrolls, so swipe inside it before giving up.
-                for _attempt in range(4):
-                    x1, y1, x2, y2 = scroll_swipe_points(tree)
-                    self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
-                    time.sleep(2)
+                opened = False
+                stale = 0
+                deadline = time.monotonic() + TALKBACK_LEVEL_ENTRY_TIMEOUT_S
+                while time.monotonic() < deadline:
                     tree = self.dump("talkback-prefs-dialog")
                     if find_center(tree, P806_TALKBACK_LEVEL) is not None:
+                        opened = True
                         break
-                else:
-                    raise SampleError("the level list never rendered a VERBOSE entry")
-            center = find_center(tree, P806_TALKBACK_LEVEL)
-            if center is None:
-                raise SampleError("the VERBOSE entry has no tappable centre")
-            self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
-            steps.append("select the literal VERBOSE entry")
-            time.sleep(2)
-            # The list change raises a confirmation dialog; its positive button is the framework's
-            # `android:id/button1`, and the changed summary is the proof it persisted.
-            deadline = time.monotonic() + 20
-            confirmed = False
-            while time.monotonic() < deadline:
-                tree = self.dump("talkback-prefs-confirm")
-                button = find_resource_center(tree, "android:id/button1")
-                if button is not None:
-                    self.adb("shell", "input", "tap", str(button[0]), str(button[1]))
-                    confirmed = True
-                    steps.append("confirm the framework dialog's positive button")
-                    break
-                if talkback_level_summary_value(tree) == P806_TALKBACK_LEVEL:
-                    confirmed = True
-                    steps.append("the dialog closed with the level already applied")
-                    break
-                time.sleep(1)
-            if not confirmed:
-                raise SampleError("the level change showed no confirmation dialog and no new summary")
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                tree = self.dump("talkback-prefs-after")
-                if talkback_level_summary_value(tree) == P806_TALKBACK_LEVEL:
-                    record.update(
-                        status="success", value=P806_TALKBACK_LEVEL, reason="summary shows VERBOSE"
+                    stale = stale + 1 if talkback_level_summary_value(tree) is not None else 0
+                    if stale >= TALKBACK_LEVEL_STALE_READS:
+                        break
+                    time.sleep(TALKBACK_LEVEL_ENTRY_POLL_S)
+                if not opened and stale >= TALKBACK_LEVEL_STALE_READS:
+                    # The preference list still renders its own summary row, so this tap did not
+                    # open the list at all — the exact shape of run 45760191802's artifact. Do not
+                    # swipe the preference list here: that only moves the row this attempt failed
+                    # to hit, and the next attempt re-reads and re-taps it.
+                    attempt["level_list_rendered"] = False
+                    attempt["outcome"] = "list-not-opened"
+                    self.save_level_attempt(attempt_index, tree, attempt)
+                    last_reason = (
+                        "the tap on the Log output level row left the preference list rendered "
+                        f"({stale} consecutive reads still carry its own summary)"
                     )
-                    return record
-                time.sleep(1)
-            raise SampleError("the developer screen's summary never rendered VERBOSE")
+                    steps.append(f"attempt {attempt_index}: {last_reason}")
+                    continue
+                if not opened:
+                    # At 1.3x the last entry can sit below the dialog's fold; the single-choice list
+                    # itself scrolls, so swipe inside it before this attempt is given up.
+                    for _swipe in range(TALKBACK_LEVEL_DIALOG_SWIPES):
+                        x1, y1, x2, y2 = scroll_swipe_points(tree)
+                        self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), "400")
+                        time.sleep(2)
+                        tree = self.dump("talkback-prefs-dialog")
+                        if find_center(tree, P806_TALKBACK_LEVEL) is not None:
+                            opened = True
+                            break
+                attempt["level_list_rendered"] = opened
+                attempt["verbose_entry"] = opened
+                if not opened:
+                    attempt["outcome"] = "entry-missing"
+                    self.save_level_attempt(attempt_index, tree, attempt)
+                    last_reason = "the level list never rendered a VERBOSE entry"
+                    continue
+                center = find_center(tree, P806_TALKBACK_LEVEL)
+                if center is None:
+                    attempt["outcome"] = "no-entry-centre"
+                    self.save_level_attempt(attempt_index, tree, attempt)
+                    last_reason = "the VERBOSE entry has no tappable centre"
+                    continue
+                self.save_level_attempt(attempt_index, tree, attempt)
+                self.adb("shell", "input", "tap", str(center[0]), str(center[1]))
+                steps.append(f"attempt {attempt_index}: select the literal VERBOSE entry")
+                time.sleep(2)
+                # The list change raises a confirmation dialog; its positive button is the
+                # framework's `android:id/button1`, and the changed summary is the proof it
+                # persisted.
+                deadline = time.monotonic() + 20
+                confirmed = False
+                while time.monotonic() < deadline:
+                    tree = self.dump("talkback-prefs-confirm")
+                    button = find_resource_center(tree, "android:id/button1")
+                    if button is not None:
+                        self.adb("shell", "input", "tap", str(button[0]), str(button[1]))
+                        confirmed = True
+                        steps.append(
+                            f"attempt {attempt_index}: confirm the framework dialog's positive button"
+                        )
+                        break
+                    if talkback_level_summary_value(tree) == P806_TALKBACK_LEVEL:
+                        confirmed = True
+                        steps.append(
+                            f"attempt {attempt_index}: the dialog closed with the level already applied"
+                        )
+                        break
+                    time.sleep(1)
+                if not confirmed:
+                    attempt["outcome"] = "unconfirmed"
+                    last_reason = "the level change showed no confirmation dialog and no new summary"
+                    continue
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    tree = self.dump("talkback-prefs-after")
+                    if talkback_level_summary_value(tree) == P806_TALKBACK_LEVEL:
+                        attempt["outcome"] = "success"
+                        record.update(
+                            status="success",
+                            value=P806_TALKBACK_LEVEL,
+                            reason="summary shows VERBOSE",
+                        )
+                        # The level list's own frame stays on disk (it is the proof the tree carried
+                        # a VERBOSE entry); only the decided outcome is added beside it.
+                        self.save_level_facts(attempt_index, attempt)
+                        return record
+                    time.sleep(1)
+                attempt["outcome"] = "summary-not-updated"
+                last_reason = "the developer screen's summary never rendered VERBOSE"
+            raise SampleError(
+                f"{last_reason} after {TALKBACK_LEVEL_ATTEMPTS} attempts ("
+                + "; ".join(
+                    f"attempt {entry.get('attempt')}={entry.get('outcome')}"
+                    for entry in attempts
+                )
+                + "); see talkback-prefs-level-<attempt>.xml"
+            )
         except SampleError as error:
             record["reason"] = str(error)
             return record
@@ -2345,7 +2495,9 @@ class Sampler:
         bounded readiness wait (TalkBack must have spoken), the bounded notification-prompt settle
         (the prompt arrives after that announcement), and one bounded retry per target inside a
         named transient. None of them can rescue a window: each target's status is still the four
-        value verdict re-derived from the window that decided.
+        value verdict re-derived from the window that decided. Since r6 the settle is also the one
+        authority on the prompt: the enable-boundary clear is best effort, and a prompt that
+        outlives the settle's bound fails the screen here with the bound and the wait in its message.
         """
         artifact_name = f"talkback-{screen.stem}.txt"
         lines: list[str] = [f"# stem: {screen.stem}"]
@@ -2364,6 +2516,11 @@ class Sampler:
             )
             if enabled.get("status") != "success":
                 raise SampleError(str(enabled.get("reason") or "TalkBack could not be enabled"))
+            binding = enabled.get("notification_prompt_binding")
+            if isinstance(binding, dict) and not binding.get("closed", True):
+                # The enable-boundary clear is best effort (r6): it did not close the prompt, so the
+                # frame it left is named here and the settle below is what decides.
+                lines.append(f"# prompt-bind: closed=false artifact={binding.get('artifact')}")
             # T1: no command may reach the framework before TalkBack itself speaks. T2: the prompt
             # that follows that announcement is cleared here, in bounded rounds, and only then does
             # the first command go out — the old single clear sat before the announcement existed.
@@ -2378,6 +2535,23 @@ class Sampler:
                 f"# notification-prompt: clears={settled.get('clears')} quiet_after_round="
                 f"{settled_quiet if settled_quiet is not None else 'still-present'}"
             )
+            if settled_quiet is None:
+                # The settle's own observation is the authority (r6 T1): the prompt outlived every
+                # round, so no command is driven into a window it steals. The message names the
+                # bound and the growing wait, because that is what distinguishes this red from the
+                # old single-gesture failure.
+                waits = ", ".join(
+                    f"{NOTIFICATION_DIALOG_SETTLE_INTERVAL_S * round_index:g} s"
+                    for round_index in range(1, NOTIFICATION_DIALOG_SETTLE_ROUNDS)
+                )
+                settle_artifact = settled.get("artifact") or f"notification-dialog-{screen.stem}.txt"
+                raise SampleError(
+                    "the Accessibility Suite notification prompt was still present after "
+                    f"{NOTIFICATION_DIALOG_SETTLE_ROUNDS} rounds (waits {waits}, "
+                    f"{NOTIFICATION_DIALOG_QUIET_READS} consecutive quiet reads required): "
+                    f"{settled.get('reason') or 'the last round did not close it'}; see "
+                    f"{settle_artifact}"
+                )
             polls = ready.get("polls")
             readiness_delayed = isinstance(polls, int) and polls > 1
             for index, check in enumerate(screen.speech):
@@ -2733,22 +2907,36 @@ class Sampler:
         re-reads the panel; a round that finds it denies it through the existing exact-dialog guard,
         and the loop ends after NOTIFICATION_DIALOG_QUIET_READS consecutive reads render none —
         bounded at NOTIFICATION_DIALOG_SETTLE_ROUNDS, with the wait growing every round. A prompt
-        that keeps returning is recorded as `quiet_after_round=still-present` rather than raised
-        here: the per-target verdict still fails closed on any window it steals.
+        that outlives one round's three gestures is not fatal on its own (r6): the round is recorded
+        as `still-present` and the next round re-reads and retries after a longer wait, so the pass
+        pays for the whole bound instead of dying on one gesture miss. Only a prompt that outlives
+        every round is reported as `quiet_after_round=still-present`, and the screen's driver turns
+        that into the pass's own red.
         """
         artifact_name = f"notification-dialog-{stem}.txt"
-        rounds: list[tuple[int, bool]] = []
+        rounds: list[tuple[int, str]] = []
         clears = 0
         quiet = 0
         quiet_after: int | None = None
+        last_reason = ""
         for round_index in range(1, NOTIFICATION_DIALOG_SETTLE_ROUNDS + 1):
-            seen = self.handle_notification_permission_dialog()
-            rounds.append((round_index, seen))
-            if seen:
-                clears += 1
-                quiet = 0
-            else:
+            state = "false"
+            try:
+                if self.handle_notification_permission_dialog():
+                    state = "true"
+            except SampleError as error:
+                # The prompt is still on screen and this round's gestures could not close it. That
+                # is an observation, not a verdict: the gesture record stays on disk from the
+                # guard itself, and the next round reads the panel again.
+                state = "still-present"
+                last_reason = str(error)
+            rounds.append((round_index, state))
+            if state == "false":
                 quiet += 1
+            else:
+                quiet = 0
+                if state == "true":
+                    clears += 1
             if quiet >= NOTIFICATION_DIALOG_QUIET_READS:
                 quiet_after = round_index
                 break
@@ -2764,9 +2952,7 @@ class Sampler:
             f"rounds={NOTIFICATION_DIALOG_SETTLE_ROUNDS} "
             f"quiet_required={NOTIFICATION_DIALOG_QUIET_READS}",
         ]
-        lines.extend(
-            f"round={index} prompt={'true' if seen else 'false'}" for index, seen in rounds
-        )
+        lines.extend(f"round={index} prompt={state}" for index, state in rounds)
         (self.evidence / artifact_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
         return {
             "clears": clears,
@@ -2774,6 +2960,7 @@ class Sampler:
             "quiet_after_round": quiet_after,
             "rounds": len(rounds),
             "artifact": artifact_name,
+            "reason": last_reason,
         }
 
     def save_tree(self, stem: str, tree: str) -> None:
