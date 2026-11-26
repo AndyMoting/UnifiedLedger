@@ -34,10 +34,12 @@ HOW THE TWO SUBCOMMANDS SPLIT
 -----------------------------
 `run` owns every device interaction (single-owner AVD assertion, force-stop, both APK installs with
 their hashes, the log clear AFTER the installs, the one `am instrument -w -r -e class` call, the
-post-run log export, the raw transcript and the pinned configuration) and writes `host.json`.
-`gate` never trusts the driver's verdict: it re-reads the transcript, the logcat and the installed
-APK files from disk and re-applies every bound. It also refuses a session whose OWN status is not
-PASS (one-way trust).
+post-run log export, the raw transcript and the pinned configuration) and writes `host.json`. It
+starts only into a directory that holds no earlier session's artifact — a file left behind by an
+earlier run of the same commit would otherwise be read as this one's; the workflow's own
+`host-apks.txt` is the single exception, because the gate never reads it. `gate` never trusts the
+driver's verdict: it re-reads the transcript, the logcat and the installed APK files from disk and
+re-applies every bound. It also refuses a session whose OWN status is not PASS (one-way trust).
 
 THE READING LINE IS THE WHOLE EVIDENCE
 --------------------------------------
@@ -116,6 +118,7 @@ REQUIRED_READING_KEYS = (
     "fixture",
     "condition",
     "sampleIntervalMs",
+    "firstSampleAfterSubmitMs",
     "samples",
     "settleSamples",
     "renderFirstPageMs",
@@ -131,6 +134,13 @@ STDERR_FILE = "instrumentation-stderr.txt"
 LOGCAT_FILE = "logcat.txt"
 CONFIG_FILE = "configuration.txt"
 GATE_FILE = "gate.json"
+
+# The one entry a session may find already in the evidence directory: the workflow's own pre-step
+# records the hashes of the pair it is about to build and install, BEFORE the session starts
+# (`.github/workflows/android-p802-v8.yml`, the "Record the APK hashes this run installs" step). The
+# gate never reads it, so it can never stand in for a reading; every other existing entry is a
+# leftover of an earlier session and is refused below.
+PREEXISTING_EVIDENCE = ("host-apks.txt",)
 
 
 class V8Error(Exception):
@@ -243,6 +253,25 @@ def _positive_int(fields: dict[str, str], key: str, reasons: list[str]) -> int |
     return value
 
 
+def _non_negative_number(fields: dict[str, str], key: str, reasons: list[str]) -> float | None:
+    """A finite, non-negative measurement; a missing key is the caller's own required-key check."""
+    raw = fields.get(key)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        reasons.append(f"{key} is {raw!r}, not a number")
+        return None
+    if not math.isfinite(value):
+        reasons.append(f"{key} is {raw!r}, not a finite number")
+        return None
+    if value < 0:
+        reasons.append(f"{key} is {value}, not a non-negative overhead")
+        return None
+    return value
+
+
 def judge_reading(reading: dict[str, str], app_apk_sha256: str) -> list[str]:
     """Every reason this reading is NOT the design's V-8 terminal; an empty list is PASS.
 
@@ -270,6 +299,9 @@ def judge_reading(reading: dict[str, str], app_apk_sha256: str) -> list[str]:
         reasons.append(f"the fixed group's total is {total}, not the manifest's {EXPECTED_TOTAL_COUNT}")
     _positive_int(reading, "schema", reasons)
     _positive_int(reading, "sampleIntervalMs", reasons)
+    # The measured submit-to-first-sample overhead: the reading's resolution is the interval PLUS
+    # this, so a reading that cannot state it cannot state its own resolution.
+    _non_negative_number(reading, "firstSampleAfterSubmitMs", reasons)
 
     settle = _positive_int(reading, "settleSamples", reasons)
     samples = _positive_int(reading, "samples", reasons)
@@ -505,6 +537,22 @@ def _write(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 
+def require_empty_evidence(evidence: Path) -> None:
+    """Start in a directory that holds nothing of a previous session: a leftover is never this run's.
+
+    A re-used directory is the one way a stale `logcat.txt` (or `host.json`) from an earlier run of
+    the SAME commit can reach the gate, so the session refuses rather than overwriting a file it did
+    not write. Only [PREEXISTING_EVIDENCE] may already be there.
+    """
+    leftovers = sorted(path.name for path in evidence.iterdir() if path.name not in PREEXISTING_EVIDENCE)
+    if leftovers:
+        raise V8Error(
+            "the evidence directory holds stale evidence when a session starts "
+            f"({', '.join(leftovers[:5])}): a leftover of an earlier run would be read as this "
+            "session's own artifacts, so the directory must start empty"
+        )
+
+
 def run_session(
     app: Path,
     test: Path,
@@ -519,6 +567,7 @@ def run_session(
     require_sha(sha)
     budget = Deadline(None) if deadline is None else deadline
     evidence.mkdir(parents=True, exist_ok=True)
+    require_empty_evidence(evidence)
     started_at = _now()
     if device_factory is None:
         serial = owned_serial(_adb_devices(budget))

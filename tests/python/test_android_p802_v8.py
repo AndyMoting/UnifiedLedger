@@ -96,6 +96,7 @@ READING_FIELDS = {
     "windowEnd": "2026-11-26T02:00:01Z",
     "sampleIntervalMs": "50",
     "samples": "37",
+    "firstSampleAfterSubmitMs": "213.5",
     "settleSamples": str(SETTLE_SAMPLES),
     "renderFirstPageMs": "812.4",
     "pageRows": str(EXPECTED_PAGE_ROWS),
@@ -215,6 +216,15 @@ class ReadingBounds(unittest.TestCase):
     def test_the_sampling_interval_must_be_a_positive_integer(self) -> None:
         for value in ("0", "-50", "fifty", "50.5"):
             self.assertIn("sampleIntervalMs", " ".join(self.reasons(reading(sampleIntervalMs=value))), value)
+
+    def test_the_submit_to_first_sample_overhead_is_a_finite_non_negative_number(self) -> None:
+        # The reading's resolution is the interval PLUS this overhead, so an unusable value is red.
+        for value in ("-1", "-0.4", "nan", "inf", "-inf", "uneven", ""):
+            reasons = " ".join(self.reasons(reading(firstSampleAfterSubmitMs=value)))
+            self.assertTrue(reasons, value)
+            self.assertIn("firstSampleAfterSubmitMs", reasons, value)
+        self.assertEqual([], self.reasons(reading(firstSampleAfterSubmitMs="0")))
+        self.assertEqual([], self.reasons(reading(firstSampleAfterSubmitMs="912.5")))
 
     def test_the_reading_is_bound_to_the_installed_app_apk(self) -> None:
         self.assertIn("not the installed app APK", " ".join(self.reasons(reading(apk="c" * 64))))
@@ -460,6 +470,29 @@ class Session(unittest.TestCase):
         self.assertEqual("PASS", payload["status"])
         self.assertEqual("V8Error: clear refused", payload["logcat_clear_error"])
 
+    def test_a_reused_evidence_directory_is_refused_as_stale_evidence(self) -> None:
+        # A leftover logcat from an earlier run of the SAME commit could be read as this run's, so
+        # the session refuses the directory before it touches the device or overwrites anything.
+        device = FakeDevice(app_sha=self.app_sha)
+        self.evidence.mkdir(parents=True)
+        stale = self.evidence / LOGCAT_FILE
+        stale.write_text("11-26 10:05:58.000 I/UnifiedLedger( 1234): P802-V8R fixture=61000\n")
+        with self.assertRaises(V8Error) as caught:
+            run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
+        self.assertIn("stale evidence", str(caught.exception))
+        self.assertEqual([], device.calls)
+        self.assertIn("P802-V8R", stale.read_text())
+
+    def test_the_workflows_own_apk_hash_file_is_not_stale_evidence(self) -> None:
+        # The workflow records the APK hashes into the evidence directory BEFORE the session runs
+        # (its "Record the APK hashes this run installs" step). The gate never reads that file, so it
+        # is the one entry a session may find already there.
+        device = FakeDevice(app_sha=self.app_sha)
+        self.evidence.mkdir(parents=True)
+        (self.evidence / "host-apks.txt").write_text(f"{self.app_sha}  app.apk\n")
+        payload = run_session(self.app, self.test, self.evidence, SHA, device_factory=lambda _budget: device)
+        self.assertEqual("PASS", payload["status"])
+
 
 class Gating(unittest.TestCase):
     def setUp(self) -> None:
@@ -507,6 +540,30 @@ class Gating(unittest.TestCase):
         verdict = gate_evidence(self.evidence, SHA, self.app, self.test)
         self.assertEqual("FAIL", verdict["verdict"])
         self.assertIn("hashes to", " ".join(verdict["reasons"]))
+
+    def test_a_test_apk_swapped_on_disk_fails_the_gate(self) -> None:
+        # The second APK has its own recompute branch: swapping only the test APK must be red too.
+        self.session()
+        self.test.write_bytes(b"another test build")
+        verdict = gate_evidence(self.evidence, SHA, self.app, self.test)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertIn("the test APK on disk hashes to", " ".join(verdict["reasons"]))
+
+    def test_a_missing_logcat_fails_the_gate(self) -> None:
+        # The reading line is re-derived from logcat.txt: without the file there is nothing to read.
+        self.session()
+        (self.evidence / LOGCAT_FILE).unlink()
+        verdict = gate_evidence(self.evidence, SHA, self.app, self.test)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertIn("wrote no logcat.txt", " ".join(verdict["reasons"]))
+
+    def test_a_missing_configuration_fails_the_gate(self) -> None:
+        # The pinned API/AVD come from configuration.txt; its absence is a named reason, not a skip.
+        self.session()
+        (self.evidence / CONFIG_FILE).unlink()
+        verdict = gate_evidence(self.evidence, SHA, self.app, self.test)
+        self.assertEqual("FAIL", verdict["verdict"])
+        self.assertIn("wrote no configuration.txt", " ".join(verdict["reasons"]))
 
     def test_a_self_reported_failure_is_never_re_judged_green(self) -> None:
         self.session()
@@ -591,10 +648,33 @@ class Contract(unittest.TestCase):
             / "P802V8RenderDeviceSupport.kt"
         ).read_text()
 
-    def test_the_case_emits_every_field_the_rig_requires(self) -> None:
+    def emit_function_body(self) -> str:
+        """The body of `p802V8EmitReadingLine` alone: the ONE place the reading line is built."""
         source = self.case_source()
+        start = source.index("internal fun p802V8EmitReadingLine(")
+        opening = source.index("{", start)
+        depth = 0
+        for index in range(opening, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[opening : index + 1]
+        raise AssertionError("the reading-line builder has unbalanced braces")
+
+    def test_the_case_emits_every_field_the_rig_requires(self) -> None:
+        # The check reads the reading-line builder ONLY: a field that survives in a diagnostic line
+        # elsewhere in the file must not keep this green.
+        body = self.emit_function_body()
         for key in REQUIRED_READING_KEYS:
-            self.assertIn(f"{key}=", source, key)
+            self.assertIn(f"{key}=", body, key)
+
+    def test_the_field_check_reads_the_reading_line_builder_only(self) -> None:
+        body = self.emit_function_body()
+        self.assertIn("${P802V8RenderFacts.READING_PREFIX} fixture=", body)
+        self.assertNotIn("DIAGNOSTIC_PREFIX", body)
+        self.assertIn("return line", body)
 
     def test_the_case_carries_the_frozen_constants(self) -> None:
         source = self.case_source()

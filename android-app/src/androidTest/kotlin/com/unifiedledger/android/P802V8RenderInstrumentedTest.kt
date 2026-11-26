@@ -23,8 +23,15 @@ import org.junit.runner.RunWith
  * THE TERMINAL. Completion is the FIRST sample whose cropped, downscaled result-region grid equals the
  * FINAL settled grid, minus the submit action's dispatch instant. The final grid is the first run of
  * [P802V8RenderFacts.SETTLE_SAMPLES] mutually equal samples that also differs from the pre-submit
- * frame, so a band that never changed can never be read as "rendered". The sampling interval is the
- * reading's time resolution, and the number is an UPPER BOUND.
+ * frame, so a band that never changed can never be read as "rendered". The sampling interval plus the
+ * measured submit-to-first-sample overhead ([P802V8Reading.firstSampleAfterSubmitMs]) is the reading's
+ * time resolution, and the number is an UPPER BOUND.
+ *
+ * WHAT ACCEPTS A SETTLED STATE. A settled pixel grid is not accepted on its own: at that instant the
+ * semantic tree must also show the result header at the frozen count, must not show the list face's
+ * static `正在搜索…` row, and must hold a result-list node inside the measured band, while the app window
+ * keeps the bounds the band was cut from. A tree that is not there yet only postpones acceptance (the
+ * loop keeps sampling); a band that holds no result-list node at all is a red.
  *
  * WHAT IS DELIBERATELY NOT THE TERMINAL: the search port's return time (the first-round baseline, and
  * `D-311` item 2 keeps it as a different endpoint), the accessibility tree's visibility (used only to
@@ -81,15 +88,21 @@ class P802V8RenderInstrumentedTest {
         surface.prepareSubmit()
 
         // ---------------------------------------------------------------- L3: the pixel terminal
-        val band = p802V8ResultBand(surface.windowBounds())
+        // The band is cut from the window ONCE, before the submit, and its bounds are recorded so the
+        // accept-time gate can prove the window never moved under it.
+        val window = surface.windowBounds()
+        val band = p802V8ResultBand(window)
         val sampler = P802V8PixelSampler(instrumentation.uiAutomation, band)
         val baseline = checkNotNull(sampler.sample()) { "the pre-submit frame must be captured: $band" }
-        log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} band=$band baselineCaptured=true")
+        log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} band=$band window=$window baselineCaptured=true")
         val submitNanos = surface.submitDispatchNanos()
 
         val samples = mutableListOf<IntArray>()
         val sampleNanos = mutableListOf<Long>()
         var settledIndex = -1
+        var settledView: P802V8ResultView? = null
+        var pendingProbe: String? = null
+        var nextProbeNanos = 0L
         val deadline = SystemClock.elapsedRealtime() + P802V8RenderFacts.SETTLE_TIMEOUT_MILLIS
         while (SystemClock.elapsedRealtime() < deadline && samples.size < P802V8RenderFacts.MAX_SAMPLES) {
             val sample =
@@ -102,15 +115,41 @@ class P802V8RenderInstrumentedTest {
             // A settled state that still equals the pre-submit frame is the untouched condition area,
             // not a rendered result list: it is rejected and sampling continues.
             if (candidate != null && !p802V8SameState(samples[candidate], baseline)) {
-                settledIndex = candidate
-                break
+                // The tree is read HERE and nowhere else: this is the instant the reading would be
+                // accepted, and a tree read inside the 50 ms sampling path would destroy the cadence.
+                if (System.nanoTime() >= nextProbeNanos) {
+                    nextProbeNanos = System.nanoTime() + P802V8RenderFacts.TREE_PROBE_INTERVAL_NANOS
+                    val accepted = surface.confirmResultView(window, band)
+                    if (accepted != null) {
+                        settledIndex = candidate
+                        settledView = accepted
+                        break
+                    }
+                    pendingProbe = "the tree did not show the rendered result list yet"
+                }
             }
             SystemClock.sleep(P802V8RenderFacts.SAMPLE_INTERVAL_MILLIS.toLong())
         }
         assertTrue(
             "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} the result band never settled: samples=${samples.size} " +
-                "settleWindow=${P802V8RenderFacts.SETTLE_SAMPLES} band=$band",
+                "settleWindow=${P802V8RenderFacts.SETTLE_SAMPLES} band=$band window=$window " +
+                "lastProbe=${pendingProbe ?: "no candidate settled state"}",
             settledIndex >= 0,
+        )
+        val view = checkNotNull(settledView) { "the accepted settled state must carry its tree facts" }
+        assertEquals(
+            "the settled state is only accepted once the result header renders the fixed group's manifest",
+            P802V8RenderFacts.EXPECTED_TOTAL_COUNT.toLong(),
+            view.renderedTotal,
+        )
+        assertEquals(
+            "the rendered total at the accept instant must equal the port's total for the same file",
+            seeded.totalCount,
+            view.renderedTotal,
+        )
+        log(
+            "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} accept renderedTotal=${view.renderedTotal} " +
+                "rowBounds=${view.rowBounds} band=$band window=$window",
         )
         val finalState = samples[settledIndex]
         val completedIndex = samples.indexOfFirst { sample -> p802V8SameState(sample, finalState) }
@@ -124,15 +163,19 @@ class P802V8RenderInstrumentedTest {
             !p802V8SameState(finalState, baseline),
         )
         val renderFirstPageMs = (sampleNanos[completedIndex] - submitNanos) / 1_000_000.0
+        // The fixed submit-to-first-sample overhead: the reading's resolution is the sampling
+        // interval PLUS this, which is why the reading line carries it.
+        val firstSampleAfterSubmitMs = (sampleNanos.first() - submitNanos) / 1_000_000.0
         log(
             "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} terminal samples=${samples.size} settledIndex=$settledIndex " +
-                "completedIndex=$completedIndex renderFirstPageMs=$renderFirstPageMs",
+                "completedIndex=$completedIndex renderFirstPageMs=$renderFirstPageMs " +
+                "firstSampleAfterSubmitMs=$firstSampleAfterSubmitMs",
         )
 
         // ---------------------------------------------------------------- L4: the validity guard
-        // The tree answers one question only: is the settled region the RESULT LIST, and does it render
-        // the frozen count? It never times anything (design section 1.4: a semantic tree is not a render
-        // endpoint).
+        // The tree answers one question here: does the settled surface still render the frozen count?
+        // It never times anything (design section 1.4: a semantic tree is not a render endpoint), and
+        // it is not what accepted the settle — [P802V8ResultSurface.confirmResultView] did that.
         val renderedTotal =
             checkNotNull(surface.renderedTotal()) {
                 "the result surface must render its header after the settle; the pixel reading needs the list face"
@@ -157,6 +200,7 @@ class P802V8RenderInstrumentedTest {
                     windowStartInclusive = seeded.windowStartInclusive,
                     windowEndExclusive = seeded.windowEndExclusive,
                     sampleIntervalMillis = P802V8RenderFacts.SAMPLE_INTERVAL_MILLIS,
+                    firstSampleAfterSubmitMs = firstSampleAfterSubmitMs,
                     samples = samples.size,
                     settleSamples = P802V8RenderFacts.SETTLE_SAMPLES,
                     renderFirstPageMs = renderFirstPageMs,

@@ -14,6 +14,7 @@ import com.unifiedledger.application.SearchCondition
 import com.unifiedledger.application.SearchPage
 import com.unifiedledger.application.SearchReadResult
 import com.unifiedledger.application.SearchTimeWindow
+import com.unifiedledger.data.createAndroidLedgerDatabase
 import com.unifiedledger.domain.LedgerId
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.TagId
@@ -33,11 +34,15 @@ import kotlin.time.Instant
  * WHAT THE TERMINAL IS. 「首屏渲染完成」 is measured IN PROCESS: after the submit action the case
  * samples `UiAutomation.takeScreenshot()` at a fixed interval, crops the result region, downscales it
  * and compares the pixel grid. The completion instant is the FIRST sample whose grid equals the
- * finally settled grid, minus the submit action's dispatch instant; the sampling interval is the
- * reading's time resolution. A port return, the accessibility tree and `gfxinfo`/framestats are all
+ * finally settled grid, minus the submit action's dispatch instant; the reading's time resolution is
+ * the sampling interval PLUS the measured submit-to-first-sample overhead (`firstSampleAfterSubmitMs`
+ * on the reading line). A port return, the accessibility tree and `gfxinfo`/framestats are all
  * explicitly NOT the terminal (stage-acceptance design section 1.4 and 3.3; `D-311` item 2; the
  * `D-166` framestats limits) — the tree is used only to VALIDATE that the measured region is the
- * result surface, never to time it.
+ * result surface, never to time it. That validation happens at the ONE instant a settled pixel state
+ * is accepted: the tree must then show the result header at the frozen count, must not show the list
+ * face's static loading copy, and must place a result-list node inside the measured band, while the
+ * app window keeps the bounds the band was cut from.
  *
  * NO THRESHOLD. The reading is an upper bound and is recorded, never judged for speed (P8-02 spec
  * section 5 V-8 with D2=A; stage-acceptance design section 3.3 「沿用原判据，不新增耗时阈值」).
@@ -56,7 +61,11 @@ internal object P802V8RenderFacts {
     /** The frozen condition-group label, so this reading is comparable with the first-round one. */
     const val CONDITION_LABEL = "fixed-note+tag+merchant0"
 
-    /** The sampling interval of the pixel terminal; the reading's time resolution. */
+    /**
+     * The sampling interval of the pixel terminal. The reading's time resolution is this interval
+     * PLUS the fixed submit-to-first-sample overhead the reading line carries as
+     * `firstSampleAfterSubmitMs`, never this interval on its own.
+     */
     const val SAMPLE_INTERVAL_MILLIS = 50
 
     /** Consecutive equal samples that define the FINAL settled state (the case freezes this). */
@@ -76,6 +85,14 @@ internal object P802V8RenderFacts {
 
     /** The case's own bound on the settle loop; a band that never settles fails loudly instead. */
     const val SETTLE_TIMEOUT_MILLIS = 20_000L
+
+    /**
+     * The minimum spacing between two accept-time semantic-tree probes, in nanoseconds.
+     *
+     * A tree observation costs a second-scale read, so it never runs inside the 50 ms sampling path:
+     * the case reads the tree only when a candidate settled state appears, and at most this often.
+     */
+    const val TREE_PROBE_INTERVAL_NANOS = 500_000_000L
 
     /**
      * The hard bound on the sample count: at most this many comparison grids are ever held (about
@@ -111,6 +128,13 @@ internal object P802V8RenderFacts {
 
     /** The rendered result header, so the case can prove the reading region is the result list. */
     const val RESULTS_HEADER = "搜索结果"
+
+    /**
+     * The list face's own static loading copy. Nothing about this row changes while the read runs, so
+     * a band holding only this row settles on its own; a settled state is never accepted while it is
+     * on screen.
+     */
+    const val LOADING_TEXT = "正在搜索…"
 }
 
 /**
@@ -534,7 +558,14 @@ internal fun p802V8ApkSha256(context: Context): String {
     return digest.digest().joinToString("") { byte -> String.format(Locale.ROOT, "%02x", byte) }
 }
 
-/** The band of a window the result list occupies once the condition area is out of the way. */
+/**
+ * The band of a window the result list occupies once the condition area is out of the way.
+ *
+ * The cut is purely geometric — the window's lower [P802V8RenderFacts.RESULT_BAND_PERCENT] percent —
+ * and its lower edge is the WINDOW's bottom, never the display's, so an inset or a second window can
+ * never extend the crop past the surface being measured. What makes the band a result region is the
+ * accept-time node check in [P802V8ResultSurface.confirmResultView], not this arithmetic.
+ */
 internal fun p802V8ResultBand(window: Rect): Rect {
     val height = window.height()
     check(height > 0) { "the app window must have a positive height, got $window" }
@@ -613,6 +644,18 @@ internal class P802V8PixelSampler(
         return pixels
     }
 }
+
+/**
+ * What the semantic tree proved at the instant a settled pixel state was accepted: the rendered
+ * result header's total, and the bounds of one result-list node that lies inside the measured band.
+ *
+ * [rowBounds] is the node the band was checked against, so "the measured region is the result list"
+ * is a comparison of two rects, not an assumption about a window percentage.
+ */
+internal data class P802V8ResultView(
+    val renderedTotal: Long,
+    val rowBounds: Rect,
+)
 
 /**
  * The searched surface's driver: the real app through the flow-1 driver's own launch/click/scroll
@@ -701,8 +744,8 @@ internal class P802V8ResultSurface(
 
     /**
      * The total the surface RENDERS in its result header (`搜索结果 · 共 N 笔`), or `null` when the list
-     * face has not rendered yet. This is a VALIDITY guard on the pixel reading — it proves the measured
-     * region is the result list — never the terminal.
+     * face has not rendered yet. This RE-READS the header after the settle so the reading line can be
+     * bound to the count it was measured with; the accept-time region proof is [confirmResultView].
      */
     fun renderedTotal(deadlineMillis: Long = P802V8RenderFacts.SETTLE_TIMEOUT_MILLIS): Long? {
         val deadline = SystemClock.elapsedRealtime() + deadlineMillis
@@ -717,6 +760,65 @@ internal class P802V8ResultSurface(
             SystemClock.sleep(P802V8RenderFacts.SAMPLE_INTERVAL_MILLIS.toLong())
         }
         return null
+    }
+
+    /**
+     * The accept-time tree gate: a settled pixel state is accepted only when the surface is, at that
+     * very instant, the rendered result list.
+     *
+     * ONE tree read answers three questions, and all three are needed:
+     * 1. the app window still has the bounds the band was cut from, so the band measures the same
+     *    window it was derived from (a window that re-laid out mid-reading would silently re-aim it);
+     * 2. the result header `搜索结果 · 共 436 笔` has rendered AND the list face's static `正在搜索…` row
+     *    is gone — the loading row does not animate, so a settled grid made of it alone would end the
+     *    reading early and quietly report a number that is too small;
+     * 3. at least one result-list node below that header lies inside the measured band, which turns
+     *    "the measured region is the result list" into an assertion about two rects.
+     *
+     * A surface that has not got there YET returns `null` and the caller keeps sampling. A band that
+     * holds no result-list node is a red instead: no later sample can make that true.
+     */
+    fun confirmResultView(
+        expectedWindow: Rect,
+        band: Rect,
+    ): P802V8ResultView? {
+        val window = windowBounds()
+        check(window == expectedWindow) {
+            "the app window moved during the reading: the band $band was cut from $expectedWindow, " +
+                "the window now reads $window"
+        }
+        val nodes = flow.appNodes()
+        val header = nodes.firstOrNull { node -> flow.textOf(node).startsWith(P802V8RenderFacts.RESULTS_HEADER) }
+        val loading = nodes.firstOrNull { node -> flow.textOf(node).contains(P802V8RenderFacts.LOADING_TEXT) }
+        if (header == null || loading != null) {
+            log(
+                "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} settled candidate pending: " +
+                    "header=${header?.let { node -> flow.textOf(node) }} " +
+                    "loading=[${loading?.let { node -> flow.textOf(node) }}]",
+            )
+            return null
+        }
+        val text = flow.textOf(header)
+        val total = RENDERED_TOTAL.find(text)?.groupValues?.get(1)?.toLongOrNull()
+        if (total == null) {
+            log("${P802V8RenderFacts.DIAGNOSTIC_PREFIX} settled candidate pending: header [$text] carries no total")
+            return null
+        }
+        val headerBounds = flow.bounds(header)
+        val belowHeader =
+            nodes
+                .map { node -> flow.bounds(node) }
+                .filter { rect -> rect.top >= headerBounds.bottom && rect.width() > 0 && rect.height() > 0 }
+        val row =
+            checkNotNull(belowHeader.firstOrNull { rect -> Rect.intersects(rect, band) }) {
+                "the measured band $band holds no result-list node below the header [$text]: " +
+                    "headerBounds=$headerBounds nearest=${belowHeader.minByOrNull { rect -> abs(rect.top - band.top) }}"
+            }
+        log(
+            "${P802V8RenderFacts.DIAGNOSTIC_PREFIX} settled view header=[$text] headerBounds=$headerBounds " +
+                "rowBounds=$row band=$band",
+        )
+        return P802V8ResultView(renderedTotal = total, rowBounds = row)
     }
 
     /** Checks the checkbox whose row carries [label] and reports whether the row's box is checked. */
@@ -767,12 +869,19 @@ internal class P802V8ResultSurface(
     }
 }
 
-/** Everything one V-8 reading line carries; [renderFirstPageMs] is the measured upper bound. */
+/**
+ * Everything one V-8 reading line carries; [renderFirstPageMs] is the measured upper bound.
+ *
+ * [firstSampleAfterSubmitMs] is the fixed overhead between the submit dispatch and the first sample:
+ * the resolution of [renderFirstPageMs] is [sampleIntervalMillis] plus that overhead, so the reading
+ * can never be read as if its only quantisation were the interval.
+ */
 internal data class P802V8Reading(
     val fixtureTransactions: Long,
     val windowStartInclusive: Instant,
     val windowEndExclusive: Instant,
     val sampleIntervalMillis: Int,
+    val firstSampleAfterSubmitMs: Double,
     val samples: Int,
     val settleSamples: Int,
     val renderFirstPageMs: Double,
@@ -798,6 +907,7 @@ internal fun p802V8EmitReadingLine(
             "condition=${P802V8RenderFacts.CONDITION_LABEL} " +
             "windowStart=${reading.windowStartInclusive} windowEnd=${reading.windowEndExclusive} " +
             "sampleIntervalMs=${reading.sampleIntervalMillis} samples=${reading.samples} " +
+            "firstSampleAfterSubmitMs=${String.format(Locale.ROOT, "%.1f", reading.firstSampleAfterSubmitMs)} " +
             "settleSamples=${reading.settleSamples} " +
             "renderFirstPageMs=${String.format(Locale.ROOT, "%.1f", reading.renderFirstPageMs)} " +
             "pageRows=${reading.pageRows} totalCount=${reading.totalCount} " +

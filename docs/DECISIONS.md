@@ -8180,7 +8180,7 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 
 **E1 固定候选。** 全部 P8 实施批（批 C、批 D、本批 E）落地后的 `main` 提交即**固定候选**；其身份至少记录提交 `sha`、两个 APK 的 `sha256` 与 AVD／API／分辨率／密度／字号。三条跨切片流程、Q3 的朗读补证、P8-04 V-7 与本条 V-8 的强制证据全部在该 SHA 上取得，历史读数不替代（`D-363` 与阶段验收设计 §1.1／§1.4／§6）。
 
-**E2 V-8 终点。** 「首屏渲染完成」= 提交动作之后，在**进程内**以固定间隔（`SAMPLE_INTERVAL_MILLIS`，本批取 50）对结果面采样 `UiAutomation.takeScreenshot()`，每次只保留结果列表区域的裁剪并缩放成比较网格，稳定态取连续 `SETTLE_SAMPLES`（本批取 3）次互相相等的采样，完成时刻取**首次与最终稳定态逐像素相等**的那一采样减提交动作时刻；采样间隔即该读数的时间分辨率，读数按**上界**表述。稳定态还必须与提交前的帧不同，否则「条件区没变」不会被读成「已渲染」。不设耗时阈值（阶段验收设计 §3.3「沿用原判据，不新增耗时阈值」）。
+**E2 V-8 终点。** 「首屏渲染完成」= 提交动作之后，在**进程内**以固定间隔（`SAMPLE_INTERVAL_MILLIS`，本批取 50）对结果面采样 `UiAutomation.takeScreenshot()`，每次只保留结果列表区域的裁剪并缩放成比较网格，稳定态取连续 `SETTLE_SAMPLES`（本批取 3）次互相相等的采样，完成时刻取**首次与最终稳定态逐像素相等**的那一采样减提交动作时刻；**该读数的分辨率 = 采样间隔 + 提交派发到首采样的固定开销**，后者由读数行 `firstSampleAfterSubmitMs` 记录，读数按**上界**表述。稳定态还必须与提交前的帧不同，否则「条件区没变」不会被读成「已渲染」。稳定态被**接受**还要求同一时刻的语义树满足：结果头 `搜索结果 · 共 N 笔` 已渲染且 N 等于夹具构造清单、列表面自带的静态 `正在搜索…` 不在屏上、结果头之下至少有一个结果列表节点的 bounds 与裁剪带相交、且应用窗口 bounds 与提交前相等；结果头未渲染、计数读不出或 `正在搜索…` 仍在屏上时继续采样，窗口 bounds 变了或裁剪带内没有任何结果行时判红。不设耗时阈值（阶段验收设计 §3.3「沿用原判据，不新增耗时阈值」）。
 
 **E3 V-8 载体。** 该终点由新建专用 rig 承载：自有 workflow、自有 AVD、一次 `am instrument` 只跑一条用例；用例类不进普通清单（登记在 `android_scale/inventory.py` 的 `EXCLUDED`），`61 例 / 17 类` 与两片划分不变。理由是样本只在「本进程首条用例」的前提下可写：用例必须先把 61,000 笔播种进应用自有稳定存储（重定向 context 的既有夹具对产品图不可见，普通 shard 的同进程前序用例又会拉起产品运行态），因此它需要独立进程与自己的一次派发。
 
@@ -8188,9 +8188,9 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 
 **E5 不新增阈值。** 两组读数只登记数值、夹具、环境与终点，不判快慢、不设通过门槛；任一读数缺失即该组证据不成立。
 
-**E6 无假绿。** 读数行缺失、重复、字段不全、区间不可判、采样为空或稳定态未达成，一律让 rig 的 gate 判红。gate 只从磁盘重算：转录（唯一一条用例、`OK (1 test)`、完成码 `-1`、退出码 0、无失败标记）、logcat 的**唯一**读数行（`fixture=61000`、`condition=fixed-note+tag+merchant0`、`renderFirstPageMs` 为有限正数、`samples >= settleSamples` 且 `settleSamples == 3`、`pageRows == 50`、`totalCount == 436`）、读数行的 `apk=` 与从磁盘重算的 app APK `sha256`、设备记录的 API 与 AVD 名。「未取到」不得当成通过。
+**E6 无假绿。** 读数行缺失、重复、字段不全、区间不可判、采样为空或稳定态未达成，一律让 rig 的 gate 判红。gate 只从磁盘重算：转录（唯一一条用例、`OK (1 test)`、完成码 `-1`、退出码 0、无失败标记）、logcat 的**唯一**读数行（`fixture=61000`、`condition=fixed-note+tag+merchant0`、`renderFirstPageMs` 为有限正数、`firstSampleAfterSubmitMs` 为有限非负数、`samples >= settleSamples` 且 `settleSamples == 3`、`pageRows == 50`、`totalCount == 436`）、读数行的 `apk=` 与从磁盘重算的 app APK `sha256`、设备记录的 API 与 AVD 名。「未取到」不得当成通过。会话还要求证据目录在开始时不含上一次会话的工件（唯一放行 workflow 预写的 `host-apks.txt`，gate 不读它），残留的旧三件套不会被读成本次读数。
 
-**证据模型。** 该终点是「像素相等 + 采样间隔上界」，与其他三类读数不可互换：搜索**端口的返回时间**是另一个终点（`D-311` 第 2 条把它登记为首轮唯一取得的读数），无障碍**语义树**只证明可达、并在本批里只用来确认被测区域确实是结果列表且渲染计数等于夹具构造清单，`gfxinfo`／framestats 在本仓的软件渲染器上返回不可换算值（`D-166` 系列）。因此 V-8 的两个终点各自登记，且不得相减或互相替代（阶段验收设计 §1.4）。
+**证据模型。** 该终点是「像素相等 + 采样间隔上界」，与其他三类读数不可互换：搜索**端口的返回时间**是另一个终点（`D-311` 第 2 条把它登记为首轮唯一取得的读数），无障碍**语义树**只证明可达、并在本批里只用来确认被测区域确实是结果列表且渲染计数等于夹具构造清单，`gfxinfo`／framestats 在本仓的软件渲染器上返回不可换算值（`D-166` 系列）。本批的「确实」是断言而非措辞：语义树只在接受稳定态的那一刻读一次，要求结果头已渲染且计数等于清单、静态 `正在搜索…` 不在屏上、结果头之下至少有一个结果列表节点的 bounds 与裁剪带相交、窗口 bounds 与提交前相等（E2）。读数的时间分辨率同理按「采样间隔 + 提交派发到首采样的固定开销」表述，不把间隔单独当分辨率。因此 V-8 的两个终点各自登记，且不得相减或互相替代（阶段验收设计 §1.4）。
 
 **边界。** 入 = 本条、新增的 `P802V8RenderInstrumentedTest.kt` 与 `P802V8RenderDeviceSupport.kt`、`tools/python/android_p802_v8.py` 与 `tools/ci/android-p802-v8.py`、`tests/python/test_android_p802_v8.py`、`.github/workflows/android-p802-v8.yml`、`tools/ci/python-shards.txt` 的一行、`android_scale/inventory.py` 的 `EXCLUDED` 一项、`docs/CONTRIBUTING.md` 的 rig 小节。出 = 产品代码／schema／迁移／DDL／既有测试期望／普通设备清单与分片／`docs/specs/**`、`docs/ROADMAP.md`／阶段验收结论／`tools/python/android_scale/instrumented.py` 的既有键／`.external`。本批新类不进普通清单，故既有用例与两片划分不变。
 
