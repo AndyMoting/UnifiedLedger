@@ -3475,5 +3475,75 @@ class PermissionDialogGesture(unittest.TestCase):
         )
 
 
+class ProbeVisibleCandidateChoice(unittest.TestCase):
+    """P8-07 Q3: the focus probe answers with the candidate the user can see.
+
+    Fixed candidate 482f1568 (run 45772177183, `profile=empty`) recorded `home status=success`,
+    `asset status=success` and `analysis status=not-obtained`. On the analysis leg the probe found a
+    node (`target id=4 found=true text="账本为空，还没有任何交易。"`) and the focus was refused
+    (`focus-result id=4 found=true accepted=false`) with no `Speaking fragment` inside that
+    command's own window.
+
+    That empty-ledger sentence has exactly two product render sites — `P503OverviewScreen.kt:183`
+    (home) and `P503TabShell.kt:516` (analysis) — so a needle match is not unique by construction,
+    and the probe used to take the first matching node in traversal order. It now chooses the
+    visible candidate, logs the candidate census, and never focuses a node that is off the current
+    screen.
+
+    Each test names the single edit that turns it red.
+    """
+
+    _ROOT = Path(__file__).resolve().parents[2]
+    _PROBE = (
+        Path("android-app")
+        / "src"
+        / "androidTest"
+        / "java"
+        / "com"
+        / "unifiedledger"
+        / "android"
+        / "A11yFocusProbeService.java"
+    )
+
+    def _source(self) -> str:
+        return (self._ROOT / self._PROBE).read_text(encoding="utf-8")
+
+    def _method_body(self, signature: str) -> str:
+        """One Java method body: from its signature to the first method-closing brace line."""
+        source = self._source()
+        start = source.index(signature)
+        return source[start : source.index("\n    }\n", start)]
+
+    def test_the_visibility_gate_reads_the_platform_flag(self) -> None:
+        """Turn it red: drop `isVisibleToUser()` from `visibleInWindow`."""
+        body = self._method_body("private static boolean visibleInWindow(")
+        self.assertIn("isVisibleToUser()", body)
+
+    def test_the_visibility_gate_tests_window_overlap(self) -> None:
+        """Turn it red: return `true` instead of the bounds intersection."""
+        body = self._method_body("private static boolean visibleInWindow(")
+        self.assertIn("getBoundsInScreen(bounds)", body)
+        self.assertIn("bounds.intersect(window)", body)
+
+    def test_the_census_is_logged_and_the_target_line_carries_its_bounds(self) -> None:
+        """Turn it red: log `found=true` alone, without the census or the chosen node's bounds."""
+        source = self._source()
+        self.assertIn('"candidates id="', source)
+        self.assertIn('" candidates="', source)
+        self.assertIn('" visible="', source)
+        self.assertIn('" chosen="', source)
+        self.assertIn("found=true visible=true bounds=", source)
+
+    def test_an_invisible_candidate_is_never_focused(self) -> None:
+        """Turn it red: focus whatever matched, without the `target == null` early return."""
+        body = self._method_body("private void runCommand(")
+        self.assertLess(body.index("visible=0"), body.index("ACTION_ACCESSIBILITY_FOCUS"))
+        self.assertEqual(1, body.count("ACTION_ACCESSIBILITY_FOCUS"))
+
+    def test_the_first_match_choice_is_gone(self) -> None:
+        """Turn it red: restore `target = node;` inside the needle loop."""
+        self.assertNotIn("target = node;", self._source())
+
+
 if __name__ == "__main__":
     unittest.main()

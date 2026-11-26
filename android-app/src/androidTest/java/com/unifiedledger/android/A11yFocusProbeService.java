@@ -316,22 +316,74 @@ public final class A11yFocusProbeService extends AccessibilityService {
             Log.i(TAG, "target id=" + id + " found=false root=null");
             return;
         }
-        AccessibilityNodeInfo target = null;
+        Rect window = new Rect();
+        root.getBoundsInScreen(window);
+        List<AccessibilityNodeInfo> candidates = new ArrayList<>();
         for (AccessibilityNodeInfo node : collect(root)) {
             if (contains(node.getText(), needle) || contains(node.getContentDescription(), needle)) {
-                target = node;
-                break;
+                candidates.add(node);
             }
         }
+        AccessibilityNodeInfo target = null;
+        Rect chosenBounds = new Rect();
+        int visible = 0;
+        StringBuilder seen = new StringBuilder();
+        for (AccessibilityNodeInfo candidate : candidates) {
+            Rect bounds = new Rect();
+            candidate.getBoundsInScreen(bounds);
+            boolean shown = visibleInWindow(candidate, window);
+            if (shown) {
+                visible++;
+                if (target == null) {
+                    target = candidate;
+                    chosenBounds = bounds;
+                }
+            }
+            if (seen.length() > 0) {
+                seen.append(" | ");
+            }
+            seen.append(bounds.toShortString()).append(" visible=").append(shown);
+        }
+        // The needle is ordinary copy, so more than one node can carry it — the empty-ledger line is
+        // the same sentence on two destinations — and only the node the user is looking at answers
+        // ACTION_ACCESSIBILITY_FOCUS. Choosing the first match in traversal order is what refused a
+        // focus on a node that was not on the screen under test; the visible candidate is chosen
+        // instead, and every candidate's bounds/visibility is logged so the next round can read
+        // which node answered.
+        Log.i(
+                TAG,
+                "candidates id="
+                        + id
+                        + " candidates="
+                        + candidates.size()
+                        + " visible="
+                        + visible
+                        + " chosen="
+                        + (target == null ? "none" : "visible")
+                        + " window="
+                        + window.toShortString()
+                        + " seen="
+                        + seen);
         if (target == null) {
-            Log.i(TAG, "target id=" + id + " found=false");
+            // Nothing focusable is on this screen. Report the refusal the host already knows how to
+            // read rather than focusing an off-screen twin: a twin's answer describes a different
+            // screen than the one under test.
+            Log.i(
+                    TAG,
+                    "target id="
+                            + id
+                            + " found=false candidates="
+                            + candidates.size()
+                            + " visible=0");
             return;
         }
         Log.i(
                 TAG,
                 "target id="
                         + id
-                        + " found=true text=\""
+                        + " found=true visible=true bounds="
+                        + chosenBounds.toShortString()
+                        + " text=\""
                         + trim(target.getText())
                         + "\" desc=\""
                         + trim(target.getContentDescription())
@@ -358,6 +410,30 @@ public final class A11yFocusProbeService extends AccessibilityService {
 
     private static boolean contains(CharSequence text, String needle) {
         return text != null && text.toString().contains(needle);
+    }
+
+    /**
+     * Whether [node] sits on the screen the user is actually looking at, which is what
+     * `ACTION_ACCESSIBILITY_FOCUS` requires: the platform's own visible-to-user flag
+     * (`isVisibleToUser`, API 16 `AccessibilityNodeInfo.isVisibleToUser()`) AND screen bounds that
+     * overlap the active window with a non-zero area (`getBoundsInScreen`, API 14;
+     * `Rect#intersect` is the area test, and it answers false for an empty rect). Both are read
+     * because either one alone can hold for a node that is still off the current screen: a sibling
+     * destination laid out beside it reports a non-empty rect outside the window, and a clipped or
+     * covered node keeps the flag.
+     */
+    private static boolean visibleInWindow(AccessibilityNodeInfo node, Rect window) {
+        if (!node.isVisibleToUser()) {
+            return false;
+        }
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        if (window.isEmpty()) {
+            // A root that reports no window rect cannot be a yardstick; the platform flag alone
+            // decides then, so such a window does not discard every candidate.
+            return true;
+        }
+        return bounds.intersect(window);
     }
 
     private List<AccessibilityNodeInfo> collect(AccessibilityNodeInfo root) {
