@@ -1269,8 +1269,7 @@ internal class P807Q2Flow3Ui(
     fun oneWayStepReport(): String = lastOneWayReport
 
     /** The day detail's own face: title, count line and day header (one definition, see [DAY_DETAIL_FACE]). */
-    private fun dayDetailShown(): Boolean =
-        hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE) && hasExactText(P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE) && hasPrefixText(P807Q2Flow3Facts.DAY_DETAIL_PREFIX)
+    private fun dayDetailShown(): Boolean = hasExactText(P807Q2Flow3Facts.DRILLDOWN_TITLE) && hasExactText(P807Q2Flow3Facts.DRILLDOWN_COUNT_ONE) && hasPrefixText(P807Q2Flow3Facts.DAY_DETAIL_PREFIX)
 
     /** The calendar's own face at [monthLabel]: its title AND its `YYYY年M月` header (never HOME's chip alone). */
     private fun calendarShownAt(monthLabel: String): Boolean = hasExactText(P807Q2Flow3Facts.CALENDAR_TITLE) && hasExactText(monthLabel)
