@@ -665,19 +665,52 @@ class Contract(unittest.TestCase):
         raise AssertionError("the reading-line builder has unbalanced braces")
 
     def function_body(self, name: str) -> str:
-        """The body of one Kotlin function in the case, brace-balanced from its first `{`."""
+        """The body of one Kotlin function in the case: a block body brace-balanced from its
+        opening `{`, or the expression after `=` when the function is an expression body."""
         source = self.case_source()
         start = source.index(f"fun {name}(")
-        opening = source.index("{", start)
+        # Skip the parameter list, then the return type, to the signature's `{` or `=`.
+        cursor = start + len(f"fun {name}(") - 1
         depth = 0
-        for index in range(opening, len(source)):
-            if source[index] == "{":
+        while cursor < len(source):
+            if source[cursor] == "(":
                 depth += 1
-            elif source[index] == "}":
+            elif source[cursor] == ")":
                 depth -= 1
                 if depth == 0:
-                    return source[opening : index + 1]
-        raise AssertionError(f"{name} has unbalanced braces")
+                    cursor += 1
+                    break
+            cursor += 1
+        while cursor < len(source) and source[cursor] not in "{=":
+            cursor += 1
+        if cursor >= len(source):
+            raise AssertionError(f"{name} has no body")
+        if source[cursor] == "{":
+            opening = cursor
+            depth = 0
+            for index in range(opening, len(source)):
+                if source[index] == "{":
+                    depth += 1
+                elif source[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return source[opening : index + 1]
+            raise AssertionError(f"{name} has unbalanced braces")
+        # Expression body: skip the line break after `=`, then stop at the first newline that is
+        # not inside the expression's own brackets.
+        opening = cursor + 1
+        while opening < len(source) and source[opening].isspace():
+            opening += 1
+        depth = 0
+        for index in range(opening, len(source)):
+            character = source[index]
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+            elif character == "\n" and depth == 0:
+                return source[opening:index].strip()
+        raise AssertionError(f"{name} has an unterminated expression body")
 
     def instrumented_test_source(self) -> str:
         return (
@@ -706,6 +739,24 @@ class Contract(unittest.TestCase):
         # The tag and the merchant are the same defect class: one implementation proves both.
         for name in ("toggleTag", "selectMerchant"):
             self.assertIn("checkVerified(", self.function_body(name), name)
+
+    def test_the_toggle_predicate_sees_selected_state_and_radio_rows(self) -> None:
+        # QJ-2: the merchant row is a Material3 RadioButton whose state is `selected`, not `checked`
+        # (`P503SearchScreen.kt:247`). Reverting `isToggle` to an `isCheckable`-only predicate drops
+        # both tokens below, so the row becomes invisible to `toggleNear`; this contract reds instead
+        # of waiting for a device round to explain a red.
+        body = self.function_body("isToggle")
+        self.assertIn("isSelected", body)
+        self.assertIn("RadioButton", body)
+
+    def test_the_merchant_effect_judges_the_selected_state(self) -> None:
+        # QJ-2: the same row reports `selected`, so an effect reverted to `node.isChecked` would wait
+        # out its whole poll and red on the device after a landed click. The effect is owned by
+        # `selectMerchant`, which hands it to `checkVerified`; dropping `isSelected` from that
+        # argument reds here.
+        body = self.function_body("selectMerchant")
+        self.assertIn("effect =", body)
+        self.assertIn("isSelected", body[body.index("effect =") :])
 
     def test_a_control_placement_judges_state_from_a_forced_current_tree(self) -> None:
         body = self.function_body("checkVerified")
