@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -3539,6 +3540,15 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     action mask and its clickable/scrollable flags (D2) so a refusal can be told apart from a mask
     that never offered the action. The four sources are mutually exclusive and each one is readable
     from the raw lines of its own window.
+
+    The r9 round closes the hole r8 left open: `moved = !startedOnTarget || cleared` reads a failed
+    first read as "the target was not focused", because `isCommandTarget` answers false for a null
+    node — so an unreadable start plus a read-back that hit a standing focus logged
+    `accepted=true source=focus-read` with nothing moved, which the wave-5 window (a target's
+    `Speaking fragment` appearing while the command did nothing) makes reachable. `moved` now also
+    requires the first read to have answered with a node, and the `focus-read` line carries that
+    read's `before=` reason so one line explains the verdict. The predicate is pinned by evaluating
+    it over the start states, so a rewrite cannot pass by keeping an equivalent-looking literal.
     """
 
     _ROOT = Path(__file__).resolve().parents[2]
@@ -3609,6 +3619,36 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
             for line in java.splitlines()
             if line.strip() and not line.strip().startswith(("//", "/*", "*"))
         )
+
+    def _moved(self, **start: object) -> object:
+        """Evaluate the service's OWN `moved` over one start state, re-deriving the locals it reads.
+
+        [start] carries the facts the command's first focus read produced: `current` (the node, or
+        None when that read answered nothing), `startedOnTarget` and `cleared`. Every other
+        `boolean <name> = <expression>;` the command declares is then evaluated in source order over
+        the facts already known, so `readAnswered` is taken from the service rather than restated
+        here: a rewrite of the predicate — or of a local it depends on — changes this answer instead
+        of passing because the test kept its own copy of the expression. A declaration this helper
+        cannot evaluate (a method call such as `isCommandTarget(...)`, an object method such as
+        `.equals(...)`) is skipped; every fact the truth table needs is supplied by the caller, and a
+        `moved` that cannot be evaluated answers None, which `assertIs` reports as the mismatch it
+        is.
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        scope: dict[str, object] = {"null": None, "true": True, "false": False, **start}
+        for name, expression in re.findall(r"boolean (\w+) = ([^;]+);", run):
+            if name in start:
+                continue
+            python = re.sub(
+                r"!(?!=)", " not ", expression.replace("&&", " and ").replace("||", " or ")
+            )
+            try:
+                scope[name] = eval(python, {"__builtins__": {}}, scope)  # own tracked source
+            except Exception:
+                # Only a method call such as `isCommandTarget(...)` or an object method such as
+                # `.equals(...)` gets here: nothing else the command declares is left unevaluated.
+                continue
+        return scope.get("moved")
 
     def test_the_visibility_gate_reads_the_platform_flag(self) -> None:
         """Turn it red: drop `isVisibleToUser()` from `visibleInWindow`."""
@@ -4163,19 +4203,21 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
 
         The post-action read is the third source: the action answered false, no matching event
         arrived, and the platform now reports this command's target. That read is evidence only when
-        THIS command moved the focus — the target did not already hold it, or this command's clear
-        took it away. `d5b24cbf` accepts it unconditionally, so a target that already held the focus
-        and refused the clear logs `accepted=true source=focus-read` with nothing moved. The
-        literals that disappear under a revert are `boolean startedOnTarget = isCommandTarget(current,
-        needle, chosenBounds);`, `if (startedOnTarget) {`, `boolean moved = !startedOnTarget ||
-        cleared;` and `&& moved` (0 -> 1 each).
+        THIS command moved the focus — the platform's first read answered and the target was not it,
+        or this command's clear took that focus away. `d5b24cbf` accepts it unconditionally, so a
+        target that already held the focus and refused the clear logs `accepted=true source=focus-read`
+        with nothing moved. The r8 form of the predicate (`moved = !startedOnTarget || cleared`) reds
+        here too: it is no longer the expression this line ships, and the r9 form is the one that also
+        demands the first read have a node. The literals that disappear under a revert are `boolean
+        startedOnTarget = isCommandTarget(current, needle, chosenBounds);`, `if (startedOnTarget) {`,
+        `boolean moved = (readAnswered && !startedOnTarget) || cleared;` and `&& moved` (0 -> 1 each).
         """
         run = self._code(self._method_body("private void runCommand("))
         self.assertIn(
             "boolean startedOnTarget = isCommandTarget(current, needle, chosenBounds);", run
         )
         self.assertIn("if (startedOnTarget) {", run)
-        self.assertIn("boolean moved = !startedOnTarget || cleared;", run)
+        self.assertIn("boolean moved = (readAnswered && !startedOnTarget) || cleared;", run)
         # The admission fact is decided before the request goes out: it cannot be read off the
         # read-back it is meant to judge.
         self.assertLess(run.index("boolean moved ="), run.index('"speech-window-begin id="'))
@@ -4194,22 +4236,55 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         """Turn it red: log the read-back without the facts that decided it.
 
         `focus-read ... found=true` alone cannot answer "why accepted": the r7 review had to
-        reconstruct that from a local variable the log never carried. The line now names
-        `startedOnTarget=` (did the platform hold this target when the command began), `cleared=`
-        (did this command's clear answer true) and `moved=` (`!startedOnTarget || cleared`), each a
-        single space-free token, so one line explains the verdict either way. The literals that
-        disappear under a revert are `" startedOnTarget="`, `" cleared="` and `" moved="`
-        (0 -> 1 each).
+        reconstruct that from a local variable the log never carried. The line now names `before=`
+        (the reason the FIRST read answered — `none`, `root-null` or `focus-none`, so an unreadable
+        start is visible where the verdict is explained), `startedOnTarget=` (did the platform hold
+        this target when the command began), `cleared=` (did this command's clear answer true) and
+        `moved=` (`(readAnswered && !startedOnTarget) || cleared`), each a single space-free token, so
+        one line explains the verdict either way. The literals that disappear under a revert are
+        `" before="`, `" startedOnTarget="`, `" cleared="` and `" moved="` (0 -> 1 each, counted
+        file-wide) plus `+ before.reason` counted on this line only (0 -> 1; the file's other
+        occurrence belongs to the `focus-before` line).
         """
         run = self._code(self._method_body("private void runCommand("))
         line = run[run.index('"focus-read id="') : run.index("if (isCommandTarget(readBack")]
-        for key in ('" startedOnTarget="', '" cleared="', '" moved="'):
+        for key in ('" before="', '" startedOnTarget="', '" cleared="', '" moved="'):
             self.assertIn(key, line)
+        self.assertIn("+ before.reason", line)
         self.assertIn("+ startedOnTarget", line)
         self.assertIn("+ cleared", line)
         self.assertIn("+ moved", line)
         # `moved` is not a free-standing claim: it is the very expression the guard tests.
-        self.assertIn("boolean moved = !startedOnTarget || cleared;", run)
+        self.assertIn("boolean moved = (readAnswered && !startedOnTarget) || cleared;", run)
+
+    def test_a_first_read_that_failed_never_counts_as_the_target_being_unfocused(self) -> None:
+        """Turn it red: read "the platform answered nothing" as "the target was not focused".
+
+        `527b46ab` derived the move test from the target alone (`moved = !startedOnTarget ||
+        cleared`), and `isCommandTarget` answers false for a null node, so a first read that failed
+        (`reason=root-null`, or `focus-none` with no node) produced `moved=true` exactly as a read
+        that answered "another node holds it" did. Wave 5 proved a `Speaking fragment` for the target
+        can sit inside a window this command did nothing in, so that path logs `accepted=true
+        source=focus-read` for a focus that never left the target: reading nothing is not evidence of
+        anything. The predicate now also requires the first read to have a node; this contract
+        EVALUATES it over the start states instead of restating it, and then requires that same
+        `moved` to gate the only `source = "focus-read"` assignment. The literals that disappear under
+        a `527b46ab` revert are `boolean readAnswered = current != null;` and `boolean moved =
+        (readAnswered && !startedOnTarget) || cleared;` (0 -> 1 each).
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        self.assertIn("boolean readAnswered = current != null;", run)
+        # The start states: the platform answered nothing; answered with this target (kept, then
+        # cleared); answered with another focus.
+        self.assertIs(False, self._moved(current=None, startedOnTarget=False, cleared=False))
+        self.assertIs(False, self._moved(current="node", startedOnTarget=True, cleared=False))
+        self.assertIs(True, self._moved(current="node", startedOnTarget=True, cleared=True))
+        self.assertIs(True, self._moved(current="node", startedOnTarget=False, cleared=False))
+        # "Not focused" is never inferred from "not read": the read is admitted only through
+        # `moved`, which is the only way into the single assignment that sets `source`.
+        condition_at = run.index("if (isCommandTarget(readBack")
+        self.assertIn("&& moved", run[condition_at : run.index("{", condition_at)])
+        self.assertEqual(1, run.count('source = "focus-read";'))
 
     def test_the_clear_and_the_request_bracket_the_speech_window_begin(self) -> None:
         """Turn it red: move the pre-read and its clear below `speech-window-begin`.

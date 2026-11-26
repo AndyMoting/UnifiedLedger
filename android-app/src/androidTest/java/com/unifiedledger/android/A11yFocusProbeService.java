@@ -745,11 +745,17 @@ public final class A11yFocusProbeService extends AccessibilityService {
             }
             Log.i(TAG, "focus-clear id=" + id + " answered=" + cleared);
         }
-        // The admission fact for [source] = "focus-read", NOT an observation: the focus was either
-        // not on the target when the command began, or the clear above took it away, so the request
-        // below starts from "not focused" and a read-back can only be the platform's record of a
-        // move this command asked for. Both false means nothing moved and no read may accept it.
-        boolean moved = !startedOnTarget || cleared;
+        // The admission fact for [source] = "focus-read", NOT an observation: this command moved the
+        // focus only when the platform ANSWERED the first read with a node the target was not, or
+        // when the clear above took that focus away — then the request below starts from "not
+        // focused" and a read-back can only be the platform's record of a move this command asked
+        // for. A read this service could not take is not the fact "the target was not focused":
+        // [startedOnTarget] is false both when the platform answered "not this node" and when it
+        // answered nothing at all, so the move test needs the read itself to have a node. Without
+        // one, a target that never stopped holding the focus still reads back as the target, and
+        // accepting that read would report a move this command never made.
+        boolean readAnswered = current != null;
+        boolean moved = (readAnswered && !startedOnTarget) || cleared;
         AccessibilityNodeInfo focus = focusTarget(target, id);
         Log.i(TAG, "speech-window-begin id=" + id);
         // The action's answer is measured, never assumed, and the count/time below are the boundary
@@ -796,6 +802,8 @@ public final class A11yFocusProbeService extends AccessibilityService {
                                                 + "\" desc64=\""
                                                 + encode(readBack.getContentDescription())
                                                 + "\"")
+                                + " before="
+                                + before.reason
                                 + " startedOnTarget="
                                 + startedOnTarget
                                 + " cleared="
