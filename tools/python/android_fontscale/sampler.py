@@ -662,6 +662,11 @@ _TALKBACK_FRAGMENT = re.compile(
 )
 _COMMAND_NEEDLE64 = re.compile(r"\bneedle64=([A-Za-z0-9+/=]+)")
 
+# The mask the probe logs when its accessibility service connects (D0 on the device side; kept in
+# the screen's window artifact since P8-07 r7 D4). Matched as a plain substring so the artifact
+# comment carries the whole original logcat line rather than a re-rendered subset of it.
+PROBE_SERVICE_INFO_MARKER = "service-info eventTypes="
+
 
 def notification_permission_dialog_identity(tree: str) -> bool:
     """True iff `tree` is the exact Accessibility Suite POST_NOTIFICATIONS grant dialog.
@@ -884,6 +889,26 @@ def probe_service_connected(log_text: str) -> bool:
         if match is not None and match.group(1).strip() == "service connected":
             return True
     return False
+
+
+def service_info_comment(log_text: str) -> str:
+    """The probe's connect-time `service-info` line as one artifact comment, or `absent`.
+
+    D4 keeps the mask this bind actually received next to the screen's own windows: without it a
+    `seen=0` transcript cannot separate "the event mask never reached this connection" from "the
+    platform posted no focus event", because the service XML states an intent rather than what the
+    framework handed the service. The LAST occurrence wins (a service can reconnect inside one
+    screen's capture), and the whole original line is kept verbatim so its hex values can be
+    compared with the platform's own bit constants without the host re-rendering them.
+
+    The `#` prefix is what keeps it out of every stage scan: `_ULA11Y_LINE` anchors on the logcat
+    brief column (`priority/TAG(pid):`), so a comment line can never be a stage or a fragment.
+    """
+    last = ""
+    for line in log_text.splitlines():
+        if PROBE_SERVICE_INFO_MARKER in line:
+            last = line
+    return f"# service-info: {last or 'absent'}"
 
 
 def accessibility_service_bound(bound_section: str, label: str, package: str) -> bool:
@@ -1876,6 +1901,11 @@ class Sampler:
     permission_dialog_gestures: tuple[str, ...] = ()
     # The image's exported preferences activity, discovered from its package dump.
     talkback_prefs_activity: str = P806_TALKBACK_PREFS_ACTIVITY
+    # The logcat read that carried the probe's own `service connected` acknowledgement for the
+    # current bind. `enable_talkback` clears the buffer just before binding, so this read IS the
+    # whole buffer of that connection — the one place the probe's `service-info` line exists — and a
+    # screen's window artifact keeps that line as a comment (P8-07 r7 D4).
+    probe_connection_log: str = ""
     # The Accessibility Suite notification-prompt guard: on for every TalkBack profile (p806, and
     # since P8-07 batch D the three screenshot profiles), so the prompt is cleared wherever the run
     # drives TalkBack.
@@ -2027,6 +2057,11 @@ class Sampler:
         and API 36 renders bound services as `Service[label=…]` without a guaranteed component, so
         the dumpsys is read alongside as raw context rather than accepted as connection. On a
         not-obtained verdict the last logcat tail and dumpsys are retained for diagnosis.
+
+        The read that proves the connection is kept on the instance (`probe_connection_log`): the
+        probe logs `service-info eventTypes=…` immediately before `service connected`, so this very
+        read already carries this bind's mask, and a screen's artifact can keep it without a second
+        device round-trip (P8-07 r7 D4).
         """
         deadline = time.monotonic() + timeout_s
         last_log = ""
@@ -2034,6 +2069,7 @@ class Sampler:
         while time.monotonic() < deadline:
             last_log = self.logcat_tail()
             if self._probe_connected(last_log):
+                self.probe_connection_log = last_log
                 return True
             last_dump = self.accessibility_dumpsys()
             time.sleep(1)
@@ -2526,9 +2562,22 @@ class Sampler:
         value verdict re-derived from the window that decided. Since r6 the settle is also the one
         authority on the prompt: the enable-boundary clear is best effort, and a prompt that
         outlives the settle's bound fails the screen here with the bound and the wait in its message.
+
+        Since r7 the header also keeps the probe's connect-time `service-info` line as a `#` comment
+        (D4), from the same logcat read that proved this bind, so a `seen=0` transcript can separate
+        a missing event mask from a platform that posted nothing. It is a comment and nothing else:
+        no stage, fragment or verdict reads it.
         """
         artifact_name = f"talkback-{screen.stem}.txt"
-        lines: list[str] = [f"# stem: {screen.stem}"]
+        # The `#` header lines stay their own block so D4's connect-time `service-info` comment can
+        # sit after them on EVERY outcome — including the failure paths, whose last header line is
+        # `# enable failed:`. A comment there can never be a stage: `_ULA11Y_LINE` anchors on the
+        # logcat brief column, so the window is derived from the probe's own lines only.
+        header: list[str] = [f"# stem: {screen.stem}"]
+        lines: list[str] = []
+        # The comment below must describe THIS screen's bind, never the previous screen's: a screen
+        # whose enable never reaches the probe keeps `absent` instead of borrowing an older mask.
+        self.probe_connection_log = ""
         enabled: dict[str, object] = {
             "status": "not-obtained",
             "reason": "",
@@ -2538,7 +2587,7 @@ class Sampler:
         driven: list[tuple[SpeechCheck, dict[str, object] | None, str]] = []
         try:
             enabled = self.enable_talkback(screen.stem)
-            lines.append(
+            header.append(
                 f"# enable: {enabled.get('status')} components={enabled.get('enabled_components')} "
                 f"bound={enabled.get('talkback_bound')} {enabled.get('reason', '')}".rstrip()
             )
@@ -2548,18 +2597,18 @@ class Sampler:
             if isinstance(binding, dict) and not binding.get("closed", True):
                 # The enable-boundary clear is best effort (r6): it did not close the prompt, so the
                 # frame it left is named here and the settle below is what decides.
-                lines.append(f"# prompt-bind: closed=false artifact={binding.get('artifact')}")
+                header.append(f"# prompt-bind: closed=false artifact={binding.get('artifact')}")
             # T1: no command may reach the framework before TalkBack itself speaks. T2: the prompt
             # that follows that announcement is cleared here, in bounded rounds, and only then does
             # the first command go out — the old single clear sat before the announcement existed.
             ready = self.wait_talkback_ready(screen.stem)
-            lines.append(
+            header.append(
                 f"# ready: waited={ready.get('waited_s')}s polls={ready.get('polls')} "
                 f"fragments={ready.get('fragments')}"
             )
             settled = self.settle_notification_permission_dialog(screen.stem)
             settled_quiet = settled.get("quiet_after_round")
-            lines.append(
+            header.append(
                 f"# notification-prompt: clears={settled.get('clears')} quiet_after_round="
                 f"{settled_quiet if settled_quiet is not None else 'still-present'}"
             )
@@ -2628,13 +2677,15 @@ class Sampler:
                 ),
                 "talkback_bound": bool(enabled.get("talkback_bound")),
             }
-            lines.append(f"# enable failed: {error}")
+            header.append(f"# enable failed: {error}")
         finally:
             self.disable_talkback_accessibility()
             self.wait_accessibility_disabled()
         for check in screen.speech[len(driven) :]:
             driven.append((check, None, ""))
-        artifact = "\n".join(lines) + "\n"
+        artifact = "\n".join(
+            header + [service_info_comment(self.probe_connection_log)] + lines
+        ) + "\n"
         (self.evidence / artifact_name).write_text(artifact, encoding="utf-8")
         checks = []
         for check, window, shot in driven:
