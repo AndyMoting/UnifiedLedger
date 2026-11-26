@@ -741,7 +741,7 @@ class Contract(unittest.TestCase):
             self.assertIn("checkVerified(", self.function_body(name), name)
 
     def test_the_toggle_predicate_sees_selected_state_and_radio_rows(self) -> None:
-        # QJ-2: the merchant row is a Material3 RadioButton whose state is `selected`, not `checked`
+        # the merchant row is a Material3 RadioButton whose state is `selected`, not `checked`
         # (`P503SearchScreen.kt:247`). Reverting `isToggle` to an `isCheckable`-only predicate drops
         # both tokens below, so the row becomes invisible to `toggleNear`; this contract reds instead
         # of waiting for a device round to explain a red.
@@ -750,7 +750,7 @@ class Contract(unittest.TestCase):
         self.assertIn("RadioButton", body)
 
     def test_the_merchant_effect_judges_the_selected_state(self) -> None:
-        # QJ-2: the same row reports `selected`, so an effect reverted to `node.isChecked` would wait
+        # the same row reports `selected`, so an effect reverted to `node.isChecked` would wait
         # out its whole poll and red on the device after a landed click. The effect is owned by
         # `selectMerchant`, which hands it to `checkVerified`; dropping `isSelected` from that
         # argument reds here.
