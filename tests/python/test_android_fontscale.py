@@ -3498,6 +3498,18 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     ancestor; the resolved node is the only receiver of the action and its own text is logged
     losslessly so the next round can read which sentence the ancestor speaks.
 
+    Candidate 4064dbfc (run 45783028573, `profile=empty`, analysis screen) then settled what that
+    refusal means: the node was visible, the choice was right, it and all four ancestors were
+    unfocusable, `focus-result id=3 found=true accepted=false` — and the platform posted
+    `TYPE_VIEW_ACCESSIBILITY_FOCUSED` for it right afterwards, so TalkBack spoke
+    `账本为空，还没有任何交易。`. A false return from `performAction` therefore describes the ACTION,
+    not the focus. The probe keeps the action's answer and additionally accepts a refused action
+    only when it observed a focus event that (a) was recorded after the action, (b) matches this
+    command's target by text or by rect, and (c) arrived inside a named bounded window; the
+    `focus-result` line names which of the three sources decided (`action` / `accessibility-event` /
+    `none`). The host's verdict is untouched, so an event-proven focus still needs the TalkBack
+    fragment between that command's own begin and end markers.
+
     Each test names the single edit that turns it red.
     """
 
@@ -3596,6 +3608,69 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         self.assertEqual(1, body.count(focus))
         self.assertLess(body.index("visible=0"), body.index("focusTarget(target, id)"))
         self.assertIn("focus." + focus, body)
+
+    def test_a_refused_action_is_proven_by_the_platform_focus_event(self) -> None:
+        """Turn it red: judge the focus by `performAction`'s return value alone."""
+        body = self._method_body("public void onAccessibilityEvent(")
+        self.assertIn("AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED", body)
+        self.assertIn("recordFocusEvent(event)", body)
+        self.assertIn('FOCUS_EVENT_SUBTYPE = "TYPE_VIEW_ACCESSIBILITY_FOCUSED";', self._source())
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("subtype=", wait)
+        self.assertIn("+ FOCUS_EVENT_SUBTYPE", wait)
+
+    def test_the_event_must_match_this_target_by_text_or_by_rect(self) -> None:
+        """Turn it red: accept any focus event inside the window, whatever node it moved to."""
+        body = self._method_body("private static String matchBasis(")
+        self.assertIn(
+            "event.text.contains(needle) || event.description.contains(needle)", body
+        )
+        self.assertIn("Rect.intersects(event.bounds, targetBounds)", body)
+        # Both matchers refuse to pass on their degenerate input: `contains("")` is always true and
+        # an empty rect intersects nothing, so a missing needle or unreadable source stays a refusal.
+        self.assertIn("!needle.isEmpty()", body)
+        self.assertIn("!targetBounds.isEmpty()", body)
+        self.assertIn('return "";', body)
+
+    def test_the_action_is_bracketed_by_an_event_count_and_a_bounded_wait(self) -> None:
+        """Turn it red: wait for an event without stamping the count and the clock before the action."""
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        body = self._method_body("private void runCommand(")
+        self.assertLess(
+            body.index("long sequenceBeforeAction = focusEventSequence();"),
+            body.index(focus),
+        )
+        self.assertLess(body.index("long actionAt = SystemClock.elapsedRealtime();"), body.index(focus))
+        self.assertLess(
+            body.index(focus),
+            body.index(
+                "awaitFocusEvent(id, needle, target, sequenceBeforeAction, actionAt)"
+            ),
+        )
+        self.assertIn("FOCUS_EVENT_WAIT_MS = 2500L;", self._source())
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("long deadline = actionAt + FOCUS_EVENT_WAIT_MS;", wait)
+        self.assertIn("if (now >= deadline)", wait)
+        self.assertIn("candidate.sequence <= sequenceBeforeAction", wait)
+        self.assertIn("candidate.receivedAt < actionAt", wait)
+
+    def test_the_focus_result_names_which_evidence_accepted_it(self) -> None:
+        """Turn it red: log `accepted=` alone, so an event-proven focus reads like an action one."""
+        body = self._method_body("private void runCommand(")
+        self.assertIn('" source="', body)
+        self.assertIn('String source = "none";', body)
+        self.assertIn('source = "action";', body)
+        self.assertIn('source = "accessibility-event";', body)
+
+    def test_a_refused_action_without_an_event_keeps_the_refusal(self) -> None:
+        """Turn it red: accept on the timeout path, or default `source` to the event branch."""
+        body = self._method_body("private void runCommand(")
+        self.assertIn('String source = "none";', body)
+        self.assertIn('boolean accepted = !"none".equals(source);', body)
+        self.assertIn("if (!awaitFocusEvent(", body)
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn('" matched=none afterActionMs="', wait)
+        self.assertIn('return "";', wait)
 
 
 if __name__ == "__main__":
