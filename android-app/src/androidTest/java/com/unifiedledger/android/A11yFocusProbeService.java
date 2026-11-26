@@ -107,6 +107,13 @@ public final class A11yFocusProbeService extends AccessibilityService {
     private static final long COMMAND_SPEECH_MS = 8000L;
 
     /**
+     * How many parents a refused focus may walk (P8-07 Q3). Compose merges a bare `Text` into its
+     * nearest container within a couple of levels, so a deeper walk reaches outside the region the
+     * user is on; the bound also keeps a pathological tree from turning one command into a scan.
+     */
+    private static final int MAX_FOCUS_ANCESTOR_DEPTH = 4;
+
+    /**
      * The single command watcher for the bound service instance. A host screen disables the service
      * between legs and enables it again for the next one; the process usually survives, so an old
      * watcher must be stopped before a second one starts — two watchers would run the same new
@@ -316,22 +323,74 @@ public final class A11yFocusProbeService extends AccessibilityService {
             Log.i(TAG, "target id=" + id + " found=false root=null");
             return;
         }
-        AccessibilityNodeInfo target = null;
+        Rect window = new Rect();
+        root.getBoundsInScreen(window);
+        List<AccessibilityNodeInfo> candidates = new ArrayList<>();
         for (AccessibilityNodeInfo node : collect(root)) {
             if (contains(node.getText(), needle) || contains(node.getContentDescription(), needle)) {
-                target = node;
-                break;
+                candidates.add(node);
             }
         }
+        AccessibilityNodeInfo target = null;
+        Rect chosenBounds = new Rect();
+        int visible = 0;
+        StringBuilder seen = new StringBuilder();
+        for (AccessibilityNodeInfo candidate : candidates) {
+            Rect bounds = new Rect();
+            candidate.getBoundsInScreen(bounds);
+            boolean shown = visibleInWindow(candidate, window);
+            if (shown) {
+                visible++;
+                if (target == null) {
+                    target = candidate;
+                    chosenBounds = bounds;
+                }
+            }
+            if (seen.length() > 0) {
+                seen.append(" | ");
+            }
+            seen.append(bounds.toShortString()).append(" visible=").append(shown);
+        }
+        // The needle is ordinary copy, so more than one node can carry it — the empty-ledger line is
+        // the same sentence on two destinations — and only the node the user is looking at answers
+        // ACTION_ACCESSIBILITY_FOCUS. Choosing the first match in traversal order is what refused a
+        // focus on a node that was not on the screen under test; the visible candidate is chosen
+        // instead, and every candidate's bounds/visibility is logged so the next round can read
+        // which node answered.
+        Log.i(
+                TAG,
+                "candidates id="
+                        + id
+                        + " candidates="
+                        + candidates.size()
+                        + " visible="
+                        + visible
+                        + " chosen="
+                        + (target == null ? "none" : "visible")
+                        + " window="
+                        + window.toShortString()
+                        + " seen="
+                        + seen);
         if (target == null) {
-            Log.i(TAG, "target id=" + id + " found=false");
+            // Nothing focusable is on this screen. Report the refusal the host already knows how to
+            // read rather than focusing an off-screen twin: a twin's answer describes a different
+            // screen than the one under test.
+            Log.i(
+                    TAG,
+                    "target id="
+                            + id
+                            + " found=false candidates="
+                            + candidates.size()
+                            + " visible=0");
             return;
         }
         Log.i(
                 TAG,
                 "target id="
                         + id
-                        + " found=true text=\""
+                        + " found=true visible=true bounds="
+                        + chosenBounds.toShortString()
+                        + " text=\""
                         + trim(target.getText())
                         + "\" desc=\""
                         + trim(target.getContentDescription())
@@ -340,10 +399,11 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         + "\" desc64=\""
                         + encode(target.getContentDescription())
                         + "\"");
+        AccessibilityNodeInfo focus = focusTarget(target, id);
         Log.i(TAG, "speech-window-begin id=" + id);
         boolean accepted = false;
         try {
-            accepted = target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            accepted = focus.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
         } catch (RuntimeException failure) {
             Log.i(TAG, "focus-error id=" + id + " error=" + failure);
         }
@@ -356,8 +416,80 @@ public final class A11yFocusProbeService extends AccessibilityService {
         Log.i(TAG, "speech-window-end id=" + id);
     }
 
+    /**
+     * The node that receives this command's `ACTION_ACCESSIBILITY_FOCUS` (P8-07 Q3).
+     *
+     * <p>A Compose `Text` is visible without being focusable, so the action answers false on it
+     * even though TalkBack's touch exploration lands on the nearest focusable ancestor and speaks
+     * that ancestor's merged text. Candidate 482f1568 recorded exactly that on the analysis leg:
+     * `target id=4 found=true text="账本为空，还没有任何交易。"` followed by `focus-result id=4
+     * found=true accepted=false`. A non-focusable target therefore hands the action to its nearest
+     * focusable ancestor within [MAX_FOCUS_ANCESTOR_DEPTH]. When no ancestor qualifies the visible
+     * target itself stays the receiver: its own answer is a real measured refusal, and no action
+     * goes to a node outside the screen under test.
+     *
+     * <p>The ancestor's text/description are logged losslessly (`ancestor-text64`/`ancestor-desc64`)
+     * because the host still judges this command by `accepted` and by the speech fragment: those
+     * fields are what let the next round read WHICH sentence the ancestor spoke. The target needle
+     * itself is never rewritten, so a wide merged ancestor cannot pass a narrower requirement.
+     */
+    private AccessibilityNodeInfo focusTarget(AccessibilityNodeInfo target, String id) {
+        if (target.isFocusable()) {
+            Log.i(TAG, "focus-target id=" + id + " target=node focusable=true");
+            return target;
+        }
+        AccessibilityNodeInfo ancestor = target.getParent();
+        for (int depth = 1; depth <= MAX_FOCUS_ANCESTOR_DEPTH && ancestor != null; depth++) {
+            if (ancestor.isFocusable()) {
+                Rect bounds = new Rect();
+                ancestor.getBoundsInScreen(bounds);
+                Log.i(
+                        TAG,
+                        "focus-target id="
+                                + id
+                                + " target=ancestor depth="
+                                + depth
+                                + " focusable=true bounds="
+                                + bounds.toShortString()
+                                + " ancestor-text64=\""
+                                + encode(ancestor.getText())
+                                + "\" ancestor-desc64=\""
+                                + encode(ancestor.getContentDescription())
+                                + "\"");
+                return ancestor;
+            }
+            ancestor = ancestor.getParent();
+        }
+        Log.i(TAG, "focus-target id=" + id + " target=none reason=no-focusable-ancestor");
+        return target;
+    }
+
     private static boolean contains(CharSequence text, String needle) {
         return text != null && text.toString().contains(needle);
+    }
+
+    /**
+     * Whether [node] sits on the screen the user is actually looking at, which is what
+     * `ACTION_ACCESSIBILITY_FOCUS` requires: the platform's own visible-to-user flag
+     * (`isVisibleToUser`, API 16 `AccessibilityNodeInfo.isVisibleToUser()`) AND screen bounds that
+     * overlap the active window with a non-zero area (`getBoundsInScreen`, API 14;
+     * `Rect#intersect` is the area test, and it answers false for an empty rect). Both are read
+     * because either one alone can hold for a node that is still off the current screen: a sibling
+     * destination laid out beside it reports a non-empty rect outside the window, and a clipped or
+     * covered node keeps the flag.
+     */
+    private static boolean visibleInWindow(AccessibilityNodeInfo node, Rect window) {
+        if (!node.isVisibleToUser()) {
+            return false;
+        }
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        if (window.isEmpty()) {
+            // A root that reports no window rect cannot be a yardstick; the platform flag alone
+            // decides then, so such a window does not discard every candidate.
+            return true;
+        }
+        return bounds.intersect(window);
     }
 
     private List<AccessibilityNodeInfo> collect(AccessibilityNodeInfo root) {

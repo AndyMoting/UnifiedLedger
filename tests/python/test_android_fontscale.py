@@ -3475,5 +3475,128 @@ class PermissionDialogGesture(unittest.TestCase):
         )
 
 
+class ProbeVisibleCandidateChoice(unittest.TestCase):
+    """P8-07 Q3: the focus probe answers with the candidate the user can see.
+
+    Fixed candidate 482f1568 (run 45772177183, `profile=empty`) recorded `home status=success`,
+    `asset status=success` and `analysis status=not-obtained`. On the analysis leg the probe found a
+    node (`target id=4 found=true text="账本为空，还没有任何交易。"`) and the focus was refused
+    (`focus-result id=4 found=true accepted=false`) with no `Speaking fragment` inside that
+    command's own window.
+
+    That empty-ledger sentence has exactly two product render sites — `P503OverviewScreen.kt:183`
+    (home) and `P503TabShell.kt:516` (analysis) — so a needle match is not unique by construction,
+    and the probe used to take the first matching node in traversal order. It now chooses the
+    visible candidate, logs the candidate census, and never focuses a node that is off the current
+    screen.
+
+    The second half of that evidence is focusability: the analysis line is Compose's bare `Text`
+    inside a `Column`, which is visible but carries no accessibility focus of its own, so the
+    action answers false while TalkBack's touch exploration lands on the nearest focusable ancestor
+    and speaks that ancestor's merged text. The probe now asks `isFocusable()` on the chosen visible
+    node and, when the answer is false, walks up to a bounded depth for the nearest focusable
+    ancestor; the resolved node is the only receiver of the action and its own text is logged
+    losslessly so the next round can read which sentence the ancestor speaks.
+
+    Each test names the single edit that turns it red.
+    """
+
+    _ROOT = Path(__file__).resolve().parents[2]
+    _PROBE = (
+        Path("android-app")
+        / "src"
+        / "androidTest"
+        / "java"
+        / "com"
+        / "unifiedledger"
+        / "android"
+        / "A11yFocusProbeService.java"
+    )
+
+    def _source(self) -> str:
+        return (self._ROOT / self._PROBE).read_text(encoding="utf-8")
+
+    def _method_body(self, signature: str) -> str:
+        """One Java method body: from its signature to the first method-closing brace line."""
+        source = self._source()
+        start = source.index(signature)
+        return source[start : source.index("\n    }\n", start)]
+
+    def test_the_visibility_gate_reads_the_platform_flag(self) -> None:
+        """Turn it red: drop `isVisibleToUser()` from `visibleInWindow`."""
+        body = self._method_body("private static boolean visibleInWindow(")
+        self.assertIn("isVisibleToUser()", body)
+
+    def test_the_visibility_gate_tests_window_overlap(self) -> None:
+        """Turn it red: return `true` instead of the bounds intersection."""
+        body = self._method_body("private static boolean visibleInWindow(")
+        self.assertIn("getBoundsInScreen(bounds)", body)
+        self.assertIn("bounds.intersect(window)", body)
+
+    def test_the_census_is_logged_and_the_target_line_carries_its_bounds(self) -> None:
+        """Turn it red: log `found=true` alone, without the census or the chosen node's bounds."""
+        body = self._method_body("private void runCommand(")
+        self.assertIn('"candidates id="', body)
+        self.assertIn('" candidates="', body)
+        self.assertIn('" visible="', body)
+        self.assertIn('" chosen="', body)
+        self.assertIn("found=true visible=true bounds=", body)
+
+    def test_an_invisible_candidate_is_never_focused(self) -> None:
+        """Turn it red: focus whatever matched, without the `target == null` early return."""
+        body = self._method_body("private void runCommand(")
+        # The bare constant `ACTION_ACCESSIBILITY_FOCUS` also appears in this method's own prose
+        # comment, so the invocation form is the only needle that indexes a code site.
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        self.assertLess(body.index("visible=0"), body.index(focus))
+        self.assertEqual(1, body.count(focus))
+
+    def test_the_first_match_choice_is_gone(self) -> None:
+        """Turn it red: restore `target = node;` inside the needle loop."""
+        self.assertNotIn("target = node;", self._source())
+
+    def test_a_visible_but_unfocusable_node_hands_focus_to_its_parents(self) -> None:
+        """Turn it red: send the action to the visible node without asking `isFocusable()`."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn("target.isFocusable()", body)
+        self.assertIn("AccessibilityNodeInfo ancestor = target.getParent();", body)
+
+    def test_the_ancestor_walk_is_bounded_by_a_named_depth_constant(self) -> None:
+        """Turn it red: follow `getParent()` until null, with no depth bound."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn(
+            "for (int depth = 1; depth <= MAX_FOCUS_ANCESTOR_DEPTH && ancestor != null; depth++)",
+            body,
+        )
+        self.assertIn("ancestor = ancestor.getParent();", body)
+        self.assertIn("MAX_FOCUS_ANCESTOR_DEPTH = 4;", self._source())
+
+    def test_each_focus_target_outcome_is_greppable_on_its_own(self) -> None:
+        """Turn it red: log one indistinguishable line for node, ancestor and missing ancestor."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn('"focus-target id="', body)
+        self.assertIn('" target=node focusable=true"', body)
+        self.assertIn('" target=ancestor depth="', body)
+        self.assertIn('" target=none reason=no-focusable-ancestor"', body)
+
+    def test_the_ancestor_line_carries_the_sentence_it_will_speak(self) -> None:
+        """Turn it red: log the ancestor's bounds without the text TalkBack will read from it."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn('" ancestor-text64=\\""', body)
+        self.assertIn('" ancestor-desc64=\\""', body)
+        self.assertIn("encode(ancestor.getText())", body)
+        self.assertIn("encode(ancestor.getContentDescription())", body)
+
+    def test_the_fallback_keeps_the_single_focus_call_after_the_early_return(self) -> None:
+        """Turn it red: focus the ancestor inside the fallback as well as the chosen node."""
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        fallback = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertNotIn("performAction(", fallback)
+        body = self._method_body("private void runCommand(")
+        self.assertEqual(1, body.count(focus))
+        self.assertLess(body.index("visible=0"), body.index("focusTarget(target, id)"))
+        self.assertIn("focus." + focus, body)
+
+
 if __name__ == "__main__":
     unittest.main()
