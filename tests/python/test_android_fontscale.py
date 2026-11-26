@@ -3490,6 +3490,14 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     visible candidate, logs the candidate census, and never focuses a node that is off the current
     screen.
 
+    The second half of that evidence is focusability: the analysis line is Compose's bare `Text`
+    inside a `Column`, which is visible but carries no accessibility focus of its own, so the
+    action answers false while TalkBack's touch exploration lands on the nearest focusable ancestor
+    and speaks that ancestor's merged text. The probe now asks `isFocusable()` on the chosen visible
+    node and, when the answer is false, walks up to a bounded depth for the nearest focusable
+    ancestor; the resolved node is the only receiver of the action and its own text is logged
+    losslessly so the next round can read which sentence the ancestor speaks.
+
     Each test names the single edit that turns it red.
     """
 
@@ -3546,6 +3554,48 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     def test_the_first_match_choice_is_gone(self) -> None:
         """Turn it red: restore `target = node;` inside the needle loop."""
         self.assertNotIn("target = node;", self._source())
+
+    def test_a_visible_but_unfocusable_node_hands_focus_to_its_parents(self) -> None:
+        """Turn it red: send the action to the visible node without asking `isFocusable()`."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn("target.isFocusable()", body)
+        self.assertIn("AccessibilityNodeInfo ancestor = target.getParent();", body)
+
+    def test_the_ancestor_walk_is_bounded_by_a_named_depth_constant(self) -> None:
+        """Turn it red: follow `getParent()` until null, with no depth bound."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn(
+            "for (int depth = 1; depth <= MAX_FOCUS_ANCESTOR_DEPTH && ancestor != null; depth++)",
+            body,
+        )
+        self.assertIn("ancestor = ancestor.getParent();", body)
+        self.assertIn("MAX_FOCUS_ANCESTOR_DEPTH = 4;", self._source())
+
+    def test_each_focus_target_outcome_is_greppable_on_its_own(self) -> None:
+        """Turn it red: log one indistinguishable line for node, ancestor and missing ancestor."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn('"focus-target id="', body)
+        self.assertIn('" target=node focusable=true"', body)
+        self.assertIn('" target=ancestor depth="', body)
+        self.assertIn('" target=none reason=no-focusable-ancestor"', body)
+
+    def test_the_ancestor_line_carries_the_sentence_it_will_speak(self) -> None:
+        """Turn it red: log the ancestor's bounds without the text TalkBack will read from it."""
+        body = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertIn('" ancestor-text64=\\""', body)
+        self.assertIn('" ancestor-desc64=\\""', body)
+        self.assertIn("encode(ancestor.getText())", body)
+        self.assertIn("encode(ancestor.getContentDescription())", body)
+
+    def test_the_fallback_keeps_the_single_focus_call_after_the_early_return(self) -> None:
+        """Turn it red: focus the ancestor inside the fallback as well as the chosen node."""
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        fallback = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertNotIn("performAction(", fallback)
+        body = self._method_body("private void runCommand(")
+        self.assertEqual(1, body.count(focus))
+        self.assertLess(body.index("visible=0"), body.index("focusTarget(target, id)"))
+        self.assertIn("focus." + focus, body)
 
 
 if __name__ == "__main__":

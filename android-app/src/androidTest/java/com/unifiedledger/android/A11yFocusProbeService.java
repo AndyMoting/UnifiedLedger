@@ -107,6 +107,13 @@ public final class A11yFocusProbeService extends AccessibilityService {
     private static final long COMMAND_SPEECH_MS = 8000L;
 
     /**
+     * How many parents a refused focus may walk (P8-07 Q3). Compose merges a bare `Text` into its
+     * nearest container within a couple of levels, so a deeper walk reaches outside the region the
+     * user is on; the bound also keeps a pathological tree from turning one command into a scan.
+     */
+    private static final int MAX_FOCUS_ANCESTOR_DEPTH = 4;
+
+    /**
      * The single command watcher for the bound service instance. A host screen disables the service
      * between legs and enables it again for the next one; the process usually survives, so an old
      * watcher must be stopped before a second one starts — two watchers would run the same new
@@ -392,10 +399,11 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         + "\" desc64=\""
                         + encode(target.getContentDescription())
                         + "\"");
+        AccessibilityNodeInfo focus = focusTarget(target, id);
         Log.i(TAG, "speech-window-begin id=" + id);
         boolean accepted = false;
         try {
-            accepted = target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            accepted = focus.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
         } catch (RuntimeException failure) {
             Log.i(TAG, "focus-error id=" + id + " error=" + failure);
         }
@@ -406,6 +414,54 @@ public final class A11yFocusProbeService extends AccessibilityService {
             Thread.currentThread().interrupt();
         }
         Log.i(TAG, "speech-window-end id=" + id);
+    }
+
+    /**
+     * The node that receives this command's `ACTION_ACCESSIBILITY_FOCUS` (P8-07 Q3).
+     *
+     * <p>A Compose `Text` is visible without being focusable, so the action answers false on it
+     * even though TalkBack's touch exploration lands on the nearest focusable ancestor and speaks
+     * that ancestor's merged text. Candidate 482f1568 recorded exactly that on the analysis leg:
+     * `target id=4 found=true text="账本为空，还没有任何交易。"` followed by `focus-result id=4
+     * found=true accepted=false`. A non-focusable target therefore hands the action to its nearest
+     * focusable ancestor within [MAX_FOCUS_ANCESTOR_DEPTH]. When no ancestor qualifies the visible
+     * target itself stays the receiver: its own answer is a real measured refusal, and no action
+     * goes to a node outside the screen under test.
+     *
+     * <p>The ancestor's text/description are logged losslessly (`ancestor-text64`/`ancestor-desc64`)
+     * because the host still judges this command by `accepted` and by the speech fragment: those
+     * fields are what let the next round read WHICH sentence the ancestor spoke. The target needle
+     * itself is never rewritten, so a wide merged ancestor cannot pass a narrower requirement.
+     */
+    private AccessibilityNodeInfo focusTarget(AccessibilityNodeInfo target, String id) {
+        if (target.isFocusable()) {
+            Log.i(TAG, "focus-target id=" + id + " target=node focusable=true");
+            return target;
+        }
+        AccessibilityNodeInfo ancestor = target.getParent();
+        for (int depth = 1; depth <= MAX_FOCUS_ANCESTOR_DEPTH && ancestor != null; depth++) {
+            if (ancestor.isFocusable()) {
+                Rect bounds = new Rect();
+                ancestor.getBoundsInScreen(bounds);
+                Log.i(
+                        TAG,
+                        "focus-target id="
+                                + id
+                                + " target=ancestor depth="
+                                + depth
+                                + " focusable=true bounds="
+                                + bounds.toShortString()
+                                + " ancestor-text64=\""
+                                + encode(ancestor.getText())
+                                + "\" ancestor-desc64=\""
+                                + encode(ancestor.getContentDescription())
+                                + "\"");
+                return ancestor;
+            }
+            ancestor = ancestor.getParent();
+        }
+        Log.i(TAG, "focus-target id=" + id + " target=none reason=no-focusable-ancestor");
+        return target;
     }
 
     private static boolean contains(CharSequence text, String needle) {
