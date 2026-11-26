@@ -12,6 +12,7 @@ from android_fontscale.sampler import (
     BackStep,
     DismissImeStep,
     InputTextStep,
+    MIN_SCREENSHOT_BYTES,
     P806SeedFacts,
     P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,
     PERMISSION_DIALOG_GESTURE_ATTEMPTS,
@@ -23,6 +24,7 @@ from android_fontscale.sampler import (
     Screen,
     ScrollStep,
     SpeechCheck,
+    TALKBACK_VERSION_ARTIFACT,
     TapStep,
     accessibility_services_bound,
     adb_input_text,
@@ -48,7 +50,9 @@ from android_fontscale.sampler import (
     p806_gate_problems,
     p806_rollover_problem,
     p806_screens,
+    package_version_name,
     parse_font_scale,
+    parse_talkback_version_artifact,
     permission_deny_gesture,
     permission_deny_gesture_sequence,
     permission_deny_tap_command,
@@ -57,6 +61,7 @@ from android_fontscale.sampler import (
     profile_screens,
     probe_bound_service,
     probe_service_connected,
+    records_talkback_evidence,
     required_problems,
     screen_center,
     scroll_until,
@@ -64,8 +69,10 @@ from android_fontscale.sampler import (
     speech_fragments,
     talkback_check_verdict,
     talkback_bound_service,
+    talkback_gate_problems,
     talkback_level_summary_value,
     talkback_status_label,
+    talkback_version_artifact,
     tap_radio_for,
     viewport_problems,
 )
@@ -589,6 +596,64 @@ class Profiles(unittest.TestCase):
         self.assertEqual("dismiss ime", describe_step(dismiss_ime()))
         self.assertEqual("scroll to '继续' (max 6 swipes)", describe_step(scroll_until("继续")))
         self.assertEqual("back", describe_step(BACK))
+
+
+class TalkbackProfileLimbs(unittest.TestCase):
+    """P8-07 batch D (Q3/D2): which screens of the three screenshot profiles speak, and on what.
+
+    The expected literals are the product's own copy, spelled here independently of the module's
+    constants so a drift in either side fails this test.
+    """
+
+    EXPECTED: dict[str, list[tuple[str, str, tuple[str, ...]]]] = {
+        "empty": [
+            ("home", "账本为空，还没有任何交易。", ("账本为空，还没有任何交易。",)),
+            ("asset", "总借入", ("总借入",)),
+            ("analysis", "账本为空，还没有任何交易。", ("账本为空，还没有任何交易。",)),
+        ],
+        "seeded": [
+            ("search-guide", "输入条件后开始搜索", ("输入条件后开始搜索",)),
+            # The result row's own window must carry BOTH legs of the seed's two-leg transfer —
+            # the seed's 1_234 minor units in CNY/2 as the row renders them, sign and code kept.
+            # The credit leg spells its account name: a bare `12.34 CNY` also occurs inside the
+            # debit leg's `-12.34 CNY`, so the name is what binds the amount to its own leg.
+            (
+                "search-results",
+                "对账样本转账",
+                ("对账样本转账", "-12.34 CNY", "对账样本账户 12.34 CNY"),
+            ),
+        ],
+        "refund": [
+            ("refund-entry", "支出腿金额 12.34", ("支出腿金额 12.34",)),
+            ("refund-confirmation", "继承分类：早餐", ("继承分类：早餐",)),
+        ],
+    }
+
+    def test_each_named_screen_carries_exactly_its_own_copy(self) -> None:
+        for name, expected in self.EXPECTED.items():
+            profile = profile_by_name(name)
+            self.assertTrue(profile.talkback, name)
+            recorded = [
+                (screen.stem, check.target, check.required)
+                for screen in profile.screens
+                for check in screen.speech
+            ]
+            # One focus target per speaking screen, and the required strings are spelled here
+            # independently of the module's constants: a narrowed requirement (the note without the
+            # amount) or an extra one the screen never renders fails this table.
+            self.assertEqual(expected, recorded)
+
+    def test_the_unnamed_screens_stay_screenshot_only(self) -> None:
+        seeded = {screen.stem: screen.speech for screen in profile_by_name("seeded").screens}
+        self.assertEqual((), seeded["detail"])
+        self.assertEqual((), seeded["reconciliation"])
+
+    def test_only_the_three_screenshot_profiles_write_the_separate_record(self) -> None:
+        p806 = profile_by_name("p806")
+        self.assertTrue(p806.talkback)
+        self.assertFalse(records_talkback_evidence(p806))
+        for name in ("empty", "seeded", "refund"):
+            self.assertTrue(records_talkback_evidence(profile_by_name(name)), name)
 
 
 class GateProfileConsistency(unittest.TestCase):
@@ -1340,6 +1405,336 @@ class P806Profile(unittest.TestCase):
         self.assertEqual(1, len(required_problems(tree, ("普通收入 0.00 CNY",))))
 
 
+class TalkbackVersionArtifact(unittest.TestCase):
+    """D4: the version is the package dump's own versionName, and the artifact round-trips it."""
+
+    DUMP = (
+        "Packages:\n"
+        "  Package [com.google.android.marvin.talkback] (abc123):\n"
+        "    userId=10123\n"
+        "    versionCode=14000000\n"
+        "    versionName=14.0.0.600000000\n"
+        "    targetSdk=36\n"
+    )
+
+    def test_the_package_dumps_version_name_is_the_version(self) -> None:
+        self.assertEqual("14.0.0.600000000", package_version_name(self.DUMP))
+
+    def test_a_dump_without_a_version_name_yields_nothing(self) -> None:
+        self.assertEqual(
+            "",
+            package_version_name(
+                "Packages:\n  Package [com.google.android.marvin.talkback] (abc):\n"
+                "    versionCode=1\n"
+            ),
+        )
+
+    def test_the_recorded_artifact_round_trips_both_values(self) -> None:
+        text = talkback_version_artifact(self.DUMP, "36\n")
+        self.assertEqual(("14.0.0.600000000", "36"), parse_talkback_version_artifact(text))
+
+    def test_an_empty_device_answer_records_no_values(self) -> None:
+        self.assertEqual(
+            ("", ""), parse_talkback_version_artifact(talkback_version_artifact("", ""))
+        )
+
+
+class TalkbackProfileGate(unittest.TestCase):
+    """P8-07 batch D (Q3): the three profiles' record — version, API level and per-target pngs."""
+
+    DUMP = TalkbackVersionArtifact.DUMP
+    PROBE_COMPONENT = P806Profile.PROBE_COMPONENT
+    DEVICE_SERVICE = P806Profile.DEVICE_SERVICE
+
+    def _screens(self, profile_name: str = "empty") -> tuple[Screen, ...]:
+        return profile_by_name(profile_name).screens
+
+    def _ids(self, profile_name: str = "empty") -> dict[tuple[str, str], int]:
+        ids: dict[tuple[str, str], int] = {}
+        for screen in self._screens(profile_name):
+            for check in screen.speech:
+                ids[(screen.stem, check.target)] = len(ids) + 1
+        return ids
+
+    def _write(self, evidence: Path, profile_name: str = "empty") -> dict[str, object]:
+        """One consistent record: the raw version artifact, every target window and every png."""
+        ids = self._ids(profile_name)
+        enabled_raw = f"{self.PROBE_COMPONENT}:{self.DEVICE_SERVICE}"
+        recorded: dict[str, object] = {}
+        for screen in self._screens(profile_name):
+            if not screen.speech:
+                continue
+            blocks: list[str] = []
+            checks: list[dict[str, object]] = []
+            for check in screen.speech:
+                command_id = ids[(screen.stem, check.target)]
+                # Every string the table demands is spoken in this target's window, so a record
+                # that drops one fails on the required-value line, not on its fragments.
+                blocks.append(P806Profile._block(check.target, command_id, list(check.required)))
+                shot = f"talkback-{screen.stem}-cmd-{command_id}.png"
+                (evidence / shot).write_bytes(b"\0" * MIN_SCREENSHOT_BYTES)
+                checks.append(
+                    {
+                        "target": check.target,
+                        "command_id": command_id,
+                        "screenshot": shot,
+                        "required": list(check.required),
+                        "status": "success",
+                        "label": talkback_status_label("success"),
+                        "completed": True,
+                        "accepted": True,
+                        "fragments": [check.target],
+                        "missing": [],
+                        "reason": "",
+                    }
+                )
+            (evidence / f"talkback-{screen.stem}.txt").write_text(
+                "\n".join(blocks), encoding="utf-8"
+            )
+            (evidence / f"talkback-enabled-{screen.stem}.txt").write_text(
+                enabled_raw + "\n", encoding="utf-8"
+            )
+            recorded[screen.stem] = {
+                "status": "success",
+                "label": talkback_status_label("success"),
+                "device_service": self.DEVICE_SERVICE,
+                "artifact": f"talkback-{screen.stem}.txt",
+                "checks": checks,
+                "enable": {
+                    "status": "success",
+                    "enabled_components": [self.PROBE_COMPONENT, self.DEVICE_SERVICE],
+                    "enabled_services_file": f"talkback-enabled-{screen.stem}.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                },
+            }
+        (evidence / TALKBACK_VERSION_ARTIFACT).write_text(
+            talkback_version_artifact(self.DUMP, "36"), encoding="utf-8"
+        )
+        return {
+            "talkback": {
+                "package": "com.google.android.marvin.talkback",
+                "version": "14.0.0.600000000",
+                "api_level": "36",
+                "version_artifact": TALKBACK_VERSION_ARTIFACT,
+                "device_service": self.DEVICE_SERVICE,
+                "log_level": {
+                    "status": "success",
+                    "value": "VERBOSE",
+                    "steps": ["open the exported developer preferences fragment"],
+                    "reason": "summary shows VERBOSE",
+                },
+                "screens": recorded,
+            },
+        }
+
+    def test_a_complete_record_passes(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            self.assertEqual([], talkback_gate_problems(host, self._screens(), evidence))
+
+    def test_a_missing_record_is_named(self) -> None:
+        self.assertEqual(
+            ["host.json records no talkback record"],
+            talkback_gate_problems({}, self._screens(), Path(".")),
+        )
+
+    def test_the_version_is_reparsed_from_the_raw_device_artifact(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            host["talkback"]["version"] = "13.0.0"
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("raw artifact says" in problem for problem in problems), problems)
+
+    def test_an_artifact_without_a_usable_version_name_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            (evidence / TALKBACK_VERSION_ARTIFACT).write_text(
+                talkback_version_artifact(
+                    "Packages:\n  Package [x] (y):\n    versionName=null\n", "36"
+                ),
+                encoding="utf-8",
+            )
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("no usable versionName" in problem for problem in problems))
+
+    def test_a_missing_version_artifact_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            (evidence / TALKBACK_VERSION_ARTIFACT).unlink()
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("version artifact" in problem for problem in problems))
+
+    def test_an_api_level_that_is_not_the_artifacts_own_value_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            host["talkback"]["api_level"] = "33"
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("device API level" in problem for problem in problems))
+
+    def test_a_missing_target_screenshot_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            (evidence / "talkback-home-cmd-1.png").unlink()
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("has no screenshot" in problem for problem in problems), problems)
+
+    def test_a_blank_target_screenshot_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            (evidence / "talkback-home-cmd-1.png").write_bytes(
+                b"\0" * (MIN_SCREENSHOT_BYTES - 1)
+            )
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("is blank" in problem for problem in problems), problems)
+
+    def test_a_screenshot_not_named_by_its_target_id_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            host["talkback"]["screens"]["home"]["checks"][0]["screenshot"] = "home.png"
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(
+                any("the target id names" in problem for problem in problems), problems
+            )
+
+    def test_a_failing_target_window_fails(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence)
+            (evidence / "talkback-asset.txt").write_text(
+                P806Profile._block("总借入", 2, []), encoding="utf-8"
+            )
+            problems = talkback_gate_problems(host, self._screens(), evidence)
+            self.assertTrue(any("片段缺失" in problem for problem in problems), problems)
+
+    def test_a_recorded_requirement_that_drops_the_amount_fails(self) -> None:
+        """The required tuple is re-derived from the profile table, never trusted as recorded.
+
+        The twin string is the target recorded as its own only requirement — what a host that
+        dropped the signed amount would write while still naming the right row.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence, "seeded")
+            self.assertEqual([], talkback_gate_problems(host, self._screens("seeded"), evidence))
+            checks = host["talkback"]["screens"]["search-results"]["checks"]
+            checks[0]["required"] = [checks[0]["target"]]
+            problems = talkback_gate_problems(host, self._screens("seeded"), evidence)
+            self.assertEqual(
+                [
+                    "search-results: target '对账样本转账' records requirements "
+                    "['对账样本转账'], the profile derives "
+                    "['对账样本转账', '-12.34 CNY', '对账样本账户 12.34 CNY']"
+                ],
+                [problem for problem in problems if "records requirements" in problem],
+            )
+
+
+class TargetScreenshots(unittest.TestCase):
+    """D5: each ordered target's command is followed by its own png, named by the command id."""
+
+    def test_each_target_command_is_followed_by_its_own_screenshot(self) -> None:
+        import tempfile
+
+        targets = ["结余 -17.34 CNY", "-12.34 CNY"]
+
+        class _ShotSampler(Sampler):
+            def __init__(self, evidence: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.calls: list[str] = []
+
+            def enable_talkback(self, stem: str) -> dict[str, object]:
+                self.calls.append("enable")
+                return {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": f"talkback-enabled-{stem}.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+
+            def handle_notification_permission_dialog(self) -> bool:
+                return False
+
+            def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+                self.calls.append(f"focus:{target}")
+                return {
+                    "id": command_id,
+                    "target": target,
+                    "completed": True,
+                    "accepted": True,
+                    "problem": "",
+                    "lines": P806Profile._window(
+                        [target], command_id=command_id, target=target
+                    ).splitlines(),
+                }
+
+            def screenshot(self, stem: str) -> Path:
+                self.calls.append(f"screenshot:{stem}")
+                return self.evidence / f"{stem}.png"
+
+            def disable_talkback_accessibility(self) -> None:
+                pass
+
+            def wait_accessibility_disabled(self) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temp:
+            sampler = _ShotSampler(Path(temp))
+            screen = Screen(
+                "day-detail",
+                (),
+                "共 2 笔明细",
+                speech=tuple(SpeechCheck(target, (target,)) for target in targets),
+            )
+            record = sampler.p806_talkback_screen(screen, target_screenshots=True)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(
+            [
+                "enable",
+                "focus:结余 -17.34 CNY",
+                "screenshot:talkback-day-detail-cmd-1",
+                "focus:-12.34 CNY",
+                "screenshot:talkback-day-detail-cmd-2",
+            ],
+            sampler.calls,
+        )
+        self.assertEqual(
+            ["talkback-day-detail-cmd-1.png", "talkback-day-detail-cmd-2.png"],
+            [check["screenshot"] for check in record["checks"]],
+        )
+
+
 class TalkbackArtifacts(unittest.TestCase):
     """The D-292 speech parser: only TalkBack's own fragment line counts."""
 
@@ -1575,7 +1970,9 @@ class TalkbackArtifacts(unittest.TestCase):
                 with self.assertRaises(SampleError):
                     sampler.handle_notification_permission_dialog()
 
-    def test_the_prompt_is_only_handled_with_the_p806_guard(self) -> None:
+    def test_the_prompt_is_not_touched_when_the_guard_is_off(self) -> None:
+        # The guard is the profile switch now (P8-07 batch D, D6): every talkback profile turns it
+        # on, so this pins the field's own off behaviour — no dump, no tap, no artifact.
         import tempfile
 
         with tempfile.TemporaryDirectory() as temp:
@@ -1787,8 +2184,11 @@ class TalkbackArtifacts(unittest.TestCase):
                 "结余",
                 speech=(SpeechCheck("结余 -17.34 CNY", ("-17.34 CNY",)),),
             )
-            record = sampler.p806_talkback_screen(screen)
+            record = sampler.p806_talkback_screen(screen, target_screenshots=False)
             self.assertEqual("success", record["status"])
+            # The dynamic p806 record keeps its batch-6 shape: no per-target screenshot key, because
+            # only the Q3 profiles (P8-07 batch D) capture one per target.
+            self.assertNotIn("screenshot", record["checks"][0])
             self.assertEqual("enable", sampler.calls[0])
             self.assertEqual("dialog", sampler.calls[1])
             self.assertTrue(sampler.calls[2].startswith("focus:"))

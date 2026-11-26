@@ -10,14 +10,18 @@
 #
 # - `profile=empty` (default): the three empty-ledger screens on a **fresh empty install**
 #   (`home.png` / `asset.png` / `analysis.png`); an empty ledger is exactly the state V-8 samples,
-#   so no fixture is generated.
+#   so no fixture is generated. Each screen then speaks its own copy through REAL TalkBack and
+#   leaves its per-target png (`talkback-<screen>-cmd-<id>.png`).
 # - `profile=seeded`: the same APK over one prepared v37 database pushed into the app's stable
 #   storage before launch, capturing `search-guide.png` / `search-results.png` (the P8-02 search surface, guide and result faces), `detail.png` (the 交易详情 screen) and
-#   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds; the two search faces are P8-02 V-9.
+#   `reconciliation.png` (the 账户对账 queue) — the read-only surfaces P8-01a adds; the two search faces are P8-02 V-9. The guide face and the result face each speak one target (the
+#   condition-area copy, the seeded transfer's row) and leave their per-target pngs; the detail and
+#   queue screens stay screenshot-only.
 # - `profile=refund` (P8-03 V-14): the same seeded database, whose confirmed manual expense is the
 #   selectable original, capturing `refund-entry.png` (the refund type selected and the candidate
 #   read landed) and `refund-confirmation.png` (original, arrival account, amount and occurred-at
-#   filled, then 继续, at 1.3x) — the human read V-14 asks for.
+#   filled, then 继续, at 1.3x) — the human read V-14 asks for. Both screens speak one target each
+#   (the candidate row's expense-leg cap, the confirmation's inherited-category row).
 # - `profile=p806` (P8-06 batch 6 V-12): an independent anonymous seed of two fixed expenses on
 #   one clock-relative day, capturing `report.png` (the ANALYSIS report region),
 #   `report-daily-average.png` (the same region scrolled until the natural-day statement reads in
@@ -39,10 +43,14 @@
 # its text node; a scrollable screen's off-screen children stay in the tree, so marker presence is
 # NOT a viewport-containment claim), no string the previous screen renders is still present (a
 # navigation that did not land is not evidence), and the seed digest host.json records is the seed
-# file's own (a gate can never be re-derived over a different database). For p806 it also re-parses
-# every ordered target's own raw TalkBack window, bound to its own command ID and the component the
-# run actually enabled, and requires 成功: 未取得, 片段缺失 and 金额错误 are named failures, and the
-# recorded APK hashes must match the files on disk. "No visual overflow"
+# file's own (a gate can never be re-derived over a different database). For every profile whose
+# screens carry speech checks it also re-parses each ordered target's own raw TalkBack window, bound
+# to its own command ID and the component the run actually enabled, and requires 成功: 未取得,
+# 片段缺失 and 金额错误 are named failures, and the recorded APK hashes must match the files on
+# disk. The three screenshot profiles additionally record the device's TalkBack versionName and API
+# level — re-parsed by the gate from the raw `dumpsys package` artifact, never trusted from
+# host.json — and must show one png of at least 20 000 bytes per target, named by that target's
+# command ID. "No visual overflow"
 # stays a human judgement on the artifact.
 #
 # WHY CLOUD
@@ -62,7 +70,7 @@ on:
         required: true
         type: string
       profile:
-        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 报表自然日说明 + 日历日格 + 日明细（4 屏，含真实 TalkBack 朗读）'
+        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 报表自然日说明 + 日历日格 + 日明细（4 屏）；四档均含真实 TalkBack 朗读'
         required: false
         default: 'empty'
         type: choice
@@ -122,10 +130,10 @@ jobs:
           set -euo pipefail
           mkdir -p fontscale-evidence
           sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee fontscale-evidence/host-apk.txt
-      - name: Build the androidTest APK that hosts the focus probe (p806 only)
-        if: inputs.profile == 'p806'
-        # D-292's probe is an androidTest service, never part of the product build; the run installs
-        # this APK and enables the probe component for the speech leg.
+      - name: Build the androidTest APK that hosts the focus probe
+        # D-292's probe is an androidTest service, never part of the product build; every profile
+        # installs it, because the three screenshot profiles drive real TalkBack too (P8-07 batch
+        # D). The run installs this APK and enables the probe component for the speech leg.
         run: |
           set -euo pipefail
           ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebugAndroidTest --warning-mode all
