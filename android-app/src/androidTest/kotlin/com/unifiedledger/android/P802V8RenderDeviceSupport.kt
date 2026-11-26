@@ -859,15 +859,15 @@ internal class P802V8ResultSurface(
      * the absent loading row and the in-band amount row must all be read after ONE forced refresh.
      * Reading the window first let a cached root equal the expected bounds while the refreshed nodes
      * behind it already belonged to the next frame, so the equality was judged on the stale tree.
- *
- * The forced refresh makes the root current at that call, and only there: the two reads behind it
- * each take a root of their own — `windowBounds()` from `flow.ui.root()`, `appNodes()` from
- * `P807Q2Flow1DeviceSupport.kt:1432` by way of `AndroidScaleUi.kt:181` — so a re-layout landing
- * between them decides the window equality on a root one read older than the nodes it is paired
- * with. That is a narrow race, not a closed gap, and the rest of this gate is what bounds it: the
- * amount row must still hold inside the band cut from that window, and a rejected probe keeps
- * sampling, so the next probe (`TREE_PROBE_INTERVAL_NANOS`, 500 ms) re-reads both, and the pixel
- * change behind the settle candidate still has to agree.
+     *
+     * The forced refresh makes the root current at that call, and only there: the two reads behind it
+     * each take a root of their own — `windowBounds()` from `flow.ui.root()`, `appNodes()` from
+     * `P807Q2Flow1DeviceSupport.kt:1432` by way of `AndroidScaleUi.kt:181` — so a re-layout landing
+     * between them decides the window equality on a root one read older than the nodes it is paired
+     * with. That is a narrow race, not a closed gap, and the rest of this gate is what bounds it: the
+     * amount row must still hold inside the band cut from that window, and a rejected probe keeps
+     * sampling, so the next probe (`TREE_PROBE_INTERVAL_NANOS`, 500 ms) re-reads both, and the pixel
+     * change behind the settle candidate still has to agree.
      */
     fun confirmResultView(
         expectedWindow: Rect,
