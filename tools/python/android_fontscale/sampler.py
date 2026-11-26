@@ -245,6 +245,24 @@ PERMISSION_DIALOG_READBACK_INTERVAL_S = 0.8
 # enabled-services read that no longer describes binding), and both explanations stay live, so the
 # deny is retried with the alternating gesture: inferred, other, inferred again.
 PERMISSION_DIALOG_GESTURE_ATTEMPTS = 3
+# P8-07 batch D r4 (T1): enabling the service is not the same as TalkBack having taken over. On the
+# first real-device round the probe's first command reached the framework while TalkBack was still
+# announcing itself, the focus request was refused (accepted=false), and the notification prompt
+# then owned the active window. The host now waits, bounded, for TalkBack's own speech controller to
+# log its first fragment after the enable write: that is the service speaking, which no settings
+# read, bound-service listing or probe acknowledgement can show. The startup announcement is spoken
+# in the device locale, so the limb is "TalkBack spoke at all", never an English literal. The bound
+# matches `wait_probe_connected`'s own 90 s; a timeout fails closed with the wait and the log tail.
+TALKBACK_READY_TIMEOUT_S = 90
+TALKBACK_READY_POLL_INTERVAL_S = 1.0
+# The window tail the readiness artifact keeps, so a red run is diagnosable from the evidence alone.
+TALKBACK_READY_TAIL_LINES = 60
+# P8-07 batch D r4 (T2): the prompt arrives AFTER that announcement, so one clear at the enable
+# boundary cannot cover it. The panel is re-read in bounded rounds, spaced further apart, until
+# NOTIFICATION_DIALOG_QUIET_READS consecutive reads render no prompt at all.
+NOTIFICATION_DIALOG_SETTLE_ROUNDS = 4
+NOTIFICATION_DIALOG_SETTLE_INTERVAL_S = 2.0
+NOTIFICATION_DIALOG_QUIET_READS = 2
 # The exported developer-settings entry point verified in google/talkback source: the preferences
 # activity reads a `FragmentName` extra and instantiates that fragment inside the TalkBack process,
 # so the LogUtils level it sets is the one the service uses.
@@ -800,6 +818,40 @@ def _speech_contains(spoken: str, needle: str) -> bool:
         start = index + 1
 
 
+def talkback_readiness(log_text: str) -> tuple[bool, list[str]]:
+    """`(ready, fragments)`: TalkBack's own utterances in the window since the enable write.
+
+    Readiness is TalkBack SPEAKING, not TalkBack being enabled. The settings read-back, the bound
+    service listing and the probe's acknowledgement all only say the service was asked to run; the
+    first real-device round shows a focus request refused while TalkBack was still announcing
+    itself. Any fragment counts: the startup announcement is spoken in the device locale, so keying
+    on an English literal would make readiness a locale dependency rather than a proof.
+    """
+    fragments = speech_fragments(log_text)
+    return bool(fragments), fragments
+
+
+def talkback_readiness_artifact(
+    waited_s: float, polls: int, fragments: list[str], log_text: str
+) -> str:
+    """The readiness gate's own raw record: how long it waited and the window that decided.
+
+    Kept on both outcomes. A ready pass explains why the first command waited; a timed-out pass
+    carries the log that never showed an utterance, so the red run is diagnosable from the evidence
+    directory without a re-run.
+    """
+    lines = [
+        f"# readiness: {'ready' if fragments else 'timeout'}",
+        f"# waited: {waited_s:.1f} s",
+        f"# logcat reads: {polls}",
+        f"# talkback fragments: {len(fragments)}",
+    ]
+    lines.extend(f"# fragment: {fragment}" for fragment in fragments)
+    lines.append("# log tail:")
+    lines.extend(log_text.splitlines()[-TALKBACK_READY_TAIL_LINES:])
+    return "\n".join(lines) + "\n"
+
+
 def _ula11y_tokens(line: str) -> set[str] | None:
     match = _ULA11Y_LINE.search(line)
     return None if match is None else set(match.group(1).split())
@@ -1002,6 +1054,39 @@ def _window_focus_accepted(window: list[str], command_id: int) -> bool:
         accepted = accepted or "accepted=true" in tokens
         rejected = rejected or "accepted=false" in tokens
     return accepted and not rejected
+
+
+def _window_focus_rejected(window: dict[str, object]) -> bool:
+    """True iff this command's window completed, is structurally sound and still refused focus."""
+    return (
+        bool(window.get("completed"))
+        and not window.get("problem")
+        and not window.get("accepted")
+    )
+
+
+def focus_retry_reason(
+    window: dict[str, object],
+    *,
+    first_command: bool,
+    dialog_cleared: bool,
+    readiness_delayed: bool,
+) -> str:
+    """The transient a refused focus may be retried in, or "" when no transient holds.
+
+    A refused focus is the device's verdict and stays `not-obtained`. Only the two transients the
+    first real-device round exposed earn one more command: the notification prompt was just cleared
+    out of the active window, or TalkBack itself only finished starting inside this pass. The retry
+    re-runs the WHOLE command under a fresh id — it never splits one window into two halves — and
+    the verdict is still derived from the window that decided.
+    """
+    if not _window_focus_rejected(window):
+        return ""
+    if dialog_cleared:
+        return "the notification prompt was cleared just before this command"
+    if first_command and readiness_delayed:
+        return "TalkBack only finished starting inside this pass"
+    return ""
 
 
 def talkback_check_verdict(
@@ -2255,6 +2340,12 @@ class Sampler:
         by one screenshot whose stem carries that target's command id, so a target's picture, its
         focus command and its utterance window are three artifacts of the same target. The dynamic
         p806 profile keeps its single per-screen screenshot set and its host record unchanged.
+
+        The three r4 gates sit between the enable write and the first command, in this order: the
+        bounded readiness wait (TalkBack must have spoken), the bounded notification-prompt settle
+        (the prompt arrives after that announcement), and one bounded retry per target inside a
+        named transient. None of them can rescue a window: each target's status is still the four
+        value verdict re-derived from the window that decided.
         """
         artifact_name = f"talkback-{screen.stem}.txt"
         lines: list[str] = [f"# stem: {screen.stem}"]
@@ -2273,24 +2364,58 @@ class Sampler:
             )
             if enabled.get("status") != "success":
                 raise SampleError(str(enabled.get("reason") or "TalkBack could not be enabled"))
-            # The prompt can arrive after the bind wait (TalkBack asks once its process is up), so
-            # the last clear sits between enabling the service and the first focus command.
-            self.handle_notification_permission_dialog()
-            for check in screen.speech:
+            # T1: no command may reach the framework before TalkBack itself speaks. T2: the prompt
+            # that follows that announcement is cleared here, in bounded rounds, and only then does
+            # the first command go out — the old single clear sat before the announcement existed.
+            ready = self.wait_talkback_ready(screen.stem)
+            lines.append(
+                f"# ready: waited={ready.get('waited_s')}s polls={ready.get('polls')} "
+                f"fragments={ready.get('fragments')}"
+            )
+            settled = self.settle_notification_permission_dialog(screen.stem)
+            settled_quiet = settled.get("quiet_after_round")
+            lines.append(
+                f"# notification-prompt: clears={settled.get('clears')} quiet_after_round="
+                f"{settled_quiet if settled_quiet is not None else 'still-present'}"
+            )
+            polls = ready.get("polls")
+            readiness_delayed = isinstance(polls, int) and polls > 1
+            for index, check in enumerate(screen.speech):
                 self.talkback_sequence += 1
                 command_id = self.talkback_sequence
                 window = self.talkback_focus(check.target, command_id)
+                lines.append(f"# target: {check.target}")
+                lines.append(f"# command: {command_id}")
+                lines.extend(str(line) for line in window["lines"])
+                # T3: one bounded retry, only inside a named transient, and always as a WHOLE
+                # command under a fresh id — the four-stage window is never split. The rejected
+                # window stays in the artifact; `# retry=1` names the command it belongs to.
+                retry_reason = ""
+                if _window_focus_rejected(window):
+                    cleared_now = self.handle_notification_permission_dialog()
+                    retry_reason = focus_retry_reason(
+                        window,
+                        first_command=index == 0,
+                        dialog_cleared=bool(settled.get("clears")) or cleared_now,
+                        readiness_delayed=readiness_delayed,
+                    )
+                if retry_reason:
+                    self.talkback_sequence += 1
+                    retry_id = self.talkback_sequence
+                    lines.append(f"# retry=1 previous-command: {command_id} reason: {retry_reason}")
+                    window = self.talkback_focus(check.target, retry_id)
+                    command_id = retry_id
+                    lines.append(f"# target: {check.target}")
+                    lines.append(f"# command: {command_id}")
+                    lines.extend(str(line) for line in window["lines"])
                 # D5: the picture is taken AFTER the target's own command completed, and its stem
-                # carries the command id, so the gate can bind the png to this exact window.
+                # carries the command id that decided, so the gate can bind the png to this window.
                 shot = ""
                 if target_screenshots:
                     shot_stem = f"talkback-{screen.stem}-cmd-{command_id}"
                     self.screenshot(shot_stem)
                     shot = f"{shot_stem}.png"
                 driven.append((check, window, shot))
-                lines.append(f"# target: {check.target}")
-                lines.append(f"# command: {command_id}")
-                lines.extend(str(line) for line in window["lines"])
         except SampleError as error:
             enabled = {
                 "status": "not-obtained",
@@ -2554,6 +2679,102 @@ class Sampler:
         (self.evidence / "permission-dialog-gesture.txt").write_text(
             "\n".join(lines) + "\n", encoding="utf-8"
         )
+
+    def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+        """Wait, bounded, for TalkBack itself to speak before any focus command is issued.
+
+        The enable write, its read-back, the bound listing and the probe's acknowledgement all only
+        say the services were asked to run. The first real-device round shows what that misses: the
+        framework refused the probe's first focus request (accepted=false) while TalkBack was still
+        announcing itself, and the notification prompt then owned the active window. The one
+        host-visible proof that TalkBack has taken over is its own speech controller logging a
+        fragment after that enable write, so the first command waits for it. A timeout fails closed
+        — the seconds waited, the number of reads and the window's tail are named, and the pass does
+        not continue into a command that could only report a refusal.
+        """
+        artifact_name = f"talkback-readiness-{stem}.txt"
+        started = time.monotonic()
+        deadline = started + TALKBACK_READY_TIMEOUT_S
+        log_text = ""
+        fragments: list[str] = []
+        polls = 0
+        while True:
+            polls += 1
+            log_text = self.logcat_tail()
+            ready, fragments = talkback_readiness(log_text)
+            if ready or time.monotonic() >= deadline:
+                break
+            time.sleep(TALKBACK_READY_POLL_INTERVAL_S)
+        waited_s = time.monotonic() - started
+        (self.evidence / artifact_name).write_text(
+            talkback_readiness_artifact(waited_s, polls, fragments, log_text), encoding="utf-8"
+        )
+        if not fragments:
+            tail = "\n".join(log_text.splitlines()[-TALKBACK_READY_TAIL_LINES:])
+            raise SampleError(
+                f"TalkBack logged no utterance within {waited_s:.1f} s of being enabled "
+                f"({polls} logcat reads), so no focus request can be driven yet; see "
+                f"{artifact_name}; the window ended with:\n{tail}"
+            )
+        return {
+            "status": "ready",
+            "waited_s": round(waited_s, 1),
+            "polls": polls,
+            "fragments": len(fragments),
+            "artifact": artifact_name,
+        }
+
+    def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+        """Clear the prompt in bounded rounds until it stays away for consecutive reads.
+
+        The prompt arrives AFTER TalkBack's startup announcement, so the single clear at the enable
+        boundary cannot cover it: on the first real-device round it was raised inside the first
+        command's own speech window and cleared only by the next screen's step guard. Each round
+        re-reads the panel; a round that finds it denies it through the existing exact-dialog guard,
+        and the loop ends after NOTIFICATION_DIALOG_QUIET_READS consecutive reads render none —
+        bounded at NOTIFICATION_DIALOG_SETTLE_ROUNDS, with the wait growing every round. A prompt
+        that keeps returning is recorded as `quiet_after_round=still-present` rather than raised
+        here: the per-target verdict still fails closed on any window it steals.
+        """
+        artifact_name = f"notification-dialog-{stem}.txt"
+        rounds: list[tuple[int, bool]] = []
+        clears = 0
+        quiet = 0
+        quiet_after: int | None = None
+        for round_index in range(1, NOTIFICATION_DIALOG_SETTLE_ROUNDS + 1):
+            seen = self.handle_notification_permission_dialog()
+            rounds.append((round_index, seen))
+            if seen:
+                clears += 1
+                quiet = 0
+            else:
+                quiet += 1
+            if quiet >= NOTIFICATION_DIALOG_QUIET_READS:
+                quiet_after = round_index
+                break
+            if round_index < NOTIFICATION_DIALOG_SETTLE_ROUNDS:
+                time.sleep(NOTIFICATION_DIALOG_SETTLE_INTERVAL_S * round_index)
+        lines = [
+            f"# stem: {stem}",
+            f"clears={clears}",
+            f"quiet_reads={quiet}",
+            "quiet_after_round="
+            + (str(quiet_after) if quiet_after is not None else "still-present"),
+            f"space={NOTIFICATION_DIALOG_SETTLE_INTERVAL_S:g} s "
+            f"rounds={NOTIFICATION_DIALOG_SETTLE_ROUNDS} "
+            f"quiet_required={NOTIFICATION_DIALOG_QUIET_READS}",
+        ]
+        lines.extend(
+            f"round={index} prompt={'true' if seen else 'false'}" for index, seen in rounds
+        )
+        (self.evidence / artifact_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return {
+            "clears": clears,
+            "quiet_reads": quiet,
+            "quiet_after_round": quiet_after,
+            "rounds": len(rounds),
+            "artifact": artifact_name,
+        }
 
     def save_tree(self, stem: str, tree: str) -> None:
         """Write the frame the sample was taken from under the screen's own name.
