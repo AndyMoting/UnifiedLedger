@@ -8195,3 +8195,106 @@ internal fun detailSubSurfaceEntriesVisible(returnTo: TransactionDetailReturnTo?
 **边界。** 入 = 本条、新增的 `P802V8RenderInstrumentedTest.kt` 与 `P802V8RenderDeviceSupport.kt`、`tools/python/android_p802_v8.py` 与 `tools/ci/android-p802-v8.py`、`tests/python/test_android_p802_v8.py`、`.github/workflows/android-p802-v8.yml`、`tools/ci/python-shards.txt` 的一行、`android_scale/inventory.py` 的 `EXCLUDED` 一项、`docs/CONTRIBUTING.md` 的 rig 小节。出 = 产品代码／schema／迁移／DDL／既有测试期望／普通设备清单与分片／`docs/specs/**`、`docs/ROADMAP.md`／阶段验收结论／`tools/python/android_scale/instrumented.py` 的既有键／`.external`。本批新类不进普通清单，故既有用例与两片划分不变。
 
 **关联决定：** `D-363`、`D-365`、`D-311`、`D-166`、`D-304`（CI 预算与模拟器重试）。
+
+## D-367 P8-07 阶段验收（P8 收口）
+
+**状态：** 已登记（2026-11-26）。纯文档批：零产品代码／测试／schema／迁移／CI 配置／设备执行。本条记录阶段验收（阶段 8 收口），不改写任何切片判据，也不解散 `D-363` 的设计批准或宣布任何规格获批；设计批准、规格获批与阶段验收分列（`docs/specs/2026-11-22-p8-07-stage-acceptance-design.md` §1.4、§6 第 8 条）。
+
+**固定候选。** 固定候选 = `dfe98e2bf03aa1971da89e30e5f18834629ac086`（`main`，`#449` 的 squash 落地）。树 `c7bd0a11870b10beb16acd77522f91ae6b9a0f10`；`#449` head `b42536d9` 的树相同；「落地树 == PR 树」守卫 run `45815874792` success。`#449` 的 20 项检查为 19 `SUCCESS` + 1 `SKIPPED`（`Android instrumented fork fallback`，本条按此更正早前「20 项绿」的说法，VR10），四项必过 `Kotlin tests`／`Android compile`／`Python tests`／`Trace scan` 均 `SUCCESS`。八组强制证据全部在该 SHA 上取得，历史读数不替代。构建产物身份与设备面逐组登记于下段（`D-366` E1）。
+
+**构建产物身份与设备面。** 八组的 app APK 与 test APK `sha256` 逐组登记：除 flow 1 与 V-7 共用同一份复用 APK 外，各组哈希互异——同一提交的多次构建并不逐字节可复现，因此身份按组记，绑定口径见本段末三条。
+
+| 组 | run id | app APK sha256 | test APK sha256 | 设备面 |
+| --- | --- | --- | --- | --- |
+| flow 1 | `45815933353` | `c5820f514d698b3a55734e3d1bbc2b9b33b97de501c53ba3c4d0585de4790aab` | `a755e02b5f7ffb0bd710b579d2770a1f3f50c22f732b01d8f62a72a512080cc2` | AVD 名取工件 `shard.json.avd`（shard-1 `ul-instrumented-1`、shard-2 `ul-instrumented-2`）；API 36 / `1080x2400` / density 420 / x86_64 / font_scale：该 workflow 与工件均未登记，本记录不推断 |
+| flow 2 | `45815940009` | `87cfcb45069c595870f8e5a4bb4c8eea8644de60a5081a6e10bbd05982d0ef27` | `3568654d8bd49acdecb870ee1b8baecbace51171f25f51fee3848db6a086ee63` | `ul-p807-q2` / API 36 / `1080x2400` / density 420 / font_scale 1.0 |
+| flow 3 | `45815945534` | `e531e8f5b417e4e661dc61c858002fb57dee44e60d36894ba4101d8dea90202f` | `a6ae816cdfea9ae1cf360860bec2a1e0e888b203e32a5a3445513af94e3cd3f6` | `ul-p807-q2` / API 36 / `1080x2400` / density 420 / font_scale 1.0 |
+| empty | `45816214260` | `b5301e39e75cce4996ae7d17290734f1aa53db4ef7d8dee36ee30faa9f3d0047` | `21800252a7c3f46fbaff4c86e99491278c3b5fb487eaff34c9cd77163a25b185` | `ul-fontscale` / API 36 / font_scale 1.3 |
+| seeded | `45831309476` | `cf5bbc592f7e830fd4f8b445712fdc2695754257c597c7dc49291fd58b94c99a` | `8a79c9706d3d71ef715ea72b39706d34a31151bbc84125f8af2766573a2419b2` | `ul-fontscale` / API 36 / font_scale 1.3 |
+| refund | `45819455920` | `aebaadf2d21d27e53cb46536381a65ddc45ec9bdf0e17cfcb6bdf9bc8054fd1f` | `33ed53255f7140c79a449d5df8410a31c8bcf7ff4305e0a721f24459d2976fea` | `ul-fontscale` / API 36 / font_scale 1.3 |
+| V-7 | `45815969237` | `c5820f514d698b3a55734e3d1bbc2b9b33b97de501c53ba3c4d0585de4790aab` | `a755e02b5f7ffb0bd710b579d2770a1f3f50c22f732b01d8f62a72a512080cc2` | 同 flow 1（同一份复用 APK）；AVD 名取工件 `shard.json.avd`（shard-1 `ul-instrumented-1`、shard-2 `ul-instrumented-2`）；font_scale 同 flow 1：该 workflow 与工件均未登记，本记录不推断 |
+| V-8 | `45815977376` | `8f3753637f9fec23570535d7f5477f66ae05443258c3cc4924f8357c8857fd41` | `a2851648d923ed4fc51883e50d80b7b65755f6baaf8e330cd0eef99d903cfeab` | `ul-p802-v8` / API 36 / `1080x2400` / density 420 / font_scale 1.0 |
+
+①`flow 1` 与 `V-7` 的 APK 来自 `ci.yml` run `45813731846`（`source_sha=17700da7d46167073a7ef0656ac7c6541828c11c`，完整受控文件树相同），`provenance.json` 记录了 `build_origin` 与 `reused_from`。②三档 fontscale 各自的 app APK 哈希互异，其余各组亦互异，说明构建不是逐字节可复现，所以证据绑定看的是完整受控文件树相同，而不是 APK 哈希相同。③接受口径：以「完整受控文件树相同」为绑定口径接受这些 APK（与合并树守卫同一标准）。字号方面另记：`flow 1` 与 `V-7` 的字号无可追溯登记，故不作取值断言；其余六组的字号取自 `gate.json.configuration`／`host.json`。
+
+**八组强制证据。** run id 与决定性读数逐字登记，不合并、不四舍五入。
+
+| # | 证据 | run id | 决定性读数／结论 |
+| --- | --- | --- | --- |
+| 1 | Q2 流程一（导入 → 搜索 → 导出） | `45815933353` | shard 1 logcat：`P807-Q2FLOW1 PASS transactions=3 postings=6 exportAmounts=[-12.34,21.00,7.77] imported=01a217c0-81a4-7c3a-a3d3-f20ca9429327 amount=7.77 CNY`；两分片 34/34、27/27；`detail checkbox attempt=0/1/2` 重试留痕 |
+| 2 | Q2 流程二（导入证据 → 对账 → 审计回看） | `45815940009` | `gate.json` `verdict=PASS`、`reasons=[]`、`flow=2`、`sha=dfe98e2b…`；case `P807Q2Flow2ReconciliationInstrumentedTest#theImportedEvidenceBindsToTheExistingPostingAndSurvivesAuditReentry`；`OK (1 test)` |
+| 3 | Q2 流程三（手工退款 → 跨月报表 → 日明细） | `45815945534` | `gate.json` `verdict=PASS`、`flow=3`、`sha=dfe98e2b…`；case `P807Q2Flow3RefundReportInstrumentedTest#theManualRefundLandsInItsArrivalMonthAndReadsBackThroughTheDayDetail` |
+| 4 | Q3 `empty` 档 | `45816214260` | 三屏 `status=success`／`accepted=true`；analysis：`focus-before id=3 found=true` → `focus-clear id=3 answered=false` → `focus-result id=3 accepted=true source=action`；`# service-info: … eventTypes=0x8820`；窗口内含 `Speaking fragment text="账本为空，还没有任何交易。"`；`home` 屏弹窗 `clears=2`／`quiet_after_round=4` |
+| 5 | Q3 `seeded` 档 | `45831309476` | 两目标 `success`／`accepted=true`；`search-guide` required `输入条件后开始搜索`；`search-results` 的三项 required 是三个独立串：`对账样本转账`、`-12.34 CNY`、`对账样本账户 12.34 CNY`（只念一腿同样红）；片段逐字含 `；默认支付账户 -12.34 CNY；对账样本账户 12.34 CNY`；4 屏 |
+| 6 | Q3 `refund` 档 | `45819455920` | `refund-entry` cmd 1 `支出腿金额 12.34`、`refund-confirmation` cmd 2 `继承分类：早餐`，两目标 `success`／`accepted=true` |
+| 7 | Q5 / V-7 | `45815969237` | `rows=10000 … outcome=Accepted candidates=10000 sources=10000 evidence=10000 pageSize=10 formalLedgerRows=0`；`rows=10001 … outcome=BatchExceedsLimit actualAcceptedRecords=10001 persistedRows=0 formalLedgerRows=0`；基线 `rows=1000` |
+| 8 | Q5 / V-8 | `45815977376` | `verdict=PASS reasons=[]`；`P802-V8R fixture=61000 … samples=6 firstSampleAfterSubmitMs=298.2 settleSamples=3 renderFirstPageMs=624.8 … pageRows=50 totalCount=436 schema=38`（字段顺序照读数行；`renderFirstPageMs` 为上界，见下「V-8 的上界」段） |
+
+Q3 三档的候选身份：每档 `host.json` 的 `talkback.version=16.0.0.738667889`、`log_level=VERBOSE`、探针 `com.unifiedledger.android.test/…A11yFocusProbeService`。
+
+**§6 八条收口清单逐条成立。**
+
+1. **固定候选上的三条跨切片流程全部通过——成立。** 流程一 run `45815933353`（两分片自判 PASS；34/34、27/27、`failed=0`）、流程二 run `45815940009`、流程三 run `45815945534`（各 `verdict=PASS`、`reasons=[]`、`OK (1 test)`）。三条流程各从夹具的独立初态开始，拓扑见 `D-365`。
+2. **六类强制证据满足、无未登记缺证（除第 6 条登记的两项例外）——成立。** 离线功能与失败恢复由三条流程承载；正式账本效果取每条流程的前后读回与八组表第 1 行的精确值（V-7 的 `formalLedgerRows=0` 归两组规模读数，不在此重复计入）；长账本可操作性（两组规模读数）取 `45815969237`（V-7）与 `45815977376`（V-8）；关键页面视觉与无障碍取 Q3 三档与各切片既有登记（按规格 §1.2 复用，`D-311`／`D-313`／`D-331`／`D-364`）。`P8-04` V-6 的确认腿由流程一逐项核对；模板写出失败的 CreateDocument 失败类型化仍以 `P8-05` 批 c 设备链（`12635a6f`，SAF 取消与中途写出失败）为原向量证据，不由流程一替代。
+3. **§3.1 的云端真实 TalkBack 补证完成、旧披露保留——成立。** Q3 三档在 1.3× 下逐目标取得真实朗读（八组表第 4–6 行与候选身份行）；三档各带自己的环境块（见「六条披露」②）。`P8-00`／`P8-02`／`P8-03` 的旧结论与披露不因本轮补证改写。
+4. **两组规模读数已记录且未引入新阈值——成立。** V-7 与 V-8 各在固定候选上取得一次（八组表第 7–8 行）；终点与采样口径沿用 `D-366` E2／E4，`D-366` E5 的不设门槛不变；V-8 只按上界登记（见下段）。
+5. **`P8-06` 的先行条件——成立。** `P8-06` 已按 `D-364`（2026-11-24）收口：V-1…V-19 全 PASS，V-12 由设备 run `45233075019` 于落地 `412c9dbc` 取证。本条按 `D-364` 原文引用，不重述为新判据。
+6. **R1/R2 记缺证、不记 PASS——成立（例外）。** 两项内容、不阻断的理由与闭合条件见下段；`D-363` 与本条、`docs/ROADMAP.md` 的收口与例外段同批落地，其余七条成立，故两项作为不阻断阶段收口的例外。
+7. **tracked 交付的落地证据——成立。** `#449` head `b42536d9` 的四项必过均 `SUCCESS`，落地 `dfe98e2b` 的树 `c7bd0a11` 与 PR 树相同，守卫 run `45815874792` success；本条所在批的落地证据另以该批 PR 的四门与守卫为准。
+8. **阶段验收以独立决定记录——成立。** 本条即该独立记录；`D-363`（2026-11-22）只记设计批准，规格获批按其自身状态句记录，三者不合并为同一结论（设计 §6 第 8 条）。
+
+**`P8-05` R1/R2 例外登记（缺证，永不记 PASS）。** R1 = V-9 的真机 Excel／WPS 打开导出文件；R2 = V-8 的 TalkBack 对结果横幅与写出进度的语音宣告。两项保留设备证据登记（`docs/specs/2026-11-15-p8-05-readable-export-device-evidence-registry.md`）的真机要求；本轮未取得合格真机证据，故记缺证、不记 PASS，也不以内容解析、语义树或模拟器替代真机（`D-363` Q4、规格 §3.2）。不阻断的理由：其余七条收口证据成立，且两项在设计与路线图同批落地后即为登记例外。闭合条件：取得合格真机证据后按原向量闭合；真机操作另需授权。
+
+**被丢弃的七次红：归因与处置（VR1、VR2、VR3）。** 本条残余编号 `VR1`–`VR14` 取自独立核验报告的十四项，与 `P8-05` 的 `R1`／`R2` 无关（后两者是本条登记的 `P8-05` 真机例外）。七次红全部落在设施或设备面：无 `gate.reasons` 指向产品行为、无断言失败、无金额或账务读数异常；工件成立（gate 从磁盘重算）。逐条按 run 给红因，取代早前「三类设施红、`empty` 与 `refund` 各只出现一次」的说法——`empty` 的唯一红是构建侧插件解析、`refund` 的唯一红是通知弹窗，二者都不属于那三类。
+
+| run | 档 | 决定性失败行（逐字片段） | 归因 | 处置 |
+| --- | --- | --- | --- | --- |
+| `45815952084` | empty | `- Plugin Repositories (could not resolve plugin artifact 'app.cash.sqldelight:app.cash.sqldelight.gradle.plugin:2.3.2')`＋`BUILD FAILED in 23s` | 构建基础设施（依赖解析瞬态） | 重跑成立 |
+| `45815958051` | seeded 1 | `run: screen 'detail' step 1 (tap containing '对账样本转账') while navigating to marker '备注：对账样本转账': tap target '对账样本转账' (containing) is not in the accessibility tree`（同 job 三步构建均 `BUILD SUCCESSFUL`，无插件解析行） | rig tap-target 竞态第 1 次 | 重跑（**归因更正**：早前把它记成插件解析红，是事实错误） |
+| `45815963658` | refund 1 | `refund-entry: TalkBack was not enabled for the speech pass: 'the Accessibility Suite notification prompt was still present after 4 rounds (waits 2 s, 4 s, 6 s, 2 consecutive quiet reads required)…'`＋`target '支出腿金额 12.34' records command id None` | 设备弹窗吞掉命令 | 重跑后绿（`45819455920`） |
+| `45819448391` | seeded 2 | `search-guide: TalkBack was not enabled for the speech pass: '… notification prompt was still present after 4 rounds …'`＋`target '输入条件后开始搜索' records command id None` | 设备弹窗 | 重跑 |
+| `45821926489` | seeded 3 | `run: screen 'search-results' step 0 (tap '提交搜索') while navigating to marker '搜索结果 ·': tap target '提交搜索' (equal to) is not in the accessibility tree` | rig 竞态第 2 次 | 重跑 |
+| `45825033996` | seeded 4 | `run: screen 'detail' step 1 (tap containing '对账样本转账') …: tap target '对账样本转账' (containing) is not in the accessibility tree` | rig 竞态第 3 次 | 重跑（按本波自设的升级规则此时应改判 rig 缺陷、修 rig 后整波重取，实际继续重派） |
+| `45828163106` | seeded 5 | `TalkBack's VERBOSE log-level route did not succeed: '… after 3 attempts (attempt 1=list-not-opened; attempt 2=list-not-opened; attempt 3=list-not-opened)…'`＋两屏 `TalkBack logged no utterance within 90.6 s / 90.1 s of being enabled (88 logcat reads)` | 设备面（TalkBack 控制路径，fail-closed） | 重跑后绿（`45831309476`） |
+
+**噪声排除（VR2）。** `Emulator boot timeout: 300` 与 `ERROR | bad color buffer handle` 在**通过**的作业里同样出现（第五波 seeded `45799748714`、第六波 refund `45819455920` 与 empty `45816214260` 均可复现其存在），故不构成红因；本记录不登记其次数。它们既不列入失败归因，也不作设施红；真正的红只有上表七条。
+
+**未硬化的 rig 竞态（VR4）。** `tap target … is not in the accessibility tree` 在同一候选上出现 3 次（两次在 `detail`、一次在 `search-results`），第 6 次（`45831309476`）才转绿。绿成立（工件支持：gate 从磁盘重算、两目标 success、两腿金额都在），但**不是干净通过**：点击目标前「重读至有界次数再点」的硬化未做，同形竞态仍是未修的 rig 缺口，本波自设的升级规则也没有按自己的条件执行。登记口径写死为：这是已知 rig 健壮性缺口下的第 6 次通过。
+
+**V-8 的上界、四次同口径读数与分辨率（VR7、VR8）。** `renderFirstPageMs` 只按**上界**登记：分辨率 = 采样间隔 + 提交派发到首采样的固定开销。第六波实测步长 `≈108.9 ms`（`(624.8 − 298.2) / 3`），分辨率因此 `≈407 ms`（`108.9 + 298.2`），比标称 `sampleIntervalMs=50` 宽一倍以上；`sampleIntervalMs=50` 是请求间隔，不是实测步长。同一 rig、同一 61000 夹具、同一条件组与同一终点的四次读数：`279.6`（`45760232136`，`samples=3`、`completedIndex=0`）、`590.1`（`45769371092`）、`646.8`（`45799769031`，`samples=48`）、`624.8`（`45815977376`，`samples=6`）。`624.8` 不是最大值，登记未做挑选；两次运行的采样数（6 与 48）不合并成一个数。该读数**永不与端口基线 448.2 ms 相减**。
+
+**Q3 的设备抖动、已加固项与残余（VR12）。** `empty` 档首屏受系统无障碍授权弹窗影响，settle 用满 4 轮上限、零余量（见「六条披露」①）。已加固三项：弹窗 settle 每屏最多 4 轮、间隔 2/4/6 s，需连续 2 次读不到该提示才放行；TalkBack 的 `VERBOSE` 日志级别路由最多 3 次，每次强制重读树并逐结局留档；命令级只对两类瞬态（弹窗刚被清、TalkBack 本屏刚就绪）以**新命令 ID** 完整重试一次，并在产物里记 `retry=1`。另记：`empty` 分析屏仍出现 `focus-target id=3 target=none reason=no-focusable-ancestor`（第五波的产品红签名之一），本轮转绿来自探针协议（`D-368`）与随后的朗读，不来自产品改动——本条不声称产品侧有改动。第五波台账里「已聚焦 ⇒ `ACTION_ACCESSIBILITY_FOCUS` 必返 false」曾被写成机制事实，本轮已证伪并作废（VR9，措辞按 `D-368`）。
+
+**另需带进本条的六条披露（VR5、VR6、VR12、VR14）。** ①`empty` 的 `home` 屏动态弹窗在 rounds 1–2 读到 `prompt=true`、3–4 `false`，恰好用满 4 轮 settle 上限（读数见八组表第 4 行），零余量：下一次同类抖动即转红。②`seeded` 与 `refund` 的 `host.json` 环境块与 `empty` 同形：`sha=dfe98e2b…`、`font_scale="1.3"`、`api_level=36`、AVD `ul-fontscale`、TalkBack `16.0.0.738667889`，三档无空值。③被丢弃的第 3 次红（`45821926489`）的残缺工件目录只有一屏与三个 `host-*.txt`、**不含 `host.json`**，不得当作 seeded 组的证据目录。④flow 1 与 V-7 的 APK 复用 `ci.yml` run `45813731846`（`source_sha=17700da7`，树同为 `c7bd0a11`），`provenance.json` 保留 `build_origin` 与 `reused_from`；严格说 APK 字节不是由本候选构建，复用成立在「完整受控文件树相同」这一条件上。⑤就绪窗口内出现过 `TalkBack off` 片段（seeded 4 段、refund 3 段），就绪门判据只要求「TalkBack 已开口」，故仍绿；它属设备侧服务抖动，并解释同波 90 s 超时红为何出现又消失。⑥flow 1 的 `detail checkbox attempt=0/1/2` 到 `attempt=2` 才 `selection established`，是 rig 重试而非失败（八组表第 1 行已留痕）。
+
+**读数登记的措辞更正（VR11、VR13）。** ①逐字引文：seeded `search-results` 的片段是 `… 备注 对账样本转账；默认支付账户 -12.34 CNY；对账样本账户 12.34 CNY`，只写两腿金额会漏掉「默认支付账户」一段。②指向：seeded 的五次红按 run 编号逐条列于上表，不再指向不存在的小节。本批不写 `local/` 台账；上述更正以本条为准，台账侧同步不属本批写面。
+
+**rig 层与批 C 的残余（登记，不并入任何 PASS）。** `QI-1`／`QI-2`／`REV-c-21`／`QJ-2`／`REV-c-29` 均记缺证：其内容在 tracked 记录中无可追溯条目，本条不作内容断言。以上均不在本批补做。
+
+**边界：** 入 = 本条、`docs/ROADMAP.md` 阶段 8 的收口与例外段、`docs/CURRENT_STATE.md` 的状态段、`docs/CONTRIBUTING.md` 的朗读通路措辞与 `D-368`。出 = 产品代码／测试／schema／迁移／CI 配置／设备执行／`local/` 台账／`docs/specs/**`／`.external`；不改任何切片的产品行为、验收向量与已登记残余。
+
+**关联决定：** `D-363`、`D-365`、`D-366`、`D-311`、`D-364`、`D-331`、`D-296`、`D-368`。
+
+## D-368 朗读焦点接受证据的三条路径
+
+**状态：** 已登记（2026-11-26）。纯文档批：不改探针、不改 `gate`、不改任何判据。本条登记「接受焦点结果」的可取证形态与请求协议，`docs/CONTRIBUTING.md` 的朗读通路一节按此措辞；`D-367` 的 Q3 证据按本条读取。
+
+**判据（未改）：** 每个朗读目标须在唯一命令 ID 下得到一条**接受**的焦点结果，且 `speech-window-begin` 与 `speech-window-end` 之间存在属于本命令目标的要求片段；未取得、证据不属于本目标、片段缺失或金额错误均判红（`D-311` V-9、`D-313` V-14、`D-364` V-12 同一口径）。三条路径改变的是**证据形态**，不是判据。
+
+**三条证据路径（读数行的 `source=`）：**
+
+1. `source=action`：`ACTION_ACCESSIBILITY_FOCUS` 返回 true。
+2. `source=accessibility-event`：动作返回 false 时，仍须在**动作之后**、上限 2.5 s、每 100 ms 轮询的有界窗口内等到属于本命令目标、且序号晚于动作前读数的 `TYPE_VIEW_ACCESSIBILITY_FOCUSED`；归属按文本或 bounds 证明，bounds 比的是**动作实际发出的那个节点**的 rect，不是屏表里的目标节点。
+3. `source=focus-read`：窗口内没有事件时读平台当前 a11y 焦点，确为本命令目标**且本次命令确实移动了焦点**（`moved=true`）才接受；动作前平台已停在该目标、且清焦点也没把它拿走的读回只是同一焦点的再读，不构成移动证据。
+
+**「动作返回 false ≠ 拒绝」的依据。** AndroidX 的实现里有一条「节点已持焦点时跳过事件并返回 false」的分支（探针注释记录了该出处），所以 false 本身不判红，裁判权落在路径 2 的窗口归属与路径 3 的移动证明上。但本条**不**把这条分支当成定律：第六波 `focus-clear answered=false`（焦点没被清走）而请求以 `source=action` 接受，说明 false 的成因不止这一支，「已聚焦 ⇒ `ACTION_ACCESSIBILITY_FOCUS` 必返 false」不作确定性事实（`D-367` 残余 VR9）。
+
+**请求协议：先读、必要时清、再请求。** 先读动作前的平台焦点（`focus-before`）；仅当该焦点已是本命令目标时才清（`focus-clear`），清的回答不作判据；随后发出请求。清的作用是把动作后的读回变成「本次移动」的记录，而不是制造片段——片段仍须严格落在本命令的 `speech-window-begin` 与 `speech-window-end` 之间。三条路径都取不到证据时按 `source=none` 落「未取得」。
+
+**未放宽的拒绝面。** ①三条路径都无证据 → 未取得、判红。②取得的事件或读回不属于本命令目标（文本不符且 bounds 不落在动作实际发出的那个节点）→ 判红，不降级为间接证据。③取得接受结果但要求片段缺席 → 判红。④片段出现但不在本命令窗口内（命令前已开始的朗读被记在 `begin` 之后）→ 判红。既有三类失败判据、`gate` 条目与 p806 档口径均不因本条放宽。
+
+**与 `D-363`／`D-366` 的关系。** `D-363` 只要求 Q3 补证在固定候选上取得真实朗读，本条把「接受焦点结果」写成可复核的三种形态，不扩大其范围；`D-366` 的 V-8 终点与语义树接受条件属另一类证据，与本条三条路径互不替代（规格 §1.4）。
+
+**边界：** 入 = 本条、`docs/CONTRIBUTING.md` 的朗读通路措辞、`D-367` 的 Q3 读数引用。出 = 探针实现／`gate` 判据／验收向量／阈值／`docs/specs/**`／`local/` 台账／`.external`；不改任何代码或测试。
+
+**关联决定：** `D-292`、`D-305`、`D-311`、`D-313`、`D-363`、`D-364`、`D-366`、`D-367`。
