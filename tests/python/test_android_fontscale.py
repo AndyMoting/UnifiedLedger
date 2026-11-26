@@ -13,6 +13,8 @@ from android_fontscale.sampler import (
     DismissImeStep,
     InputTextStep,
     MIN_SCREENSHOT_BYTES,
+    NOTIFICATION_DIALOG_QUIET_READS,
+    NOTIFICATION_DIALOG_SETTLE_ROUNDS,
     P806SeedFacts,
     P806_TALKBACK_DOUBLE_TAP_INTERVAL_S,
     PERMISSION_DIALOG_GESTURE_ATTEMPTS,
@@ -38,6 +40,7 @@ from android_fontscale.sampler import (
     find_reachable_center,
     find_resource_center,
     find_talkback_level_summary,
+    focus_retry_reason,
     gate_artifact_problems,
     gate_profile_problems,
     gate_seed_problems,
@@ -71,6 +74,7 @@ from android_fontscale.sampler import (
     talkback_bound_service,
     talkback_gate_problems,
     talkback_level_summary_value,
+    talkback_readiness,
     talkback_status_label,
     talkback_version_artifact,
     tap_radio_for,
@@ -1686,6 +1690,14 @@ class TargetScreenshots(unittest.TestCase):
             def handle_notification_permission_dialog(self) -> bool:
                 return False
 
+            # The r4 readiness gate and prompt settle run before the first command and are stubbed
+            # here, so this case keeps pinning the per-target png/command pairing alone.
+            def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+                return {"status": "ready", "waited_s": 0.0, "polls": 1, "fragments": 1}
+
+            def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+                return {"clears": 0, "quiet_reads": 2, "quiet_after_round": 2, "rounds": 2}
+
             def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
                 self.calls.append(f"focus:{target}")
                 return {
@@ -1732,6 +1744,289 @@ class TargetScreenshots(unittest.TestCase):
         self.assertEqual(
             ["talkback-day-detail-cmd-1.png", "talkback-day-detail-cmd-2.png"],
             [check["screenshot"] for check in record["checks"]],
+        )
+
+
+class TalkbackReadyGate(unittest.TestCase):
+    """T1: the first command waits for TalkBack's own utterance, and a timeout fails closed."""
+
+    # The verbatim fragment row from the first real-device round's `talkback-home.txt`, where the
+    # probe's command id=1 had already run (and been refused) before this announcement was spoken.
+    _SPEAKING = (
+        'V/talkback: SpeechControllerImpl( 5326): Speaking fragment text="TalkBack on", '
+        "utteranceId=talkback_0, TtsSpan=null, locale=null, event=null\n"
+    )
+    # The window that round opened with: the probe's own passes, and no TalkBack utterance.
+    _SILENT = (
+        "I/ULA11Y  ( 5328): pass trigger=pass-1 root=null\n"
+        "I/ULA11Y  ( 5328): pass trigger=pass-2 root=null\n"
+    )
+
+    def _sampler(self, evidence: Path, log_text: str) -> Sampler:
+        class _ReadySampler(Sampler):
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                return log_text
+
+        return _ReadySampler(
+            adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+        )
+
+    def test_a_silent_window_fails_closed_with_the_wait_and_the_tail(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._sampler(evidence, self._SILENT)
+            with patch("android_fontscale.sampler.TALKBACK_READY_TIMEOUT_S", 0.01):
+                with patch("android_fontscale.sampler.TALKBACK_READY_POLL_INTERVAL_S", 0.0):
+                    with self.assertRaises(SampleError) as raised:
+                        sampler.wait_talkback_ready("home")
+            message = str(raised.exception)
+            self.assertIn("logged no utterance", message)
+            self.assertIn("talkback-readiness-home.txt", message)
+            artifact = (evidence / "talkback-readiness-home.txt").read_text(encoding="utf-8")
+            self.assertIn("# readiness: timeout", artifact)
+            self.assertIn("# talkback fragments: 0", artifact)
+            self.assertIn("# waited:", artifact)
+            self.assertIn("pass trigger=pass-1", artifact)
+
+    def test_readiness_is_the_announcement_in_whatever_locale_it_is_spoken(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            self.assertEqual((True, ["TalkBack on"]), talkback_readiness(self._SPEAKING))
+            ready = self._sampler(evidence, self._SPEAKING).wait_talkback_ready("home")
+            self.assertEqual("ready", ready["status"])
+            self.assertEqual(1, ready["fragments"])
+            artifact = (evidence / "talkback-readiness-home.txt").read_text(encoding="utf-8")
+            self.assertIn("# readiness: ready", artifact)
+            self.assertIn("# fragment: TalkBack on", artifact)
+            # The announcement is spoken in the device locale: the limb is "TalkBack spoke", so a
+            # localized startup utterance is readiness too and no English literal is required.
+            localized = (
+                'V/talkback: SpeechControllerImpl( 5326): Speaking fragment '
+                'text="TalkBack 已开启", utteranceId=talkback_0, TtsSpan=null, locale=zh_CN, '
+                "event=null\n"
+            )
+            self.assertEqual(
+                "ready", self._sampler(evidence, localized).wait_talkback_ready("home")["status"]
+            )
+
+
+class NotificationPromptSettle(unittest.TestCase):
+    """T2: the prompt that follows TalkBack's announcement is cleared in bounded rounds."""
+
+    class _SettleSampler(Sampler):
+        def __init__(self, evidence: Path, answers: list[bool]) -> None:
+            super().__init__(
+                adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+            )
+            self.answers = list(answers)
+            self.reads = 0
+
+        def handle_notification_permission_dialog(self) -> bool:
+            self.reads += 1
+            return self.answers.pop(0) if self.answers else False
+
+    def test_a_prompt_that_only_appears_after_readiness_is_cleared_and_counted(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._SettleSampler(evidence, [True, False, False])
+            with patch("android_fontscale.sampler.NOTIFICATION_DIALOG_SETTLE_INTERVAL_S", 0.0):
+                record = sampler.settle_notification_permission_dialog("home")
+            self.assertEqual(1, record["clears"])
+            self.assertEqual(3, record["quiet_after_round"])
+            self.assertEqual(3, sampler.reads)
+            artifact = (evidence / "notification-dialog-home.txt").read_text(encoding="utf-8")
+            self.assertIn("clears=1", artifact)
+            self.assertIn("quiet_after_round=3", artifact)
+            self.assertIn("round=1 prompt=true", artifact)
+            self.assertIn("round=2 prompt=false", artifact)
+            self.assertIn("round=3 prompt=false", artifact)
+
+    def test_a_prompt_that_keeps_returning_stops_at_the_round_bound(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._SettleSampler(evidence, [True] * 8)
+            with patch("android_fontscale.sampler.NOTIFICATION_DIALOG_SETTLE_INTERVAL_S", 0.0):
+                record = sampler.settle_notification_permission_dialog("home")
+            self.assertEqual(NOTIFICATION_DIALOG_SETTLE_ROUNDS, record["clears"])
+            self.assertEqual(NOTIFICATION_DIALOG_SETTLE_ROUNDS, sampler.reads)
+            self.assertIsNone(record["quiet_after_round"])
+            artifact = (evidence / "notification-dialog-home.txt").read_text(encoding="utf-8")
+            self.assertIn("quiet_after_round=still-present", artifact)
+            self.assertIn(
+                f"quiet_required={NOTIFICATION_DIALOG_QUIET_READS}", artifact
+            )
+
+
+class FocusRetryBound(unittest.TestCase):
+    """T3: a refused focus is retried once, inside a named transient, as a whole command."""
+
+    TARGET = "账本为空，还没有任何交易。"
+
+    def _window(
+        self, *, accepted: bool, command_id: int = 1, target: str | None = None
+    ) -> dict[str, object]:
+        needle = self.TARGET if target is None else target
+        lines = P806Profile._window(
+            [needle],
+            command_id=command_id,
+            accepted=accepted,
+            target=needle,
+            needle=needle,
+            node_text=needle,
+        ).splitlines()
+        return {
+            "id": command_id,
+            "target": needle,
+            "completed": True,
+            "accepted": accepted,
+            "problem": "",
+            "lines": lines,
+        }
+
+    def test_the_retry_needs_a_named_transient(self) -> None:
+        refused = self._window(accepted=False)
+        self.assertEqual(
+            "",
+            focus_retry_reason(
+                self._window(accepted=True),
+                first_command=True,
+                dialog_cleared=True,
+                readiness_delayed=True,
+            ),
+        )
+        self.assertEqual(
+            "",
+            focus_retry_reason(
+                refused, first_command=False, dialog_cleared=False, readiness_delayed=True
+            ),
+        )
+        self.assertIn(
+            "notification prompt",
+            focus_retry_reason(
+                refused, first_command=False, dialog_cleared=True, readiness_delayed=False
+            ),
+        )
+        self.assertIn(
+            "finished starting",
+            focus_retry_reason(
+                refused, first_command=True, dialog_cleared=False, readiness_delayed=True
+            ),
+        )
+        broken = dict(refused, problem="command id=1 began more than one window")
+        self.assertEqual(
+            "",
+            focus_retry_reason(
+                broken, first_command=True, dialog_cleared=True, readiness_delayed=True
+            ),
+        )
+
+    def _sampler(self, evidence: Path, refusals: int) -> Sampler:
+        class _RetrySampler(Sampler):
+            def __init__(self, path: Path) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=path, font_scale=1.3, avd_name="ul-fontscale"
+                )
+                self.focus_ids: list[int] = []
+
+            def enable_talkback(self, stem: str) -> dict[str, object]:
+                return {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": f"talkback-enabled-{stem}.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+
+            def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+                return {"status": "ready", "waited_s": 1.0, "polls": 1, "fragments": 1}
+
+            def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+                # One clear is the transient a retry is allowed in: the prompt was just removed.
+                return {"clears": 1, "quiet_reads": 2, "quiet_after_round": 3, "rounds": 3}
+
+            def handle_notification_permission_dialog(self) -> bool:
+                return False
+
+            def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+                self.focus_ids.append(command_id)
+                accepted = len(self.focus_ids) > refusals
+                lines = P806Profile._window(
+                    [target],
+                    command_id=command_id,
+                    accepted=accepted,
+                    target=target,
+                    needle=target,
+                    node_text=target,
+                ).splitlines()
+                return {
+                    "id": command_id,
+                    "target": target,
+                    "completed": True,
+                    "accepted": accepted,
+                    "problem": "",
+                    "lines": lines,
+                }
+
+            def disable_talkback_accessibility(self) -> None:
+                pass
+
+            def wait_accessibility_disabled(self) -> bool:
+                return True
+
+        return _RetrySampler(evidence)
+
+    def test_a_refused_window_is_retried_once_as_a_whole_command(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._sampler(evidence, refusals=1)
+            screen = Screen(
+                "home", (), "账本为空", speech=(SpeechCheck(self.TARGET, (self.TARGET,)),)
+            )
+            record = sampler.p806_talkback_screen(screen, target_screenshots=False)
+            artifact = (evidence / "talkback-home.txt").read_text(encoding="utf-8")
+        self.assertEqual([1, 2], sampler.focus_ids)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(2, record["checks"][0]["command_id"])
+        self.assertIn("# retry=1 previous-command: 1", artifact)
+        self.assertIn("# command: 2", artifact)
+        # The verdict is still re-derived from the window that decided, and it is that window the
+        # gate reads: the retry bought a command, never a looser criterion.
+        status, fragments, missing, reason = talkback_check_verdict(
+            artifact, 2, self.TARGET, (self.TARGET,)
+        )
+        self.assertEqual("success", status)
+        self.assertEqual([self.TARGET], fragments)
+        self.assertEqual([], missing)
+        self.assertEqual("", reason)
+
+    def test_a_second_refusal_is_not_retried_again(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            sampler = self._sampler(evidence, refusals=2)
+            screen = Screen(
+                "home", (), "账本为空", speech=(SpeechCheck(self.TARGET, (self.TARGET,)),)
+            )
+            record = sampler.p806_talkback_screen(screen, target_screenshots=False)
+            artifact = (evidence / "talkback-home.txt").read_text(encoding="utf-8")
+        self.assertEqual([1, 2], sampler.focus_ids)
+        self.assertEqual("not-obtained", record["status"])
+        self.assertEqual(2, record["checks"][0]["command_id"])
+        self.assertEqual(artifact.count("# retry=1"), 1)
+        self.assertEqual(
+            "not-obtained",
+            talkback_check_verdict(artifact, 2, self.TARGET, (self.TARGET,))[0],
         )
 
 
@@ -2141,6 +2436,16 @@ class TalkbackArtifacts(unittest.TestCase):
             def handle_notification_permission_dialog(self) -> bool:
                 self.calls.append("dialog")
                 return False
+
+            # The r4 gates are stubbed to their no-op outcome here: this case pins the ORDER of
+            # enable -> prompt clear -> first focus, and the readiness/settle seams have their own
+            # cases below.
+            def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+                return {"status": "ready", "waited_s": 0.0, "polls": 1, "fragments": 1}
+
+            def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+                self.handle_notification_permission_dialog()
+                return {"clears": 0, "quiet_reads": 2, "quiet_after_round": 2, "rounds": 2}
 
             def enable_talkback(self, stem: str) -> dict[str, object]:
                 self.calls.append("enable")
