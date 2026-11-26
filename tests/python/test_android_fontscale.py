@@ -605,19 +605,21 @@ class TalkbackProfileLimbs(unittest.TestCase):
     constants so a drift in either side fails this test.
     """
 
-    EXPECTED: dict[str, list[tuple[str, str]]] = {
+    EXPECTED: dict[str, list[tuple[str, str, tuple[str, ...]]]] = {
         "empty": [
-            ("home", "账本为空，还没有任何交易。"),
-            ("asset", "总借入"),
-            ("analysis", "账本为空，还没有任何交易。"),
+            ("home", "账本为空，还没有任何交易。", ("账本为空，还没有任何交易。",)),
+            ("asset", "总借入", ("总借入",)),
+            ("analysis", "账本为空，还没有任何交易。", ("账本为空，还没有任何交易。",)),
         ],
         "seeded": [
-            ("search-guide", "输入条件后开始搜索"),
-            ("search-results", "对账样本转账"),
+            ("search-guide", "输入条件后开始搜索", ("输入条件后开始搜索",)),
+            # The result row's own window must also carry the transfer's outgoing leg — the
+            # seed's 1_234 minor units in CNY/2 as the row renders them, sign and code preserved.
+            ("search-results", "对账样本转账", ("对账样本转账", "-12.34 CNY")),
         ],
         "refund": [
-            ("refund-entry", "支出腿金额 12.34"),
-            ("refund-confirmation", "继承分类：早餐"),
+            ("refund-entry", "支出腿金额 12.34", ("支出腿金额 12.34",)),
+            ("refund-confirmation", "继承分类：早餐", ("继承分类：早餐",)),
         ],
     }
 
@@ -626,16 +628,14 @@ class TalkbackProfileLimbs(unittest.TestCase):
             profile = profile_by_name(name)
             self.assertTrue(profile.talkback, name)
             recorded = [
-                (screen.stem, check.target)
+                (screen.stem, check.target, check.required)
                 for screen in profile.screens
                 for check in screen.speech
             ]
+            # One focus target per speaking screen, and the required strings are spelled here
+            # independently of the module's constants: a narrowed requirement (the note without the
+            # amount) or an extra one the screen never renders fails this table.
             self.assertEqual(expected, recorded)
-            # One target per screen, and the required value IS that target: a narrowed requirement
-            # (or an extra one the screen never renders) would change this list.
-            for screen in profile.screens:
-                for check in screen.speech:
-                    self.assertEqual((check.target,), check.required)
 
     def test_the_unnamed_screens_stay_screenshot_only(self) -> None:
         seeded = {screen.stem: screen.speech for screen in profile_by_name("seeded").screens}
@@ -1440,29 +1440,31 @@ class TalkbackProfileGate(unittest.TestCase):
     PROBE_COMPONENT = P806Profile.PROBE_COMPONENT
     DEVICE_SERVICE = P806Profile.DEVICE_SERVICE
 
-    def _screens(self) -> tuple[Screen, ...]:
-        return profile_by_name("empty").screens
+    def _screens(self, profile_name: str = "empty") -> tuple[Screen, ...]:
+        return profile_by_name(profile_name).screens
 
-    def _ids(self) -> dict[tuple[str, str], int]:
+    def _ids(self, profile_name: str = "empty") -> dict[tuple[str, str], int]:
         ids: dict[tuple[str, str], int] = {}
-        for screen in self._screens():
+        for screen in self._screens(profile_name):
             for check in screen.speech:
                 ids[(screen.stem, check.target)] = len(ids) + 1
         return ids
 
-    def _write(self, evidence: Path) -> dict[str, object]:
+    def _write(self, evidence: Path, profile_name: str = "empty") -> dict[str, object]:
         """One consistent record: the raw version artifact, every target window and every png."""
-        ids = self._ids()
+        ids = self._ids(profile_name)
         enabled_raw = f"{self.PROBE_COMPONENT}:{self.DEVICE_SERVICE}"
         recorded: dict[str, object] = {}
-        for screen in self._screens():
+        for screen in self._screens(profile_name):
             if not screen.speech:
                 continue
             blocks: list[str] = []
             checks: list[dict[str, object]] = []
             for check in screen.speech:
                 command_id = ids[(screen.stem, check.target)]
-                blocks.append(P806Profile._block(check.target, command_id, [check.target]))
+                # Every string the table demands is spoken in this target's window, so a record
+                # that drops one fails on the required-value line, not on its fragments.
+                blocks.append(P806Profile._block(check.target, command_id, list(check.required)))
                 shot = f"talkback-{screen.stem}-cmd-{command_id}.png"
                 (evidence / shot).write_bytes(b"\0" * MIN_SCREENSHOT_BYTES)
                 checks.append(
@@ -1624,6 +1626,29 @@ class TalkbackProfileGate(unittest.TestCase):
             )
             problems = talkback_gate_problems(host, self._screens(), evidence)
             self.assertTrue(any("片段缺失" in problem for problem in problems), problems)
+
+    def test_a_recorded_requirement_that_drops_the_amount_fails(self) -> None:
+        """The required tuple is re-derived from the profile table, never trusted as recorded.
+
+        The twin string is the target recorded as its own only requirement — what a host that
+        dropped the signed amount would write while still naming the right row.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            host = self._write(evidence, "seeded")
+            self.assertEqual([], talkback_gate_problems(host, self._screens("seeded"), evidence))
+            checks = host["talkback"]["screens"]["search-results"]["checks"]
+            checks[0]["required"] = [checks[0]["target"]]
+            problems = talkback_gate_problems(host, self._screens("seeded"), evidence)
+            self.assertEqual(
+                [
+                    "search-results: target '对账样本转账' records requirements "
+                    "['对账样本转账'], the profile derives ['对账样本转账', '-12.34 CNY']"
+                ],
+                [problem for problem in problems if "records requirements" in problem],
+            )
 
 
 class TargetScreenshots(unittest.TestCase):

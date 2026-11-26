@@ -161,10 +161,19 @@ SEEDED_HOME_COUNT = "流水 · 共 2 笔"
 #   always-composed 总借入 card label (P503AssetsScreen.kt:215) is the screen's main line.
 P8_00_EMPTY_COPY = "账本为空，还没有任何交易。"
 P8_00_ASSET_TARGET = "总借入"
-# - P8-02: the guide face's condition-area copy (P503SearchPresentation.kt:33) and the seeded
-#   transfer's note as it rides the result row's composed description (the 结果行 the design gate
-#   names; the note literal itself is owned by the seed writer, like 早餐 below).
+# - P8-02: the guide face's condition-area copy (P503SearchPresentation.kt:33), and the seeded
+#   transfer's row on the result face — the 结果行 the design gate names, addressed by the note its
+#   composed description carries (the note literal is owned by the seed writer, like 早餐 below).
+#   That description also carries EVERY posting line of the row (flowRowContentDescription,
+#   P503LedgerViewPresentation.kt:405-421), each one as `<account> <signed value> <code>`
+#   (:431-437), while the design gate requires 金额逐项核对正负号、数值与币种
+#   (docs/specs/2026-11-22-p8-07-stage-acceptance-design.md:71). The seed writer fixes the transfer
+#   at 1_234 minor units out of the default payment account (P801FontscaleSeedWriterTest.kt:504,
+#   :318-330) in CNY/2 (CatalogManagementUseCases.kt:21, :30), so the outgoing leg announces
+#   `默认支付账户 -12.34 CNY`: the row's own window must contain that signed value with its code,
+#   and the note alone would accept a row whose amounts were never spoken.
 P8_02_GUIDE_TARGET = "输入条件后开始搜索"
+P8_02_RESULT_AMOUNT = "-12.34 CNY"
 # - P8-03: the refund candidate row's own expense-leg label with the seed's fixed cap
 #   (P503RefundEntryPresentation.kt:98). The amount FIELD's label carries a currency code that is
 #   unknown until an arrival account is chosen — the switch into 退款到账 always yields a null
@@ -1301,8 +1310,11 @@ SEEDED_SCREENS: tuple[Screen, ...] = (
         SEARCH_RESULTS_MARKER,
         absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
         # The 结果行 the design gate names: the seeded transfer, addressed by its own note as the
-        # row's composed description carries it. A header match would only prove the page opened.
-        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+        # row's composed description carries it. A header match would only prove the page opened,
+        # and the note alone would accept a row whose amounts were never spoken.
+        speech=(
+            SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE, P8_02_RESULT_AMOUNT)),
+        ),
     ),
     Screen("detail", (BACK, TapStep(SEEDED_TRANSFER_NOTE, contains=True)), SEEDED_DETAIL_MARKER),
     Screen(
@@ -1749,7 +1761,9 @@ class Sampler:
     talkback_component: str = ""
     # The image's exported preferences activity, discovered from its package dump.
     talkback_prefs_activity: str = P806_TALKBACK_PREFS_ACTIVITY
-    # P806 only: dismiss the observed Accessibility Suite notification prompt when it appears.
+    # The Accessibility Suite notification-prompt guard: on for every TalkBack profile (p806, and
+    # since P8-07 batch D the three screenshot profiles), so the prompt is cleared wherever the run
+    # drives TalkBack.
     notification_dialog_guard: bool = False
 
     def adb(self, *args: str, timeout: int = DEFAULT_TIMEOUT, best_effort: bool = False) -> str:
@@ -2436,8 +2450,9 @@ class Sampler:
     def handle_notification_permission_dialog(self) -> bool:
         """Deny the observed Accessibility Suite POST_NOTIFICATIONS prompt when it is present.
 
-        On the P806 AVD, TalkBack raises the API 33+ notification prompt after it starts; left up
-        it intercepts focus/scroll input. Only the exact permissioncontroller grant dialog whose
+        On the AVD this rig boots, TalkBack raises the API 33+ notification prompt after it starts
+        on every profile whose run drives TalkBack (all four since P8-07 batch D); left up it
+        intercepts focus/scroll input. Only the exact permissioncontroller grant dialog whose
         message is the Accessibility Suite notification prompt is touched, and denying an
         unnecessary notification permission is the least-privilege action. The enabled services are
         read at click time and choose the first gesture; a prompt that survives it is retried with
@@ -3175,7 +3190,11 @@ def talkback_gate_problems(
 def gate_artifact_problems(
     host: dict[str, object], app_apk: Path, test_apk: Path
 ) -> list[str]:
-    """The p806 gate's artifact identity: the APKs the evidence names are the files on disk."""
+    """The gate's artifact identity: the APKs the evidence names are the files on disk.
+
+    The check serves every profile since P8-07 batch D: p806's own record and the three screenshot
+    profiles' top-level record both carry the two APK hashes.
+    """
     problems: list[str] = []
     recorded = host.get("artifacts")
     if not isinstance(recorded, dict):
