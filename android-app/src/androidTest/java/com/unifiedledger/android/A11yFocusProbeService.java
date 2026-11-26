@@ -32,7 +32,10 @@ import java.util.List;
  * window (P8-06 V-12), and judges that focus by the action's own answer plus, when the action
  * refuses, by the platform's `TYPE_VIEW_ACCESSIBILITY_FOCUSED` event for the same node (P8-07 Q3
  * r4: candidate 4064dbfc logged `focus-result id=3 found=true accepted=false` and TalkBack still
- * spoke that sentence).
+ * spoke that sentence), plus, when the action AND the event both stay silent, by the platform's
+ * current accessibility focus read back after the window (P8-07 r7 D0). The focus that is already
+ * on the target is cleared before the request, because Compose refuses to re-focus it and the host
+ * only counts a fragment spoken inside this command's own window.
  *
  * <p>It holds no product data, lives only in the androidTest APK (never in the product build), and
  * logs under the {@code ULA11Y} tag so the host can read the transcript with plain `adb logcat`.
@@ -674,7 +677,48 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         + encode(target.getText())
                         + "\" desc64=\""
                         + encode(target.getContentDescription())
-                        + "\"");
+                        + "\" actions=0x"
+                        + Integer.toHexString(target.getActions())
+                        + " clickable="
+                        + target.isClickable()
+                        + " scrollable="
+                        + target.isScrollable());
+        // P8-07 r7 D0: the platform's CURRENT accessibility focus is read before anything is sent,
+        // and a target that already holds it is cleared first. Compose answers
+        // ACTION_ACCESSIBILITY_FOCUS with false when the virtual view is ALREADY accessibility
+        // focused (AndroidComposeViewAccessibilityDelegateCompat#requestAccessibilityFocus skips
+        // the event and returns false on that branch), and an action that changed nothing posts no
+        // TYPE_VIEW_ACCESSIBILITY_FOCUSED at all: that is the analysis leg's `returned=false` with
+        // `seen=0` and no fragment inside the window. The host counts a fragment only strictly
+        // between this command's begin and end, so the focus has to MOVE inside the window — a
+        // target that already held it was spoken before `speech-window-begin`, and merely accepting
+        // such a command would still read `fragments-missing`. That is why the clear belongs before
+        // the request, not after a refusal.
+        AccessibilityNodeInfo current = currentAccessibilityFocus();
+        Log.i(
+                TAG,
+                "focus-before id="
+                        + id
+                        + " found="
+                        + (current != null)
+                        + (current == null
+                                ? ""
+                                : " bounds="
+                                        + focusNodeBounds(current)
+                                        + " text64="
+                                        + encode(current.getText())));
+        if (isCommandTarget(current, needle, chosenBounds)) {
+            // A failed clear is not fatal: the request below still goes out, and the verdict is
+            // re-derived from the action answer, the focus event and the post-action read, never
+            // from this line.
+            boolean cleared = false;
+            try {
+                cleared = current.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
+            } catch (RuntimeException failure) {
+                Log.i(TAG, "focus-error id=" + id + " error=" + failure);
+            }
+            Log.i(TAG, "focus-clear id=" + id + " answered=" + cleared);
+        }
         AccessibilityNodeInfo focus = focusTarget(target, id);
         Log.i(TAG, "speech-window-begin id=" + id);
         // The action's answer is measured, never assumed, and the count/time below are the boundary
@@ -697,6 +741,28 @@ public final class A11yFocusProbeService extends AccessibilityService {
             Log.i(TAG, "focus-action id=" + id + " returned=false");
             if (!awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt).isEmpty()) {
                 source = "accessibility-event";
+            } else {
+                // Third and last source (P8-07 r7 D0): the action answered false AND no matching
+                // event arrived, so the platform's current focus is read once more. A focus that
+                // now IS this command's target is the platform's own record that the move landed —
+                // judged by the same two bases the event matcher uses — and the read is logged so
+                // the value can be re-derived from this file instead of trusted.
+                AccessibilityNodeInfo readBack = currentAccessibilityFocus();
+                Log.i(
+                        TAG,
+                        "focus-read id="
+                                + id
+                                + " found="
+                                + (readBack != null)
+                                + (readBack == null
+                                        ? ""
+                                        : " bounds="
+                                                + focusNodeBounds(readBack)
+                                                + " text64="
+                                                + encode(readBack.getText())));
+                if (isCommandTarget(readBack, needle, chosenBounds)) {
+                    source = "focus-read";
+                }
             }
         }
         boolean accepted = !"none".equals(source);
@@ -775,6 +841,51 @@ public final class A11yFocusProbeService extends AccessibilityService {
         Rect bounds = new Rect();
         node.getBoundsInScreen(bounds);
         return bounds.toShortString();
+    }
+
+    /**
+     * The node the platform currently reports as accessibility-focused, or null when this service
+     * cannot read it (no active window, a root that does not resolve, or no focus set).
+     *
+     * <p>P8-07 r7 D0 reads it twice and both reads are evidence: the one BEFORE the request decides
+     * whether the focus has to be cleared so the move starts from "not focused" (see
+     * [runCommand]), and the one AFTER a silent action and a silent event lets a focus that did land
+     * be accepted without an event. A read this service cannot take is not a verdict — a null answer
+     * writes `found=false` on its own line and the command still runs the action and the bounded
+     * wait — so a tree that refuses `findFocus` can never invent an acceptance.
+     */
+    private AccessibilityNodeInfo currentAccessibilityFocus() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            return root == null ? null : root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+        } catch (RuntimeException unavailable) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether [node] is THIS command's target, by the same two bases the focus-event matcher uses:
+     * its own text or content description carries [needle], or its rect overlaps [commandBounds] —
+     * the rect of the chosen visible target.
+     *
+     * <p>An ancestor that merged the target's text, or whose rect covers the target's, is the node
+     * TalkBack speaks for this target, so it is the focus that has to be cleared for the utterance
+     * to happen inside the command's window. A null [node], an empty needle and an empty rect all
+     * answer false, so neither degenerate read can clear a focus or accept one.
+     */
+    private static boolean isCommandTarget(
+            AccessibilityNodeInfo node, String needle, Rect commandBounds) {
+        if (node == null) {
+            return false;
+        }
+        if (!needle.isEmpty()
+                && (contains(node.getText(), needle)
+                        || contains(node.getContentDescription(), needle))) {
+            return true;
+        }
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        return !commandBounds.isEmpty() && Rect.intersects(bounds, commandBounds);
     }
 
     /**

@@ -3525,6 +3525,20 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     flags this bind actually received. Each of the three is pinned on the code or the XML text, and
     the assertions strip comment-only lines so the KDoc that explains a field cannot satisfy the
     contract that pins it.
+
+    The r7 round settles the red the fixed candidate `57a40254` still produced on the empty
+    profile's analysis screen (`returned=false`, `seen=0`, no fragment inside the window). Compose's
+    `AndroidComposeViewAccessibilityDelegateCompat#requestAccessibilityFocus` returns false WITHOUT
+    posting an event when the virtual view is already accessibility-focused, and it refuses outright
+    when touch exploration is off, so the probe now reads the platform's current focus first, clears
+    it when it already sits on this command's target, and only then requests it (D0). A target that
+    already held the focus had already been spoken, outside this command's window, which the host
+    still reads as `fragments-missing` — that is why the clear must come BEFORE the request. When the
+    action and the bounded event wait both stay silent, the platform's current focus is read once
+    more and may prove the move (`source=focus-read`), and the found-node line keeps the node's
+    action mask and its clickable/scrollable flags (D2) so a refusal can be told apart from a mask
+    that never offered the action. The four sources are mutually exclusive and each one is readable
+    from the raw lines of its own window.
     """
 
     _ROOT = Path(__file__).resolve().parents[2]
@@ -3926,6 +3940,218 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         self.assertIn("Integer.toHexString(info.flags)", body)
         self.assertIn('Log.i(TAG, "service connected");', body)
 
+    def test_the_already_focused_target_is_cleared_before_it_is_requested(self) -> None:
+        """Turn it red: request the focus without reading/clearing the platform's current focus.
+
+        `57a40254` sends the request straight away: its `runCommand` contains neither
+        `ACTION_CLEAR_ACCESSIBILITY_FOCUS` nor any `focus-read`, so the literals that disappear under
+        a revert are `ACTION_CLEAR_ACCESSIBILITY_FOCUS` (count 0 -> 1) and `source = "focus-read";`
+        (count 0 -> 1). Compose answers false WITHOUT posting an event when the virtual view already
+        holds the focus, so a target that already held it keeps `returned=false`, `seen=0` and — the
+        part the gate reads — no fragment inside this command's window, because its utterance
+        happened before `speech-window-begin`. The order assertion is the whole point: a clear placed
+        after the refusal would leave the request refused and the focus where it was.
+        """
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        clear = "performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)"
+        run = self._method_body("private void runCommand(")
+        self.assertIn(clear, run)
+        self.assertLess(run.index(clear), run.index(focus))
+        # The clear only fires when the node the platform reports IS this command's target.
+        self.assertLess(run.index("isCommandTarget(current, needle, chosenBounds)"), run.index(clear))
+        # Acceptance: the action's own answer, then the bounded event, then the post-action read —
+        # four mutual sources and no fifth path to `accepted=true`.
+        self.assertIn('String source = "none";', run)
+        self.assertIn('source = "action";', run)
+        self.assertIn('source = "accessibility-event";', run)
+        self.assertIn('source = "focus-read";', run)
+        self.assertEqual(4, run.count('source = "'))
+        self.assertLess(run.index("awaitFocusEvent("), run.index('source = "focus-read";'))
+        self.assertLess(
+            run.index('source = "accessibility-event";'), run.index('source = "focus-read";')
+        )
+        self.assertLess(
+            run.index('source = "focus-read";'),
+            run.index('boolean accepted = !"none".equals(source);'),
+        )
+        # The read is judged by the same two bases as the event matcher, and its degenerate inputs
+        # (a null node, an empty needle, an empty rect) answer false.
+        helper = self._method_body("private static boolean isCommandTarget(")
+        self.assertIn("if (node == null) {", helper)
+        self.assertIn("contains(node.getText(), needle)", helper)
+        self.assertIn("contains(node.getContentDescription(), needle)", helper)
+        self.assertIn("Rect.intersects(bounds, commandBounds)", helper)
+        self.assertIn("!commandBounds.isEmpty()", helper)
+
+    def test_the_pre_focus_state_and_its_clear_are_logged(self) -> None:
+        """Turn it red: keep the pre-focus read and the clear silent.
+
+        Without `focus-before` the artifact cannot tell "the target already held the focus, so the
+        request changed nothing" from "the action was never offered", and without `focus-clear` it
+        cannot tell whether the clear ran or the request was made on top of a live focus. The
+        literals that disappear under a revert are `"focus-before id="` and `"focus-clear id="`
+        (each 0 -> 1 on `57a40254`), plus `"focus-read id="` for the post-action re-read. Both reads
+        carry the node's own `bounds=`/`text64=` when one exists, and a read this service cannot take
+        writes `found=false` and continues — no `return;` may sit between the read and the request.
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        self.assertIn('"focus-before id="', run)
+        before_at = run.index('"focus-before id="')
+        before = run[before_at : run.index('"focus-clear id="')]
+        for key in ('" found="', '" bounds="', '" text64="'):
+            self.assertIn(key, before)
+        self.assertIn("focusNodeBounds(current)", before)
+        self.assertIn("encode(current.getText())", before)
+        self.assertLess(before_at, run.index("focusTarget(target, id)"))
+        self.assertNotIn("return;", run[before_at : run.index("focusTarget(target, id)")])
+        clear_at = run.index('"focus-clear id="')
+        self.assertIn('" answered="', run[clear_at : clear_at + 120])
+        self.assertIn("cleared = current.performAction(", run)
+        read_at = run.index('"focus-read id="')
+        read = run[read_at : run.index("if (isCommandTarget(readBack", read_at)]
+        for key in ('" found="', '" bounds="', '" text64="'):
+            self.assertIn(key, read)
+        self.assertIn("focusNodeBounds(readBack)", read)
+        self.assertIn("encode(readBack.getText())", read)
+        helper = self._method_body("private AccessibilityNodeInfo currentAccessibilityFocus(")
+        self.assertIn("getRootInActiveWindow()", helper)
+        self.assertIn("root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)", helper)
+        self.assertIn("return null;", helper)
+
+    def test_the_found_node_line_carries_the_actions_mask_and_the_flags(self) -> None:
+        """Turn it red: log the found node without its action mask or its two flags.
+
+        `57a40254`'s found-node line ends at `desc64` (count of ` actions=0x` is 0 there), so a
+        refusal cannot say whether the platform ever offered `ACTION_ACCESSIBILITY_FOCUS` (bit
+        `0x40`) to this node, and a bare `clickable=false`/`scrollable=false` reading has nothing to
+        be compared with. The three keys sit on the SAME `target` stage line — its prefix is
+        unchanged, so stage recognition is untouched — and each value is a single space-free token.
+        """
+        run = self._code(self._method_body("private void runCommand("))
+        line = run[
+            run.index("found=true visible=true bounds=") : run.index(
+                "AccessibilityNodeInfo focus = focusTarget(target, id);"
+            )
+        ]
+        for key in ('" actions=0x"', '" clickable="', '" scrollable="'):
+            self.assertIn(key, line)
+        self.assertIn("Integer.toHexString(target.getActions())", line)
+        self.assertIn("target.isClickable()", line)
+        self.assertIn("target.isScrollable()", line)
+        # `actions=` is the whole bit set the node reports, not a hand-built constant.
+        self.assertNotIn("0x40", line)
+        self.assertNotIn("ACTION_ACCESSIBILITY_FOCUS", line)
+
+    def test_the_window_artifact_keeps_the_connect_time_service_info_line(self) -> None:
+        """Turn it red: write the screen's header without the probe's connect-time line.
+
+        `service_info_comment` (count 0 -> 1 in `sampler.py`) is a `#` comment and nothing else:
+        `_ULA11Y_LINE` anchors on the logcat brief column, so `_ula11y_event` answers `None` for it
+        and a complete window that carries it isolates with the same empty problem and the same
+        verdict. Both outcomes are pinned — the present line verbatim, and `absent` when the read
+        never carried one — because the comment must never be able to invent evidence either.
+        """
+        import tempfile
+        from android_fontscale.sampler import _ula11y_event, _ula11y_tokens
+
+        service_line = "I/ULA11Y  ( 5624): service-info eventTypes=0x8820 flags=0x2"
+        connect_log = service_line + "\nI/ULA11Y  ( 5624): service connected\n"
+
+        class _ConnectSampler(Sampler):
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                return connect_log
+
+        target = "结余 -17.34 CNY"
+
+        class _WindowSampler(Sampler):
+            # What this fake bind's connect-time read carried; the real `enable_talkback` stores the
+            # read that saw `service connected` in `probe_connection_log`.
+            service_log = ""
+
+            def enable_talkback(self, stem: str) -> dict[str, object]:
+                self.probe_connection_log = self.service_log
+                return {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": f"talkback-enabled-{stem}.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+
+            def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+                return {"status": "ready", "waited_s": 0.0, "polls": 1, "fragments": 1}
+
+            def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+                return {"clears": 0, "quiet_reads": 2, "quiet_after_round": 2, "rounds": 2}
+
+            def handle_notification_permission_dialog(self) -> bool:
+                return False
+
+            def talkback_focus(self, needle: str, command_id: int) -> dict[str, object]:
+                return {
+                    "id": command_id,
+                    "target": needle,
+                    "completed": True,
+                    "accepted": True,
+                    "problem": "",
+                    "lines": P806Profile._window(
+                        [needle], command_id=command_id, target=needle
+                    ).splitlines(),
+                }
+
+            def disable_talkback_accessibility(self) -> None:
+                pass
+
+            def wait_accessibility_disabled(self) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Path(temp)
+            connect = _ConnectSampler(
+                adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+            )
+            # The connect-time read itself is the capture: no second device round-trip is taken.
+            self.assertTrue(connect.wait_probe_connected(timeout_s=1))
+            sampler = _WindowSampler(
+                adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-fontscale"
+            )
+            sampler.service_log = connect.probe_connection_log
+            screen = Screen("home", (), "首页", speech=(SpeechCheck(target, (target,)),))
+            record = sampler.p806_talkback_screen(screen, target_screenshots=False)
+            artifact = (evidence / "talkback-home.txt").read_text(encoding="utf-8")
+            # A screen whose bind never produced the line records the explicit absence, never the
+            # previous screen's mask.
+            sampler.service_log = ""
+            absent_screen = Screen("asset", (), "账户", speech=(SpeechCheck(target, (target,)),))
+            absent_record = sampler.p806_talkback_screen(absent_screen, target_screenshots=False)
+            absent = (evidence / "talkback-asset.txt").read_text(encoding="utf-8")
+        self.assertEqual("success", record["status"])
+        self.assertEqual("success", absent_record["status"])
+        kept = [line for line in artifact.splitlines() if line.startswith("# service-info: ")]
+        self.assertEqual(1, len(kept))
+        self.assertEqual(f"# service-info: {service_line}", kept[0])
+        # The comment is invisible to the stage scanner and to the window it sits in.
+        self.assertIsNone(_ula11y_event(kept[0]))
+        self.assertIsNone(_ula11y_tokens(kept[0]))
+        clean = P806Profile._window([target], command_id=1, target=target)
+        mixed = clean.replace(
+            "speech-window-begin id=1", "speech-window-begin id=1\n" + kept[0]
+        )
+        self.assertNotEqual(clean, mixed)
+        self.assertEqual("", isolate_talkback_window(clean, 1)[1])
+        self.assertEqual("", isolate_talkback_window(mixed, 1)[1])
+        self.assertEqual("success", talkback_check_verdict(mixed, 1, target, (target,))[0])
+        self.assertEqual(
+            talkback_check_verdict(clean, 1, target, (target,)),
+            talkback_check_verdict(mixed, 1, target, (target,)),
+        )
+        # A read that carried no such line writes the explicit absence, never a blank.
+        self.assertEqual(
+            ["# service-info: absent"],
+            [line for line in absent.splitlines() if line.startswith("# service-info: ")],
+        )
+        # The capture is the connect read itself — the field the artifact reads its line from.
+        self.assertEqual(connect_log, connect.probe_connection_log)
 
 
 if __name__ == "__main__":
