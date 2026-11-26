@@ -3498,7 +3498,33 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
     ancestor; the resolved node is the only receiver of the action and its own text is logged
     losslessly so the next round can read which sentence the ancestor speaks.
 
+    Candidate 4064dbfc (run 45783028573, `profile=empty`, analysis screen) then settled what that
+    refusal means: the node was visible, the choice was right, it and all four ancestors were
+    unfocusable, `focus-result id=3 found=true accepted=false` — and the platform posted
+    `TYPE_VIEW_ACCESSIBILITY_FOCUSED` for it right afterwards, so TalkBack spoke
+    `账本为空，还没有任何交易。`. A false return from `performAction` therefore describes the ACTION,
+    not the focus. The probe keeps the action's answer and additionally accepts a refused action
+    only when it observed a focus event that (a) was recorded after the action, (b) matches this
+    command's target by text or by rect, and (c) arrived inside a named bounded window; the
+    `focus-result` line names which of the three sources decided (`action` / `accessibility-event` /
+    `none`). The host's verdict is untouched, so an event-proven focus still needs the TalkBack
+    fragment between that command's own begin and end markers.
+
     Each test names the single edit that turns it red.
+
+    The r5 round closes what these contracts left unguarded and unreadable: the service config that
+    makes the event arrive at all, the clock the receipt is stamped with, the ring bound, the branch
+    the wait sits in, the upper bound on an event's stamp, and the rect the bounds basis is measured
+    against. Each of those is pinned on an executable Java statement or on the service XML itself,
+    never on a comment.
+
+    The r6 round closes the three evidence gaps that would otherwise leave a `seen=0` window
+    unanswerable: the matched line carries the event's OWN rect and text (so `matched=` can be
+    re-derived instead of trusted), the service config's comment blames the event mask for delivery
+    rather than the retrieval flag, and a connect-time `service-info` line reports the mask and the
+    flags this bind actually received. Each of the three is pinned on the code or the XML text, and
+    the assertions strip comment-only lines so the KDoc that explains a field cannot satisfy the
+    contract that pins it.
     """
 
     _ROOT = Path(__file__).resolve().parents[2]
@@ -3512,15 +3538,63 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         / "android"
         / "A11yFocusProbeService.java"
     )
+    _PROBE_CONFIG = (
+        Path("android-app")
+        / "src"
+        / "androidTest"
+        / "res"
+        / "xml"
+        / "ul_a11y_probe_config.xml"
+    )
+    _TEST_MANIFEST = Path("android-app") / "src" / "androidTest" / "AndroidManifest.xml"
 
     def _source(self) -> str:
         return (self._ROOT / self._PROBE).read_text(encoding="utf-8")
+
+    def _config(self) -> str:
+        return (self._ROOT / self._PROBE_CONFIG).read_text(encoding="utf-8")
+
+    def _manifest(self) -> str:
+        return (self._ROOT / self._TEST_MANIFEST).read_text(encoding="utf-8")
+
+    def _config_attribute(self, name: str) -> str:
+        """One `android:<name>="..."` value of the probe's accessibility-service config."""
+        config = self._config()
+        marker = f'android:{name}="'
+        start = config.index(marker) + len(marker)
+        return config[start : config.index('"', start)]
 
     def _method_body(self, signature: str) -> str:
         """One Java method body: from its signature to the first method-closing brace line."""
         source = self._source()
         start = source.index(signature)
         return source[start : source.index("\n    }\n", start)]
+
+    def _java_block(self, body: str, opener: str) -> tuple[int, int]:
+        """The `{` offset and its matching `}` offset of the block that opens with `opener`."""
+        start = body.index(opener) + len(opener) - 1
+        depth = 0
+        for index in range(start, len(body)):
+            if body[index] == "{":
+                depth += 1
+            elif body[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return start, index
+        raise AssertionError(f"unclosed block after {opener!r}")
+
+    def _code(self, java: str) -> str:
+        """Java with its comment-only lines dropped, so an assertion can only bind code.
+
+        This service keeps every comment on its own `//`, `/*` or `*` line and never trails one after
+        a statement, so dropping those lines is exact here — and it is what stops a contract from
+        being satisfied by the KDoc that explains the very field it pins.
+        """
+        return "\n".join(
+            line
+            for line in java.splitlines()
+            if line.strip() and not line.strip().startswith(("//", "/*", "*"))
+        )
 
     def test_the_visibility_gate_reads_the_platform_flag(self) -> None:
         """Turn it red: drop `isVisibleToUser()` from `visibleInWindow`."""
@@ -3575,9 +3649,9 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         """Turn it red: log one indistinguishable line for node, ancestor and missing ancestor."""
         body = self._method_body("private AccessibilityNodeInfo focusTarget(")
         self.assertIn('"focus-target id="', body)
-        self.assertIn('" target=node focusable=true"', body)
+        self.assertIn('" target=node focusable=true focusNodeBounds="', body)
         self.assertIn('" target=ancestor depth="', body)
-        self.assertIn('" target=none reason=no-focusable-ancestor"', body)
+        self.assertIn('" target=none reason=no-focusable-ancestor focusNodeBounds="', body)
 
     def test_the_ancestor_line_carries_the_sentence_it_will_speak(self) -> None:
         """Turn it red: log the ancestor's bounds without the text TalkBack will read from it."""
@@ -3596,6 +3670,262 @@ class ProbeVisibleCandidateChoice(unittest.TestCase):
         self.assertEqual(1, body.count(focus))
         self.assertLess(body.index("visible=0"), body.index("focusTarget(target, id)"))
         self.assertIn("focus." + focus, body)
+
+    def test_a_refused_action_is_proven_by_the_platform_focus_event(self) -> None:
+        """Turn it red: judge the focus by `performAction`'s return value alone."""
+        body = self._method_body("public void onAccessibilityEvent(")
+        self.assertIn("AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED", body)
+        self.assertIn("recordFocusEvent(event)", body)
+        self.assertIn('FOCUS_EVENT_SUBTYPE = "TYPE_VIEW_ACCESSIBILITY_FOCUSED";', self._source())
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("subtype=", wait)
+        self.assertIn("+ FOCUS_EVENT_SUBTYPE", wait)
+
+    def test_the_event_must_match_this_target_by_text_or_by_rect(self) -> None:
+        """Turn it red: accept any focus event inside the window, whatever node it moved to."""
+        body = self._method_body("private static String matchBasis(")
+        self.assertIn(
+            "carriedText(event, needle) || event.description.contains(needle)", body
+        )
+        self.assertIn("Rect.intersects(event.bounds, focusBounds)", body)
+        # Both matchers refuse to pass on their degenerate input: `contains("")` is always true and
+        # an empty rect intersects nothing, so a missing needle or unreadable source stays a refusal.
+        self.assertIn("!needle.isEmpty()", body)
+        self.assertIn("!focusBounds.isEmpty()", body)
+        self.assertIn('return "";', body)
+
+    def test_the_action_is_bracketed_by_an_event_count_and_a_bounded_wait(self) -> None:
+        """Turn it red: wait for an event without stamping the count and the clock before the action."""
+        focus = "performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)"
+        body = self._method_body("private void runCommand(")
+        self.assertLess(
+            body.index("long sequenceBeforeAction = focusEventSequence();"),
+            body.index(focus),
+        )
+        self.assertLess(body.index("long actionAt = SystemClock.elapsedRealtime();"), body.index(focus))
+        self.assertLess(
+            body.index(focus),
+            body.index(
+                "awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt)"
+            ),
+        )
+        self.assertIn("FOCUS_EVENT_WAIT_MS = 2500L;", self._source())
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("long deadline = actionAt + FOCUS_EVENT_WAIT_MS;", wait)
+        self.assertIn("if (now >= deadline)", wait)
+        self.assertIn("candidate.sequence <= sequenceBeforeAction", wait)
+        self.assertIn("candidate.receivedAt < actionAt", wait)
+
+    def test_the_focus_result_names_which_evidence_accepted_it(self) -> None:
+        """Turn it red: log `accepted=` alone, so an event-proven focus reads like an action one."""
+        body = self._method_body("private void runCommand(")
+        self.assertIn('" source="', body)
+        self.assertIn('String source = "none";', body)
+        self.assertIn('source = "action";', body)
+        self.assertIn('source = "accessibility-event";', body)
+
+    def test_a_refused_action_without_an_event_keeps_the_refusal(self) -> None:
+        """Turn it red: accept on the timeout path, or default `source` to the event branch."""
+        body = self._method_body("private void runCommand(")
+        self.assertIn('String source = "none";', body)
+        self.assertIn('boolean accepted = !"none".equals(source);', body)
+        self.assertIn("if (!awaitFocusEvent(", body)
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn('" matched=none afterActionMs="', wait)
+        self.assertIn('return "";', wait)
+
+    def test_the_probe_service_config_subscribes_to_the_focus_event(self) -> None:
+        """Turn it red: revert the event mask to the two window types alone.
+
+        Under `224abfb8` the service config carries neither `typeViewAccessibilityFocused` nor
+        `flagIncludeNotImportantViews`; with both gone the event mask has no focus type, so
+        `onAccessibilityEvent` is never called for the event the refused-action verdict reads and
+        every refused command decays to `source=none` after the full wait. The mask is parsed into
+        its `|`-separated types, so "kept the two window types" is asserted, not assumed.
+        """
+        mask = self._config_attribute("accessibilityEventTypes").split("|")
+        self.assertIn("typeViewAccessibilityFocused", mask)
+        self.assertIn("typeWindowStateChanged", mask)
+        self.assertIn("typeWindowContentChanged", mask)
+        self.assertIn(
+            "flagIncludeNotImportantViews", self._config_attribute("accessibilityFlags").split("|")
+        )
+        # The config only matters while the manifest still binds it to this service.
+        self.assertIn('android:resource="@xml/ul_a11y_probe_config"', self._manifest())
+        self.assertIn(
+            'android:name="com.unifiedledger.android.A11yFocusProbeService"', self._manifest()
+        )
+
+    def test_the_receipt_clock_is_the_monotonic_clock_of_the_action(self) -> None:
+        """Turn it red: stamp the receipt with `System.currentTimeMillis()`.
+
+        `224abfb8` already reads `elapsedRealtime()` here, so this is a mutation guard rather than a
+        revert guard: the literal that disappears is
+        `long receivedAt = SystemClock.elapsedRealtime();`. `receivedAt` is compared against the
+        action's stamp, so a wall clock that is reset or moves backwards turns a same-command event
+        into a "before this action" one; `currentTimeMillis` must stay out of this service.
+        """
+        body = self._method_body("private void recordFocusEvent(")
+        self.assertIn("long receivedAt = SystemClock.elapsedRealtime();", body)
+        self.assertNotIn("currentTimeMillis", self._source())
+        run = self._method_body("private void runCommand(")
+        self.assertIn("long actionAt = SystemClock.elapsedRealtime();", run)
+
+    def test_the_event_ring_is_bounded_and_evicts_the_oldest(self) -> None:
+        """Turn it red: keep every focus event, or evict from the newest end.
+
+        `224abfb8` already bounds the ring, so this is a mutation guard: the literals that disappear
+        are `while (focusEvents.size() > MAX_FOCUS_EVENTS) {` and `focusEvents.removeFirst();`.
+        Without them the deque grows for the whole bound session and each command re-scans every
+        event it ever saw, which is what the bounded window is supposed to make unnecessary.
+        """
+        body = self._method_body("private void recordFocusEvent(")
+        self.assertIn("MAX_FOCUS_EVENTS = 32;", self._source())
+        self.assertIn("while (focusEvents.size() > MAX_FOCUS_EVENTS) {", body)
+        self.assertIn("focusEvents.removeFirst();", body)
+
+    def test_the_wait_sits_inside_the_refused_action_branch(self) -> None:
+        """Turn it red: wait for the event outside the `} else {` of `if (answered)`.
+
+        `224abfb8` already waits only on the refused path, so this is a mutation guard: the literal
+        that disappears under the mutation is the single `awaitFocusEvent(` call inside that block.
+        An unconditional wait would add the full window to every accepted command while letting a
+        stale event decide a focus the action itself already reported. The branch is located by
+        walking braces from `if (answered) {`, so a wait moved after the block is outside it — the
+        `focus` argument the call carries is pinned by the bounds-basis contract.
+        """
+        run = self._method_body("private void runCommand(")
+        self.assertEqual(1, run.count("awaitFocusEvent("))
+        gate = run.index("if (answered) {")
+        else_at = run.index("} else {", gate)
+        self.assertIn('source = "action";', run[gate:else_at])
+        self.assertIn("Log.i(TAG, \"focus-action id=\" + id + \" returned=false\");", run[else_at:])
+        else_start, else_end = self._java_block(run, "} else {")
+        call = run.index("awaitFocusEvent(")
+        self.assertLess(else_start, call)
+        self.assertLess(call, else_end)
+
+    def test_a_focus_event_stamped_after_the_window_is_not_accepted(self) -> None:
+        """Turn it red: drop the upper bound on the event's own stamp.
+
+        Reverting `224abfb8` loses `if (candidate.receivedAt > deadline) {` — the loop then judges
+        only `receivedAt >= actionAt`, so a poll that wakes past the deadline accepts an event
+        stamped after the window closed and prints `afterActionMs` greater than `waitMs` on the very
+        line that claims the window. The matched line keeps printing the event's own stamp, and the
+        timeout line caps its wait at the window, so `afterActionMs <= waitMs` is readable on every
+        line of the transcript.
+        """
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("long deadline = actionAt + FOCUS_EVENT_WAIT_MS;", wait)
+        self.assertIn("if (candidate.receivedAt > deadline) {", wait)
+        self.assertLess(
+            wait.index("if (candidate.receivedAt > deadline) {"),
+            wait.index("matchBasis(candidate, needle, focusBounds)"),
+        )
+        self.assertIn("+ (candidate.receivedAt - actionAt)", wait)
+        self.assertIn("long waited = Math.min(now - actionAt, FOCUS_EVENT_WAIT_MS);", wait)
+        self.assertIn("if (now >= deadline)", wait)
+
+    def test_the_bounds_basis_uses_the_rect_the_action_was_sent_to(self) -> None:
+        """Turn it red: hand `matchBasis` the pre-action target's rect again.
+
+        Reverting `224abfb8` restores `targetBounds` (absent from this source now) and drops every
+        `focusNodeBounds=` field, so `assertNotIn` fails and the `focus` argument disappears from the
+        call. Under that shape any node overlapping where the needle was FOUND — an ancestor's
+        neighbour, an overlapping sibling — proves this command's focus, which is the false green
+        this contract exists to stop; the acted node's own rect is the only one an event may overlap.
+        """
+        self.assertNotIn("targetBounds", self._source())
+        run = self._method_body("private void runCommand(")
+        self.assertIn("AccessibilityNodeInfo focus = focusTarget(target, id);", run)
+        self.assertIn(
+            "awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt)", run
+        )
+        wait = self._method_body("private String awaitFocusEvent(")
+        self.assertIn("AccessibilityNodeInfo focusNode,", wait)
+        self.assertIn("focusNode.getBoundsInScreen(focusBounds)", wait)
+        self.assertIn("matchBasis(candidate, needle, focusBounds)", wait)
+        basis = self._method_body("private static String matchBasis(")
+        self.assertIn("Rect.intersects(event.bounds, focusBounds)", basis)
+        self.assertNotIn("event.bounds, targetBounds", basis)
+        resolved = self._method_body("private AccessibilityNodeInfo focusTarget(")
+        self.assertEqual(3, resolved.count(' focusNodeBounds="'))
+
+    def test_the_matched_event_logs_its_own_rect_and_text(self) -> None:
+        """Turn it red: log `matched=` alone, without the event's own rect and text.
+
+        `matched=text|bounds` names the basis, not the event, so a container's or an overlay's event
+        that merely overlapped the acted node read exactly like the acted node's own and the artifact
+        could not tell them apart. The matched line now carries `eventBounds=` (the event source's
+        rect, `[]` when the service could not read it) and `eventText64=` (base64 of the space-joined
+        text, absent when the event carried none), which is what lets a reviewer re-derive BOTH
+        bases: decode `eventText64` against the `needle64` of this command's `command` line, or
+        intersect `eventBounds` with the `focusNodeBounds` of its `focus-target` line. Reverting
+        `d2e76863` loses `eventBounds=`, `eventText64=` and `rectToken` together. Every key the
+        matched line already had is asserted alongside them, so a field cannot be traded for another.
+        """
+        wait = self._code(self._method_body("private String awaitFocusEvent("))
+        head = wait.index('String head = "focus-event id="')
+        matched = wait[head : wait.index("return basis;", head)]
+        for kept in ('" subtype="', '" matched="', '" afterActionMs="', '" waitMs="'):
+            self.assertIn(kept, matched)
+        self.assertIn('" eventBounds="', matched)
+        self.assertIn('" eventText64="', matched)
+        # The rect is the EVENT's own, printed through a helper that keeps "unreadable" apart from a
+        # zero-size rect at the origin.
+        self.assertIn("rectToken(candidate.bounds)", matched)
+        self.assertIn('return "[]";', self._method_body("private static String rectToken("))
+        self.assertIn("encode(candidate.text)", matched)
+
+    def test_the_config_comment_blames_the_mask_not_the_flag(self) -> None:
+        """Turn it red: restore the two causal claims about the window read and the flag.
+
+        `d2e76863` says the two window types stay "because the probe still reads the active window"
+        and that the flag "is what makes that event reach the service at all". Both are backwards:
+        the window read is `canRetrieveWindowContent`, and event delivery is the mask; the flag only
+        widens what this service may read. Only the rationale was wrong, so the two attributes are
+        asserted unchanged beside the rewritten comment — the mask keeps `typeViewAccessibilityFocused`
+        and the flag keeps its name, and the comment is flattened because it wraps.
+        """
+        config = self._config()
+        comment = " ".join(config[: config.index("-->")].split())
+        self.assertNotIn(
+            "the two window types stay because the probe still reads the active window", comment
+        )
+        self.assertNotIn("is what makes that event reach the service at all", comment)
+        self.assertIn("The window read is a capability, not an event type", comment)
+        self.assertIn("retained behaviour, not as a focus-evidence path", comment)
+        self.assertIn("Event delivery is the mask", comment)
+        self.assertIn("ORs over isImportantForAccessibility()", comment)
+        self.assertIn(
+            "typeViewAccessibilityFocused",
+            self._config_attribute("accessibilityEventTypes").split("|"),
+        )
+        self.assertIn(
+            "flagIncludeNotImportantViews",
+            self._config_attribute("accessibilityFlags").split("|"),
+        )
+
+    def test_the_connection_reports_the_effective_event_mask(self) -> None:
+        """Turn it red: drop the connect-time `service-info` line.
+
+        `seen=0` is the signature the next device round has to explain, and without this line the
+        artifact cannot separate "the mask never reached this bind" from "the platform posted no
+        event": the XML states an intent, not what the framework handed this connection. The
+        assertion is on the executable statements with comment lines stripped, so the KDoc that names
+        the focus bit cannot satisfy it, and the values are hex so the reader can compare them with
+        the platform's own bit constants. `service connected` stays its own unchanged line — the host
+        recognises readiness by that exact message, never by this one.
+        """
+        body = self._code(self._method_body("protected void onServiceConnected()"))
+        self.assertIn("AccessibilityServiceInfo info = getServiceInfo();", body)
+        self.assertLess(body.index("getServiceInfo()"), body.index('"service-info eventTypes=0x"'))
+        self.assertIn('"service-info eventTypes=0x"', body)
+        self.assertIn('" flags=0x"', body)
+        self.assertIn("Integer.toHexString(info.eventTypes)", body)
+        self.assertIn("Integer.toHexString(info.flags)", body)
+        self.assertIn('Log.i(TAG, "service connected");', body)
+
 
 
 if __name__ == "__main__":

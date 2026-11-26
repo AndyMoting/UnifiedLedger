@@ -1,9 +1,11 @@
 package com.unifiedledger.android;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Rect;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.Log;
@@ -27,7 +29,10 @@ import java.util.List;
  * connected: dumps a bounded summary of the visible tree (text / class / focusable / a11y-focused),
  * asks for accessibility focus on every node whose text contains one of {@link #TARGETS}, and
  * watches a host-commanded channel that focuses one named target inside an id-labelled speech
- * window (P8-06 V-12).
+ * window (P8-06 V-12), and judges that focus by the action's own answer plus, when the action
+ * refuses, by the platform's `TYPE_VIEW_ACCESSIBILITY_FOCUSED` event for the same node (P8-07 Q3
+ * r4: candidate 4064dbfc logged `focus-result id=3 found=true accepted=false` and TalkBack still
+ * spoke that sentence).
  *
  * <p>It holds no product data, lives only in the androidTest APK (never in the product build), and
  * logs under the {@code ULA11Y} tag so the host can read the transcript with plain `adb logcat`.
@@ -114,6 +119,46 @@ public final class A11yFocusProbeService extends AccessibilityService {
     private static final int MAX_FOCUS_ANCESTOR_DEPTH = 4;
 
     /**
+     * The event subtype that proves a focus move reached the platform (P8-07 Q3 r4).
+     *
+     * <p>`ACTION_ACCESSIBILITY_FOCUS` answers for the ACTION, not for the focus: candidate 4064dbfc
+     * (run 45783028573, `profile=empty`, analysis screen) logged a visible, correctly chosen node
+     * whose own four ancestors were all unfocusable, `focus-result id=3 found=true accepted=false`,
+     * and then `Speaking fragment text="账本为空，还没有任何交易。" …
+     * event=type:EVENT_TYPE_ACCESSIBILITY_SUBTYPE_TYPE_VIEW_ACCESSIBILITY_FOCUSED`. The event is the
+     * platform's own record that the focus arrived, which is what the host's `accepted` is asked to
+     * mean.
+     */
+    private static final String FOCUS_EVENT_SUBTYPE = "TYPE_VIEW_ACCESSIBILITY_FOCUSED";
+
+    /**
+     * How long a REFUSED focus may still be proven by that event. Bounded on purpose: an event that
+     * never arrives has to stay a refusal, and the command's own speech window
+     * ([COMMAND_SPEECH_MS]) has to stay long enough for the utterance that follows it. 2500 ms
+     * covers event dispatch plus one TalkBack cycle.
+     */
+    private static final long FOCUS_EVENT_WAIT_MS = 2500L;
+
+    /** Poll interval while matching an event inside [FOCUS_EVENT_WAIT_MS]. */
+    private static final long FOCUS_EVENT_POLL_MS = 100L;
+
+    /** How many recent focus events stay readable for matching; a burst cannot grow unbounded. */
+    private static final int MAX_FOCUS_EVENTS = 32;
+
+    /**
+     * The focus events observed since this instance connected, newest last, each stamped with the
+     * count it was recorded under. A command reads the count BEFORE its action and accepts only an
+     * event with a HIGHER count, so an event that had already arrived cannot prove the action. The
+     * queue and the count are guarded by [focusEventLock] because the platform delivers events on
+     * the service's main thread while a command runs on the watcher thread.
+     */
+    private final Object focusEventLock = new Object();
+
+    private final Deque<FocusEvent> focusEvents = new ArrayDeque<>();
+
+    private long focusEventSequence;
+
+    /**
      * The single command watcher for the bound service instance. A host screen disables the service
      * between legs and enables it again for the next one; the process usually survives, so an old
      * watcher must be stopped before a second one starts — two watchers would run the same new
@@ -145,6 +190,26 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         },
                         "ul-a11y-probe")
                 .start();
+        // The mask this connection actually got, not the XML's intent: a stale or reparsed
+        // AccessibilityServiceInfo shows up here as a different hex value, so a `seen=0` window has
+        // an immediate cause instead of blaming the platform. The focus event this probe accepts is
+        // AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED (bit 15, 0x8000); the config's two
+        // retained window types are TYPE_WINDOW_STATE_CHANGED (bit 5, 0x20) and
+        // TYPE_WINDOW_CONTENT_CHANGED (bit 11, 0x800), so the configured mask prints as 0x8820, and
+        // the one configured flag is FLAG_INCLUDE_NOT_IMPORTANT_VIEWS (bit 1, 0x2). A focus proof
+        // needs 0x8000 in that value: without the bit onAccessibilityEvent is never called for it
+        // and every refused command decays to `source=none` after the full wait.
+        AccessibilityServiceInfo info = getServiceInfo();
+        if (info == null) {
+            Log.i(TAG, "service-info eventTypes=none flags=none");
+        } else {
+            Log.i(
+                    TAG,
+                    "service-info eventTypes=0x"
+                            + Integer.toHexString(info.eventTypes)
+                            + " flags=0x"
+                            + Integer.toHexString(info.flags));
+        }
         Log.i(TAG, "service connected");
     }
 
@@ -171,13 +236,224 @@ public final class A11yFocusProbeService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // One probe per window-content change is enough; the host triggers the app screens itself.
-        // The scheduled rounds do the measuring; events only mark the timeline.
+        // The scheduled rounds do the paced passes; the events themselves are the second half of a
+        // command's evidence, so every focus event is kept until a command stops matching it.
+        if (event == null || event.getEventType() != AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+            return;
+        }
+        recordFocusEvent(event);
     }
 
     @Override
     public void onInterrupt() {
         Log.i(TAG, "interrupted");
+    }
+
+    /** Keeps one focus event: its count, its arrival time, what it carries and the node's rect. */
+    private void recordFocusEvent(AccessibilityEvent event) {
+        long receivedAt = SystemClock.elapsedRealtime();
+        List<String> parts = textParts(event.getText());
+        String text = joinText(parts);
+        CharSequence carried = event.getContentDescription();
+        String description = carried == null ? "" : carried.toString();
+        Rect bounds = new Rect();
+        try {
+            AccessibilityNodeInfo source = event.getSource();
+            if (source != null) {
+                source.getBoundsInScreen(bounds);
+            }
+        } catch (RuntimeException unavailable) {
+            // A source this service may not read leaves the rect empty; the text still decides.
+        }
+        synchronized (focusEventLock) {
+            focusEventSequence++;
+            focusEvents.addLast(
+                    new FocusEvent(
+                            focusEventSequence, receivedAt, text, parts, description, bounds));
+            while (focusEvents.size() > MAX_FOCUS_EVENTS) {
+                focusEvents.removeFirst();
+            }
+        }
+    }
+
+    /** The count of focus events received so far — the boundary a command's action is measured at. */
+    private long focusEventSequence() {
+        synchronized (focusEventLock) {
+            return focusEventSequence;
+        }
+    }
+
+    /**
+     * Waits [FOCUS_EVENT_WAIT_MS] for a focus event that provably belongs to THIS command's target
+     * and returns the basis it matched on (`text` / `bounds`), or `""` when none arrived in time.
+     *
+     * <p>Four conditions decide, and each is read back from a named key of the raw window rather
+     * than trusted from here: the event was recorded under a count HIGHER than the one read before
+     * the action (that gate is the predecessor of every field below, so a matched line is a
+     * post-action event by construction; the count itself is not a log field);
+     * `0 <= afterActionMs <= waitMs` on the matched line places its arrival after the action and
+     * inside the window, the same shape the timeout line has with its own capped wait; `matched=`
+     * names the basis, and BOTH bases are re-derivable — `eventText64=` decodes to the event's own
+     * text, which must contain the `needle64` of this command's `command` line for `matched=text`,
+     * while `eventBounds=` must intersect the `focusNodeBounds=` of its `focus-target` line for
+     * `matched=bounds` (`eventBounds=[]` — an unreadable or empty source rect — intersects nothing,
+     * so it can never sit on a bounds match); and that `focusNodeBounds=` is the rect of
+     * [focusNode], the node this command's action was actually sent to, which is an ancestor when
+     * the chosen `Text` is unfocusable, not the pre-action target.
+     *
+     * <p>The event's own rect and text are printed for exactly that last check: `matched=text` /
+     * `matched=bounds` named the basis but not the event, so an ancestor's, a container's or an
+     * overlay's event that merely overlapped the acted node read the same as the acted node's own
+     * (P8-07 Q3 r6). `eventBounds=` is always present and `eventText64=` is omitted when the event
+     * carried no text, so a reviewer can tell which node's event was accepted. A timeout logs
+     * `matched=none` with how many post-action events were seen and returns `""` — the caller keeps
+     * `accepted=false` rather than inventing a focus.
+     */
+    private String awaitFocusEvent(
+            String id,
+            String needle,
+            AccessibilityNodeInfo focusNode,
+            long sequenceBeforeAction,
+            long actionAt) {
+        Rect focusBounds = new Rect();
+        focusNode.getBoundsInScreen(focusBounds);
+        long deadline = actionAt + FOCUS_EVENT_WAIT_MS;
+        String head = "focus-event id=" + id + " subtype=" + FOCUS_EVENT_SUBTYPE;
+        while (true) {
+            List<FocusEvent> observed = new ArrayList<>();
+            synchronized (focusEventLock) {
+                observed.addAll(focusEvents);
+            }
+            int seen = 0;
+            for (FocusEvent candidate : observed) {
+                if (candidate.sequence <= sequenceBeforeAction || candidate.receivedAt < actionAt) {
+                    continue;
+                }
+                // Counted before it is judged, so the timeout line reports what the window held: an
+                // event stamped after the deadline is outside this window whatever the wake-up
+                // order was, and it stays a `seen=` number instead of a pass.
+                seen++;
+                if (candidate.receivedAt > deadline) {
+                    continue;
+                }
+                String basis = matchBasis(candidate, needle, focusBounds);
+                if (basis.isEmpty()) {
+                    continue;
+                }
+                Log.i(
+                        TAG,
+                        head
+                                + " matched="
+                                + basis
+                                + " afterActionMs="
+                                + (candidate.receivedAt - actionAt)
+                                + " waitMs="
+                                + FOCUS_EVENT_WAIT_MS
+                                + " eventBounds="
+                                + rectToken(candidate.bounds)
+                                + (candidate.text.isEmpty()
+                                        ? ""
+                                        : " eventText64=" + encode(candidate.text)));
+                return basis;
+            }
+            long now = SystemClock.elapsedRealtime();
+            if (now >= deadline) {
+                // A scheduled poll can wake a few milliseconds past the deadline; the wait this line
+                // reports is capped at the window it names, so `afterActionMs <= waitMs` holds on
+                // every line of the transcript.
+                long waited = Math.min(now - actionAt, FOCUS_EVENT_WAIT_MS);
+                Log.i(
+                        TAG,
+                        head
+                                + " matched=none afterActionMs="
+                                + waited
+                                + " waitMs="
+                                + FOCUS_EVENT_WAIT_MS
+                                + " seen="
+                                + seen);
+                return "";
+            }
+            try {
+                Thread.sleep(Math.min(FOCUS_EVENT_POLL_MS, deadline - now));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return "";
+            }
+        }
+    }
+
+    /**
+     * Why an observed focus event belongs to this command's target, or `""` when it does not.
+     *
+     * <p>Text first: the event's own text or content description has to CONTAIN the command's
+     * needle — the sentence the host asked for — which is also what TalkBack reads back. Bounds
+     * second: an event whose text the platform left empty still carries its node's rect, so a rect
+     * overlapping [focusBounds] is that node's move. [focusBounds] is the rect of the node this
+     * command's action was actually sent to (an ancestor may receive the action, see
+     * [focusTarget]), never the pre-action target's rect: a node that merely overlaps where the
+     * needle was found is a different node and its focus proves nothing about this command. An
+     * empty needle never matches by text (`contains("")` is always true and would accept the first
+     * unrelated event of the screen) and an empty rect never matches by bounds, so neither
+     * degenerate case can produce a pass.
+     */
+    private static String matchBasis(FocusEvent event, String needle, Rect focusBounds) {
+        if (!needle.isEmpty()
+                && (carriedText(event, needle) || event.description.contains(needle))) {
+            return "text";
+        }
+        if (!focusBounds.isEmpty() && Rect.intersects(event.bounds, focusBounds)) {
+            return "bounds";
+        }
+        return "";
+    }
+
+    /**
+     * Whether the event's own text carries [needle]: the space-joined form first, then every part on
+     * its own and the no-separator concatenation of all parts.
+     *
+     * <p>The platform may split one node's text across several `CharSequence` parts and TalkBack
+     * speaks them as one run, so a needle spanning two parts is a real utterance; matching only the
+     * space-joined form turned exactly that into a false refusal (P8-07 Q3 r5). The empty needle is
+     * refused by the caller, so nothing here has to guard `contains("")`.
+     */
+    private static boolean carriedText(FocusEvent event, String needle) {
+        if (event.text.contains(needle)) {
+            return true;
+        }
+        StringBuilder tight = new StringBuilder();
+        for (String part : event.textParts) {
+            if (part.contains(needle)) {
+                return true;
+            }
+            tight.append(part);
+        }
+        return tight.toString().contains(needle);
+    }
+
+    /** The event's own text, one entry per platform part, nulls dropped. */
+    private static List<String> textParts(List<CharSequence> values) {
+        List<String> parts = new ArrayList<>();
+        if (values == null) {
+            return parts;
+        }
+        for (CharSequence value : values) {
+            if (value != null) {
+                parts.add(value.toString());
+            }
+        }
+        return parts;
+    }
+
+    /** The human-readable form of [parts]: one line, a space between the parts. */
+    private static String joinText(List<String> parts) {
+        StringBuilder joined = new StringBuilder();
+        for (String part : parts) {
+            if (joined.length() > 0) {
+                joined.append(' ');
+            }
+            joined.append(part);
+        }
+        return joined.toString();
     }
 
     /**
@@ -401,13 +677,30 @@ public final class A11yFocusProbeService extends AccessibilityService {
                         + "\"");
         AccessibilityNodeInfo focus = focusTarget(target, id);
         Log.i(TAG, "speech-window-begin id=" + id);
-        boolean accepted = false;
+        // The action's answer is measured, never assumed, and the count/time below are the boundary
+        // that separates an event this action caused from one that was already on the screen.
+        long sequenceBeforeAction = focusEventSequence();
+        long actionAt = SystemClock.elapsedRealtime();
+        boolean answered = false;
         try {
-            accepted = focus.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            answered = focus.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
         } catch (RuntimeException failure) {
             Log.i(TAG, "focus-error id=" + id + " error=" + failure);
         }
-        Log.i(TAG, "focus-result id=" + id + " found=true accepted=" + accepted);
+        String source = "none";
+        if (answered) {
+            source = "action";
+        } else {
+            // A refused action is not yet a refused focus: the platform posts its own focus event
+            // for this move, and only that event (belonging to this command's node, after this
+            // action, inside the window) may upgrade the verdict.
+            Log.i(TAG, "focus-action id=" + id + " returned=false");
+            if (!awaitFocusEvent(id, needle, focus, sequenceBeforeAction, actionAt).isEmpty()) {
+                source = "accessibility-event";
+            }
+        }
+        boolean accepted = !"none".equals(source);
+        Log.i(TAG, "focus-result id=" + id + " found=true accepted=" + accepted + " source=" + source);
         try {
             Thread.sleep(COMMAND_SPEECH_MS);
         } catch (InterruptedException interrupted) {
@@ -432,25 +725,33 @@ public final class A11yFocusProbeService extends AccessibilityService {
      * because the host still judges this command by `accepted` and by the speech fragment: those
      * fields are what let the next round read WHICH sentence the ancestor spoke. The target needle
      * itself is never rewritten, so a wide merged ancestor cannot pass a narrower requirement.
+     *
+     * <p>Every outcome names the rect of the node this command's action actually reaches
+     * (`focusNodeBounds=`), because that rect is the one a focus event must overlap to count as this
+     * command's move (P8-07 Q3 r5). The chosen target's rect is NOT it when the action goes to an
+     * ancestor, and a node that merely overlaps where the needle was found is a different node.
      */
     private AccessibilityNodeInfo focusTarget(AccessibilityNodeInfo target, String id) {
         if (target.isFocusable()) {
-            Log.i(TAG, "focus-target id=" + id + " target=node focusable=true");
+            Log.i(
+                    TAG,
+                    "focus-target id="
+                            + id
+                            + " target=node focusable=true focusNodeBounds="
+                            + focusNodeBounds(target));
             return target;
         }
         AccessibilityNodeInfo ancestor = target.getParent();
         for (int depth = 1; depth <= MAX_FOCUS_ANCESTOR_DEPTH && ancestor != null; depth++) {
             if (ancestor.isFocusable()) {
-                Rect bounds = new Rect();
-                ancestor.getBoundsInScreen(bounds);
                 Log.i(
                         TAG,
                         "focus-target id="
                                 + id
                                 + " target=ancestor depth="
                                 + depth
-                                + " focusable=true bounds="
-                                + bounds.toShortString()
+                                + " focusable=true focusNodeBounds="
+                                + focusNodeBounds(ancestor)
                                 + " ancestor-text64=\""
                                 + encode(ancestor.getText())
                                 + "\" ancestor-desc64=\""
@@ -460,8 +761,44 @@ public final class A11yFocusProbeService extends AccessibilityService {
             }
             ancestor = ancestor.getParent();
         }
-        Log.i(TAG, "focus-target id=" + id + " target=none reason=no-focusable-ancestor");
+        Log.i(
+                TAG,
+                "focus-target id="
+                        + id
+                        + " target=none reason=no-focusable-ancestor focusNodeBounds="
+                        + focusNodeBounds(target));
         return target;
+    }
+
+    /** One node's screen rect as a log token: no spaces, so it never splits another field. */
+    private static String focusNodeBounds(AccessibilityNodeInfo node) {
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        return bounds.toShortString();
+    }
+
+    /**
+     * One observed event's rect as a log token: `[left,top,right,bottom]`, or `[]` for no rect.
+     *
+     * <p>A focus event's source may be unreadable (see [recordFocusEvent]) and an empty rect
+     * intersects nothing, so `[]` is both "the service could not read it" and "this rect cannot be
+     * the bounds basis" — never a zero-size rect at the origin, which is what
+     * `Rect#toShortString` would print for an unreadable source. Four comma-separated sides (rather
+     * than two bracketed pairs) keep the empty case distinguishable and still space-free.
+     */
+    private static String rectToken(Rect bounds) {
+        if (bounds.isEmpty()) {
+            return "[]";
+        }
+        return "["
+                + bounds.left
+                + ","
+                + bounds.top
+                + ","
+                + bounds.right
+                + ","
+                + bounds.bottom
+                + "]";
     }
 
     private static boolean contains(CharSequence text, String needle) {
@@ -562,5 +899,48 @@ public final class A11yFocusProbeService extends AccessibilityService {
         }
         String value = text.toString().replace('\n', ' ');
         return value.length() > 60 ? value.substring(0, 60) : value;
+    }
+
+    /**
+     * One observed `TYPE_VIEW_ACCESSIBILITY_FOCUSED`, kept only until a command stops matching it.
+     * The count and the arrival time are what let a command prove the event followed its action.
+     */
+    private static final class FocusEvent {
+
+        /** The monotonic count this event was recorded under; a command compares its own reading. */
+        private final long sequence;
+
+        /** `SystemClock.elapsedRealtime()` at receipt, in the same clock as the action's stamp. */
+        private final long receivedAt;
+
+        /** The event's own text, joined; empty when the platform carried none. */
+        private final String text;
+
+        /**
+         * The same text as the platform split it into `CharSequence` parts, kept because TalkBack
+         * speaks those parts as one run: a needle spanning two of them is a real utterance.
+         */
+        private final List<String> textParts;
+
+        /** The event's content description; empty when it carried none. */
+        private final String description;
+
+        /** The focused node's screen rect, empty when this service could not read its source. */
+        private final Rect bounds;
+
+        FocusEvent(
+                long sequence,
+                long receivedAt,
+                String text,
+                List<String> textParts,
+                String description,
+                Rect bounds) {
+            this.sequence = sequence;
+            this.receivedAt = receivedAt;
+            this.text = text;
+            this.textParts = textParts;
+            this.description = description;
+            this.bounds = bounds;
+        }
     }
 }
