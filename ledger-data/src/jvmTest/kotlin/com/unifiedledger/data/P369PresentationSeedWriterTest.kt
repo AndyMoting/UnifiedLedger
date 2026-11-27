@@ -61,6 +61,7 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import java.io.File
+import java.nio.file.Files
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -79,8 +80,10 @@ import kotlin.time.Instant
  *
  * WHY A TEST. The output is a real file-backed SQLite database built through the REAL product
  * entry points, and `:ledger-data:jvmTest` is the only Gradle surface that owns
- * `ledger-data/src/jvmTest`. It writes ONLY when `-Dul.presentation.fontscale.seed=<path>` names
- * the output; without the property it is a no-op, so the ordinary CI shard is unaffected.
+ * `ledger-data/src/jvmTest`. The sweep names its output through
+ * `-Dul.presentation.fontscale.seed=<path>`; without the property the SAME write and the SAME
+ * read-back run against a temporary file, so the ordinary `:ledger-data:jvmTest` shard executes
+ * every assertion instead of deferring them all to a device sweep (the E2 fix).
  *
  * WHY A DEDICATED SEED (plan decision D1). The P8-01 seed carries one CNY transfer plus one CNY
  * expense over the default single-leaf catalog, so multi-category badges, a second currency and a
@@ -123,6 +126,7 @@ import kotlin.time.Instant
 class P369PresentationSeedWriterTest {
     private val ledgerId = LedgerId(LEDGER_ID)
 
+    /** The sweep's entry point: writes the database to the path its system property names. */
     @Test
     fun writesThePresentationSeedDatabase() {
         val target = System.getProperty(SEED_PATH_PROPERTY) ?: return
@@ -131,6 +135,22 @@ class P369PresentationSeedWriterTest {
         check(!file.exists() || file.delete()) { "cannot replace the previous seed at ${file.path}" }
         seed(file)
         assertSeedReadsBack(file)
+    }
+
+    /**
+     * The property-free twin of [writesThePresentationSeedDatabase]: the SAME [seed] and the SAME
+     * [assertSeedReadsBack] over a temporary file, so the ordinary `:ledger-data:jvmTest` shard
+     * executes the read-back instead of no-opping.
+     */
+    @Test
+    fun writesAndReadsBackThePresentationSeedDatabaseWithoutTheSweepProperty() {
+        val file = Files.createTempFile("p369-presentation-seed-", ".db").toFile()
+        try {
+            seed(file)
+            assertSeedReadsBack(file)
+        } finally {
+            file.delete()
+        }
     }
 
     /** Builds the file through the real product entry points (see the class note). */
@@ -543,9 +563,21 @@ class P369PresentationSeedWriterTest {
                 ),
                 legCategories,
             )
+            // The legs carry the signed ORIGINAL posting amount (`Posting.amount`,
+            // FormalLedger.kt:3-7; `QueryTransactionDetail` copies it verbatim), and the seed uses
+            // the golden sign convention: EXPENSE legs positive, the funding ASSET leg negative
+            // (docs/specs/2026-11-15-p8-05-readable-export-design.md:93). `PostingSet.create`
+            // rejects any set whose per-currency total is non-zero (FormalLedger.kt:24-36) and
+            // writeMultiCategoryExpense checks the same sum before inserting, so summing ALL legs
+            // can never yield the 40.00 the screen shows; the amount lives on the four positive
+            // (expense) legs.
+            val netMinor = detail.legs.sumOf { leg -> leg.amount.minorUnits }
+            val expenseSideMinor = detail.legs.filter { leg -> leg.amount.minorUnits > 0L }.sumOf { leg -> leg.amount.minorUnits }
+            assertEquals(0L, netMinor, "all five legs of $MULTI_CATEGORY_NOTE must net to zero (double-entry balance)")
             assertEquals(
                 MULTI_CATEGORY_TOTAL_MINOR,
-                detail.legs.sumOf { leg -> leg.amount.minorUnits },
+                expenseSideMinor,
+                "the expense side of $MULTI_CATEGORY_NOTE must be 40.00 (4000 minor units)",
             )
         }
     }
