@@ -35,6 +35,14 @@
 #   fragments-missing / amount-wrong / success. The p806 gate fails unless every ordered speech
 #   target is success; the screenshot and accessibility-dump artifacts are captured before that leg
 #   and stay independent of it.
+# - `profile=presentation` (D-369 A): the presentation foundation's current surfaces over the shared
+#   P8-01 seed, eight frames plus their accessibility dumps and REAL TalkBack on the home, detail
+#   and search-result targets. `ui_mode=light|dark` selects the platform night mode (default light)
+#   and both the driver and the gate record/compare it. `PRESENTATION_EVIDENCE_PLAN` in
+#   `tools/python/android_fontscale/sampler.py` names the eight future scenarios (multi-category,
+#   multi-currency, empty day, ranking, technical collapse and the rest) that later presentation
+#   batches add with their own screens; A prepares this configuration and does not cite any
+#   presentation frame as an accepted result.
 #
 # The artifact is the evidence a human reads: each screen's screenshot plus its accessibility dump
 # at that scale. The `gate` step re-derives only what is mechanically decidable — the scale took
@@ -70,7 +78,7 @@ on:
         required: true
         type: string
       profile:
-        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 报表自然日说明 + 日历日格 + 日明细（4 屏）；四档均含真实 TalkBack 朗读'
+        description: 'empty = 三个空账本屏；seeded = 搜索引导 + 搜索结果 + 交易详情 + 账户对账（4 屏）；refund = 退款到账入口 + 确认页（2 屏）；p806 = 报表 + 报表自然日说明 + 日历日格 + 日明细（4 屏）；presentation = 呈现基座当前面（8 屏，A 不据此判通过）；均含真实 TalkBack 朗读'
         required: false
         default: 'empty'
         type: choice
@@ -79,6 +87,15 @@ on:
           - seeded
           - refund
           - p806
+          - presentation
+      ui_mode:
+        description: 'Platform night mode for this sample: light (default) or dark'
+        required: false
+        default: 'light'
+        type: choice
+        options:
+          - light
+          - dark
       font_scale:
         description: Font scale to apply (V-8 asks for 1.3)
         required: false
@@ -104,6 +121,7 @@ jobs:
       LANG: zh_CN.UTF-8
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
       PROFILE: ${{ inputs.profile }}
+      UI_MODE: ${{ inputs.ui_mode }}
       # The seed database stays OUTSIDE the evidence directory: evidence artifacts never carry a
       # database (the android-scale convention); only its hash is uploaded.
       SEED_DB: fontscale-seed/ledger.db
@@ -140,8 +158,8 @@ jobs:
           test -f android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
           sha256sum android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
             | tee fontscale-evidence/host-test-apk.txt
-      - name: Write the prepared ledger database (seeded, refund and p806 profiles only)
-        if: inputs.profile == 'seeded' || inputs.profile == 'refund' || inputs.profile == 'p806'
+      - name: Write the prepared ledger database (seeded, refund, p806 and presentation profiles only)
+        if: inputs.profile == 'seeded' || inputs.profile == 'refund' || inputs.profile == 'p806' || inputs.profile == 'presentation'
         # Each writer is a jvmTest no-op unless its property names the output; the build script
         # forwards both properties to the test JVM (Gradle does not pass -D through by itself).
         # p806 uses its own writer and property so its sample stays independent of the P8-01/P8-03
@@ -183,13 +201,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             set -u
-            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --avd-name ul-fontscale --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+            python3 tools/ci/android-fontscale.py run --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --ui-mode "${UI_MODE}" --avd-name ul-fontscale --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
       - name: Re-derive the gate from the evidence on disk
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           FONT_SCALE: ${{ inputs.font_scale }}
-        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+        run: python3 tools/ci/android-fontscale.py gate --evidence fontscale-evidence --sha "${EXPECTED_SHA}" --profile "${PROFILE}" --seed "${SEED_DB}" --font-scale "${FONT_SCALE}" --ui-mode "${UI_MODE}" --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
       - name: Upload the sample evidence
         if: always()
         uses: actions/upload-artifact@v4

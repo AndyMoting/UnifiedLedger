@@ -322,6 +322,32 @@ fun P503App(
     ledger: LedgerLeaseScope,
     onExit: () -> Unit,
     backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
+    externalNavigationChannel: ExternalNavigationChannel? = null,
+    inboundHostToken: Any? = null,
+    widgetInvalidation: WidgetInvalidationObserver = WidgetInvalidationObserver {},
+    // D-369 A: the composition's presentation contract. The default keeps every existing call site
+    // (the desktop root and every test) on the legacy output; Android's composition root passes
+    // [UiPresentationProfile.ANDROID] explicitly, and the shared screens read the profile through
+    // [LocalUiPresentationProfile] instead of duplicating UI.
+    uiPresentationProfile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+) {
+    CompositionLocalProvider(LocalUiPresentationProfile provides uiPresentationProfile) {
+        P503AppContent(
+            ledger = ledger,
+            onExit = onExit,
+            backHandler = backHandler,
+            externalNavigationChannel = externalNavigationChannel,
+            inboundHostToken = inboundHostToken,
+            widgetInvalidation = widgetInvalidation,
+        )
+    }
+}
+
+@Composable
+private fun P503AppContent(
+    ledger: LedgerLeaseScope,
+    onExit: () -> Unit,
+    backHandler: (@Composable (enabled: Boolean, onBack: () -> Unit) -> Unit)? = null,
     // P7-09 09.0 (spec sections 2.1/2.2; D-225 Q19): the composition root's inbound-navigation
     // channel. Null (the desktop root and existing tests) keeps the surface absent and renders no
     // dead affordance; a wired root delivers neutral requests the host routes.

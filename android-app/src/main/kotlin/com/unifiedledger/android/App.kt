@@ -196,6 +196,7 @@ import com.unifiedledger.ui.RestoreHostWiring
 import com.unifiedledger.ui.RestoreIsolatedDatabasePort
 import com.unifiedledger.ui.RestorePreflightUseCase
 import com.unifiedledger.ui.ShareImportSourcePort
+import com.unifiedledger.ui.UiPresentationProfile
 import com.unifiedledger.ui.UuidV7ImportCommitIdSource
 import com.unifiedledger.ui.WidgetInvalidationObserver
 import com.unifiedledger.ui.importCreditRefundOriginalExpenseProvider
@@ -318,6 +319,10 @@ fun app() {
                     // reads through, spec section 6.3). A null holder leaves the no-op default.
                     widgetInvalidation =
                         WidgetInvalidationObserver { holder?.invalidateAllWidgets() },
+                    // D-369 A: Android opts into the new presentation contract explicitly; the
+                    // shared default remains LEGACY so the desktop root and every test keep their
+                    // existing output.
+                    uiPresentationProfile = ANDROID_UI_PRESENTATION_PROFILE,
                 )
             else ->
                 P503StartupScreen(
@@ -997,6 +1002,12 @@ internal const val PRODUCT_LEDGER_ID: String = "ledger-local-test"
 
 /** The restore target ledger identity — the same fixed product identity the graph bootstraps. */
 internal const val RESTORE_TARGET_LEDGER_ID: String = PRODUCT_LEDGER_ID
+
+/**
+ * D-369 A: the Android composition root's explicit presentation contract. Kept as one value so the
+ * JVM test can prove the root selects the Android profile while the shared default stays LEGACY.
+ */
+internal val ANDROID_UI_PRESENTATION_PROFILE: UiPresentationProfile = UiPresentationProfile.ANDROID
 
 /** P7-06 06.B: one random token text (kept out of the data-class default so ktlint's chain rule is satisfied). */
 private fun randomUuidText(): String {

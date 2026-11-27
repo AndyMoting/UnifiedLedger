@@ -19,6 +19,11 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 - `profile=refund` (the P8-03 V-14 leg): the same seeded database, whose confirmed manual expense
   is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
   its confirmation page at the requested scale;
+- `profile=presentation` (D-369 A, prepared): an independent target over the shared P8-01 seed that
+  captures the foundation contract's current surfaces in either platform `ui_mode` (light default,
+  dark opt-in) and records REAL TalkBack on its speech screens. `PRESENTATION_EVIDENCE_PLAN` names
+  the eight future presentation scenarios; A prepares that configuration and never cites these
+  frames as an accepted presentation result;
 - `profile=p806` (the P8-06 batch 6 V-12 leg): an independent anonymous seed of two fixed expenses
   on one clock-relative day, driving the ANALYSIS report region (plus a second scrolled frame that
   shows the natural-day statement in full), the calendar day cell and that day's drilldown rows at
@@ -31,7 +36,7 @@ sample; the device legs run here against a hosted AVD at the requested `system f
   both the driver and the gate classify each screen as not-obtained / fragments-missing /
   amount-wrong / success. A semantic dump or a focus callback alone is never read as speech.
 
-The three screenshot profiles also drive that same REAL TalkBack pass on one named target per
+The screenshot profiles (empty/seeded/refund plus presentation) also drive that same REAL TalkBack pass on one named target per
 screen (P8-07 batch D, the Q3 evidence): the same probe, the same VERBOSE utterance window, the
 same four-value verdict, plus one screenshot per target and the image's own TalkBack versionName.
 Their expected targets come from the frozen profile table, never from a seed.
@@ -152,7 +157,7 @@ SEARCH_RESULTS_MARKER = "搜索结果 ·"
 # The seeded ledger holds the transfer and the refund-leg manual expense, hence 2.
 SEEDED_HOME_COUNT = "流水 · 共 2 笔"
 
-# P8-07 batch D (Q3): one speech target per SPEAKING screen of the three screenshot profiles (the
+# P8-07 batch D (Q3): one speech target per SPEAKING screen of the screenshot profiles (empty/seeded/refund plus presentation) (the
 # seeded profile's detail and reconciliation screens declare no speech and stay on the screenshot
 # track). Each literal is the product copy that screen actually renders, named with the product
 # file:line so a drift shows up as a reviewable diff; the probe focuses the first node whose text
@@ -215,6 +220,62 @@ P806_REPORT_LAST_SUCCESS_CAPTION = "以下为最近一次成功载荷（旧数�
 P806_CALENDAR_TITLE = "收支日历"
 P806_DRILLDOWN_TITLE = "报表明细"
 P806_REPORT_BALANCE_LABEL = "结余"
+
+# D-369 A presentation rig configuration. `ui_mode` names the platform night-mode state the run
+# applies before launch and records in host.json; light is the default every existing profile
+# already ran under (a hosted AVD boots in light), so adding the switch leaves their evidence
+# unchanged. The presentation profile is an independent dispatch target: it captures the current
+# surfaces the foundation contract renders and records the planned future scenario set, but A never
+# claims these frames as an accepted presentation result.
+UI_MODES: tuple[str, ...] = ("light", "dark")
+DEFAULT_UI_MODE = "light"
+PRESENTATION_PROFILE_NAME = "presentation"
+# The future evidence plan the later B/C/D batches fill with screen entries. The gate never reads
+# this tuple; it is the configuration anchor that keeps the eight scenarios named in one place.
+PRESENTATION_EVIDENCE_PLAN: tuple[str, ...] = (
+    "ordinary-expense",
+    "multiple-categories",
+    "transfer",
+    "multi-currency",
+    "empty-day",
+    "single-category-ranking",
+    "cross-day-reconciliation",
+    "technical-details",
+)
+
+
+def ui_mode_night_value(ui_mode: str) -> str:
+    """The `cmd uimode night` value for a supported mode; an unknown mode is a loud failure."""
+    if ui_mode == "light":
+        return "no"
+    if ui_mode == "dark":
+        return "yes"
+    raise SampleError(f"unknown ui_mode {ui_mode!r}; expected one of {list(UI_MODES)}")
+
+
+def ui_mode_readback_problem(output: str, ui_mode: str) -> str | None:
+    """Whether the readback line names the exact requested mode; anything else is a failure.
+
+    `cmd uimode night` must print exactly one standalone `Night mode: yes` / `Night mode: no`
+    line. An `Unknown command: uimode` reply, a missing line, a duplicate, or any other mode is a
+    loud problem rather than a substring match on the raw text.
+    """
+    expected = f"Night mode: {ui_mode_night_value(ui_mode)}"
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if lines.count(expected) == 1:
+        return None
+    return (
+        f"`cmd uimode night` did not report exactly one {expected!r} line; "
+        f"raw output: {output.strip()[:200]!r}"
+    )
+
+
+def gate_ui_mode_problems(host: dict[str, object], requested: str) -> list[str]:
+    """The gate's ui_mode consistency check, re-derived from host.json alone."""
+    recorded = host.get("ui_mode")
+    if recorded != requested:
+        return [f"host.json records ui_mode {recorded!r}, the gate requested {requested!r}"]
+    return []
 
 # The D-292 behavioural evidence: real TalkBack emits this VERBOSE log line with the spoken
 # fragment text. Only TalkBack's own line can satisfy the speech limb; the focus probe supplies the
@@ -1383,7 +1444,7 @@ class Profile:
     seeded: bool = False
     # The D-292 speech limb runs for this profile (P8-07 batch D, D3): the switch decides the test
     # APK install, the probe discovery, the notification-prompt guard and the TalkBack teardown, so
-    # the three screenshot profiles drive real TalkBack exactly as the dynamic p806 profile does.
+    # the screenshot profiles (empty/seeded/refund plus presentation) drive real TalkBack exactly as the dynamic p806 profile does.
     # Which screens actually speak is still the screen's own `speech` tuple.
     talkback: bool = False
 
@@ -1505,6 +1566,73 @@ REFUND_SCREENS: tuple[Screen, ...] = (
         SEEDED_REFUND_CATEGORY,
         absent=(REFUND_ENTRY_TITLE,),
         speech=(SpeechCheck(P8_03_INHERITED_TARGET, (P8_03_INHERITED_TARGET,)),),
+    ),
+)
+
+# D-369 A presentation profile: the foundation contract's current surfaces over the same shared
+# P8-01 seed (one transfer plus one confirmed expense), captured in either ui_mode. The stems name
+# the surface, not a future feature: a frame is only ever evidence for what the product actually
+# renders. `PRESENTATION_EVIDENCE_PLAN` names the future scenarios (multi-category, multi-currency,
+# empty day, ranking, technical collapse) that later batches add once their surfaces exist; this
+# profile's gate can never be read as an accepted presentation result.
+PRESENTATION_SCREENS: tuple[Screen, ...] = (
+    Screen(
+        "presentation-home",
+        (),
+        SEEDED_HOME_COUNT,
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+    ),
+    Screen(
+        "presentation-detail",
+        (TapStep(SEEDED_TRANSFER_NOTE, contains=True),),
+        SEEDED_DETAIL_MARKER,
+        absent=(SEEDED_HOME_COUNT,),
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+    ),
+    Screen(
+        "presentation-search-results",
+        (
+            BACK,
+            TapStep("搜索账目", contains=True),
+            TapStep("提交搜索"),
+        ),
+        SEARCH_RESULTS_MARKER,
+        absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
+        speech=(
+            SpeechCheck(
+                SEEDED_TRANSFER_NOTE,
+                (SEEDED_TRANSFER_NOTE, P8_02_RESULT_DEBIT, P8_02_RESULT_CREDIT),
+            ),
+        ),
+    ),
+    Screen(
+        "presentation-account-flow",
+        (BACK, TapStep("账户"), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
+        ACCOUNT_FLOW_HEADER,
+        absent=(SEARCH_RESULTS_MARKER,),
+    ),
+    Screen(
+        "presentation-reconciliation",
+        (TapStep(RECONCILIATION_TITLE),),
+        SEEDED_QUEUE_MARKER,
+        absent=(ACCOUNT_FLOW_HEADER,),
+    ),
+    Screen(
+        "presentation-asset",
+        (BACK, BACK, TapStep("账户")),
+        P8_00_ASSET_TARGET,
+    ),
+    Screen(
+        "presentation-analysis",
+        (TapStep("分析"),),
+        P806_REPORT_TITLE,
+        absent=(SEEDED_HOME_COUNT,),
+    ),
+    Screen(
+        "presentation-calendar",
+        (TapStep("首页"), TapStep(P806_CALENDAR_TITLE)),
+        P806_CALENDAR_TITLE,
+        absent=(P806_REPORT_TITLE,),
     ),
 )
 
@@ -1824,6 +1952,15 @@ PROFILES: dict[str, Profile] = {
     # The screens are placeholders here: run/gate replace them with `p806_screens` built from the
     # pushed seed, so a static literal can never drift out of the evidence.
     "p806": Profile("p806", SEEDED_HOME_COUNT, P806_SCREENS, seeded=True, talkback=True),
+    # D-369 A: the presentation profile reuses the shared P8-01 seed and adds the ui_mode switch;
+    # it is an independent target, not a replacement for any existing profile.
+    PRESENTATION_PROFILE_NAME: Profile(
+        PRESENTATION_PROFILE_NAME,
+        SEEDED_HOME_COUNT,
+        PRESENTATION_SCREENS,
+        seeded=True,
+        talkback=True,
+    ),
 }
 
 DYNAMIC_PROFILES = frozenset({"p806"})
@@ -1889,6 +2026,9 @@ class Sampler:
     evidence: Path
     font_scale: float
     avd_name: str
+    # D-369 A: the platform night-mode state applied before launch and recorded in host.json. The
+    # default keeps the hosted AVD's boot state (light) every existing profile already ran under.
+    ui_mode: str = DEFAULT_UI_MODE
     screenshots: list[str] = field(default_factory=list)
     dumps: list[str] = field(default_factory=list)
     # Monotonic id for the probe's host-command channel: every focus command needs a fresh value,
@@ -1907,7 +2047,7 @@ class Sampler:
     # screen's window artifact keeps that line as a comment (P8-07 r7 D4).
     probe_connection_log: str = ""
     # The Accessibility Suite notification-prompt guard: on for every TalkBack profile (p806, and
-    # since P8-07 batch D the three screenshot profiles), so the prompt is cleared wherever the run
+    # since P8-07 batch D the screenshot profiles (empty/seeded/refund plus presentation)), so the prompt is cleared wherever the run
     # drives TalkBack.
     notification_dialog_guard: bool = False
 
@@ -2738,6 +2878,20 @@ class Sampler:
             raise SampleError(f"font_scale did not take effect: asked {self.font_scale}, read {observed}")
         return observed
 
+    def apply_ui_mode(self) -> str:
+        """Apply and read back the requested light/dark platform mode (D-369 A)."""
+        value = ui_mode_night_value(self.ui_mode)
+        self.adb("shell", "cmd", "uimode", "night", value)
+        # The platform re-reads the mode on the next configuration change; restart the app so the
+        # first launch frame already renders the requested scheme.
+        self.adb("shell", "am", "force-stop", APP_PACKAGE)
+        time.sleep(2)
+        raw = self.adb("shell", "cmd", "uimode", "night")
+        problem = ui_mode_readback_problem(raw, self.ui_mode)
+        if problem is not None:
+            raise SampleError(f"ui_mode {self.ui_mode!r} did not take effect: {problem}")
+        return self.ui_mode
+
     def seed(self, seed_path: str) -> str:
         """Replace the app's ledger with the prepared database (the seeded profile only).
 
@@ -3184,7 +3338,7 @@ def run(args: argparse.Namespace) -> int:
         if rollover is not None:
             raise SampleError(rollover)
     screens = p806_screens(facts) if facts is not None else profile.screens
-    # The profile-level switch (D3): p806 is unchanged, and the three screenshot profiles now take
+    # The profile-level switch (D3): p806 is unchanged, and the screenshot profiles (empty/seeded/refund plus presentation) now take
     # the same probe / notification / teardown route. `records_talkback_evidence` owns the separate
     # top-level record; p806 keeps its own block under host["p806"].
     talkback = profile.talkback
@@ -3196,11 +3350,12 @@ def run(args: argparse.Namespace) -> int:
         evidence=evidence,
         font_scale=args.font_scale,
         avd_name=args.avd_name,
+        ui_mode=args.ui_mode,
     )
     sampler.require_owned_avd()
     # The notification prompt is an Android Accessibility Suite behavior that appears whenever
     # TalkBack starts, so every talkback profile enables its handler — and only on this session's
-    # owned AVD (D6: the three screenshot profiles now drive TalkBack too).
+    # owned AVD (D6: the screenshot profiles (empty/seeded/refund plus presentation) now drive TalkBack too).
     sampler.notification_dialog_guard = talkback
 
     def dismiss_notification_prompt(context: str) -> None:
@@ -3212,6 +3367,7 @@ def run(args: argparse.Namespace) -> int:
 
     sampler.adb("shell", "mkdir", "-p", Sampler.DUMP_DIR, best_effort=True)
     applied = sampler.apply_font_scale()
+    applied_ui_mode = sampler.apply_ui_mode()
     sampler.adb("install", "-r", args.apk, timeout=180)
     talkback_capability: dict[str, object] | None = None
     talkback_log_level: dict[str, object] | None = None
@@ -3303,6 +3459,7 @@ def run(args: argparse.Namespace) -> int:
         "profile": profile.name,
         "avd_name": args.avd_name,
         "font_scale": applied,
+        "ui_mode": applied_ui_mode,
         "screens": [screen.stem for screen in screens],
         "screenshots": sampler.screenshots,
         "dumps": sampler.dumps,
@@ -3340,7 +3497,7 @@ def run(args: argparse.Namespace) -> int:
             },
         }
     if target_screenshots:
-        # P8-07 batch D (Q3): the three screenshot profiles name the TalkBack they spoke through —
+        # P8-07 batch D (Q3): the screenshot profiles (empty/seeded/refund plus presentation) name the TalkBack they spoke through —
         # the versionName and API level re-parsed from the raw device artifact — and keep every
         # target's window plus its own png under this record. The dynamic p806 profile writes no
         # such record and no extra artifact, so its evidence contract stays exactly as batch 6 left
@@ -3569,7 +3726,7 @@ def talkback_screen_problems(
 def talkback_device_problems(talkback: dict[str, object]) -> tuple[list[str], str]:
     """The run-level TalkBack identity: package, device service component and VERBOSE route.
 
-    Shared by the dynamic p806 record and the three screenshot profiles' record, so both gates
+    Shared by the dynamic p806 record and the screenshot profiles' (empty/seeded/refund plus presentation) record, so both gates
     reject the same substitutions: another package, a service that is not a TalkBackService, or a
     log level that cannot produce the fragment line the speech limb reads.
     """
@@ -3616,7 +3773,7 @@ def p806_gate_problems(
 
     The p806 record lives under `host["p806"]` and keeps its batch-6 shape: the seed facts are
     re-derived from the pushed database and each screen check from its own raw window. The shared
-    helpers below carry the parts the three screenshot profiles also use.
+    helpers below carry the parts the screenshot profiles (empty/seeded/refund plus presentation) also use.
     """
     problems: list[str] = []
     recorded = host.get("p806")
@@ -3640,7 +3797,7 @@ def p806_gate_problems(
 def talkback_gate_problems(
     host: dict[str, object], screens: tuple[Screen, ...], evidence: Path
 ) -> list[str]:
-    """Re-derive the three screenshot profiles' TalkBack record (P8-07 batch D, the Q3 evidence).
+    """Re-derive the screenshot profiles' (empty/seeded/refund plus presentation) TalkBack record (P8-07 batch D, the Q3 evidence).
 
     D4: the TalkBack version and the device API level are re-parsed from the raw artifact the run
     wrote out of the device's own `dumpsys package` and `getprop` answers, so an edited or emptied
@@ -3727,6 +3884,7 @@ def gate(args: argparse.Namespace) -> int:
     applied = host.get("font_scale")
     if not isinstance(applied, (int, float)) or abs(float(applied) - args.font_scale) > 0.001:
         problems.append(f"font_scale {applied!r} is not the requested {args.font_scale:g}")
+    problems.extend(gate_ui_mode_problems(host, args.ui_mode))
     for screen in screens:
         shot = evidence / f"{screen.stem}.png"
         tree = evidence / f"{screen.stem}.xml"
@@ -3752,7 +3910,7 @@ def gate(args: argparse.Namespace) -> int:
         problems.extend(p806_gate_problems(host, facts, evidence))
         problems.extend(gate_artifact_problems(host, Path(args.apk), Path(args.test_apk)))
     elif records_talkback_evidence(profile):
-        # P8-07 batch D (Q3): the three screenshot profiles' own record — the device's TalkBack
+        # P8-07 batch D (Q3): the screenshot profiles' (empty/seeded/refund plus presentation) own record — the device's TalkBack
         # version and API level, every target's window and its own png — plus the same APK identity
         # check the p806 segment runs.
         problems.extend(talkback_gate_problems(host, screens, evidence))
@@ -3783,6 +3941,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--font-scale", type=float, default=1.3)
+    parser.add_argument(
+        "--ui-mode",
+        choices=UI_MODES,
+        default=DEFAULT_UI_MODE,
+        help="platform night-mode state applied before launch and recorded in host.json (D-369 A)",
+    )
     parser.add_argument("--avd-name", default="ul-fontscale")
     parser.add_argument("--apk", default="android-app/build/outputs/apk/debug/android-app-debug.apk")
     parser.add_argument(
