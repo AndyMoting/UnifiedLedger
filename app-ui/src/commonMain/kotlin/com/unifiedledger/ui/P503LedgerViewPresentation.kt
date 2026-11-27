@@ -449,8 +449,7 @@ internal fun flowRowContentDescription(
  * The LEGACY header of the shared flow row, extracted verbatim so the pre-B output stays
  * byte-identical: effective kind, the raw statistics instant and the note when it is present.
  */
-internal fun flowRowLegacyHeaderText(row: LedgerEntryRow): String =
-    "${row.kind} · 统计 ${row.statisticsAt}" + (row.note?.let { note -> " · $note" } ?: "")
+internal fun flowRowLegacyHeaderText(row: LedgerEntryRow): String = "${row.kind} · 统计 ${row.statisticsAt}" + (row.note?.let { note -> " · $note" } ?: "")
 
 /**
  * D-369 B / 规格 §7.1 共享流水行契约: the shared flow row is used by HOME, the search result list and the report
@@ -650,8 +649,7 @@ internal fun homeRowAndroidPresentationFor(
     row: LedgerEntryRow,
     snapshot: CatalogSnapshotView?,
     catalog: LedgerCatalog?,
-): HomeRowAndroidPresentation? =
-    if (androidTabPresentation(profile)) homeRowAndroidPresentation(row, snapshot, catalog) else null
+): HomeRowAndroidPresentation? = if (androidTabPresentation(profile)) homeRowAndroidPresentation(row, snapshot, catalog) else null
 
 /**
  * The Android home row: consumes A's pure projection ([projectHomeRow]) and keeps its decisions —
@@ -955,8 +953,7 @@ internal fun categoryShareNoChartText(failure: CategoryShareFailure): String =
  * count is zero is a REAL ZERO day (a stated value, not an absence): Android renders its date only.
  * Zero amounts are dropped from the cell rather than printed as `0.00`.
  */
-internal fun calendarDayShowsAmounts(day: P806CalendarDayView): Boolean =
-    day.transactionCount > 0 || day.currencies.any { row -> row.netExpenseMinorUnits != 0L || row.ordinaryIncomeMinorUnits != 0L }
+internal fun calendarDayShowsAmounts(day: P806CalendarDayView): Boolean = day.transactionCount > 0 || day.currencies.any { row -> row.netExpenseMinorUnits != 0L || row.ordinaryIncomeMinorUnits != 0L }
 
 /** The cell's per-currency rows: non-zero rows only on Android; every axis currency on LEGACY. */
 internal fun calendarVisibleCurrencyRows(

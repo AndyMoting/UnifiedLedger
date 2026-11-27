@@ -51,14 +51,12 @@ internal const val BUDGET_UNCONFIGURED_SHORT_TEXT: String = "还没有设置预�
  * Only a SUCCESSFUL read that states no configured scope is 未配置. `null` is the not-loaded window
  * and the two failure families are failures — none of the three claims the month has no budget.
  */
-internal fun budgetIsUnconfigured(view: BudgetMonthViewResult?): Boolean =
-    view is BudgetMonthViewResult.Success && view.view.observations.isEmpty()
+internal fun budgetIsUnconfigured(view: BudgetMonthViewResult?): Boolean = view is BudgetMonthViewResult.Success && view.view.observations.isEmpty()
 
 internal fun budgetNoticeMode(
     profile: UiPresentationProfile,
     view: BudgetMonthViewResult?,
-): BudgetNoticeMode =
-    if (profile == UiPresentationProfile.ANDROID && budgetIsUnconfigured(view)) BudgetNoticeMode.SHORT else BudgetNoticeMode.FULL
+): BudgetNoticeMode = if (profile == UiPresentationProfile.ANDROID && budgetIsUnconfigured(view)) BudgetNoticeMode.SHORT else BudgetNoticeMode.FULL
 
 /**
  * The exact row texts of one landed month view, presentation-ordered (TOTAL first — the view

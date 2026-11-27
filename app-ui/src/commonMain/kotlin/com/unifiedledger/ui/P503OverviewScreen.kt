@@ -405,8 +405,7 @@ internal fun LedgerEntryFlowRowAndroid(
                 .clickable(enabled = interactionsEnabled, onClickLabel = "查看交易详情") {
                     onSampleScroll?.invoke()
                     onSelectTransaction(transactionId)
-                }
-                .semantics { contentDescription = homeRowAndroidContentDescription(androidRow) }
+                }.semantics { contentDescription = homeRowAndroidContentDescription(androidRow) }
                 .padding(vertical = 6.dp),
     ) {
         Row(
