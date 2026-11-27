@@ -18,27 +18,6 @@ enum class UiPresentationProfile {
 val LocalUiPresentationProfile = staticCompositionLocalOf { UiPresentationProfile.LEGACY }
 
 /**
- * The pure per-profile display switches. Tests assert both profiles here instead of through a
- * Compose harness, so adding [ANDROID] cannot silently change the legacy surface.
- */
-data class UiPresentationPolicy(
-    val amountIncludesCurrencyCode: Boolean,
-    val homeTitleUsesBusinessName: Boolean,
-    val homeCategoryBadgesEnabled: Boolean,
-) {
-    companion object {
-        val LEGACY = UiPresentationPolicy(false, false, false)
-        val ANDROID = UiPresentationPolicy(true, true, true)
-    }
-}
-
-fun uiPresentationPolicy(profile: UiPresentationProfile): UiPresentationPolicy =
-    when (profile) {
-        UiPresentationProfile.LEGACY -> UiPresentationPolicy.LEGACY
-        UiPresentationProfile.ANDROID -> UiPresentationPolicy.ANDROID
-    }
-
-/**
  * The one amount renderer both profiles share. The default profile delegates to the existing
  * formatter, so a caller that does not name a profile keeps the current output exactly; the
  * Android profile appends the currency code from the frozen application projection.

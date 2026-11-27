@@ -6,11 +6,9 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.Posting
-import com.unifiedledger.domain.PostingId
 import com.unifiedledger.domain.TransactionKind
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
@@ -70,20 +68,21 @@ enum class PresentationTimeRole(
 }
 
 /**
- * One business instant bound to its role. [zone] is always the frozen reporting zone unless a
- * caller names another one, so two screens cannot silently choose different day boundaries.
+ * One business instant bound to its role. Every conversion uses the frozen reporting zone
+ * ([MonthlyBuckets.REPORT_TIME_ZONE]); there is no per-call zone parameter, so a screen cannot
+ * quietly pick a different day boundary.
  */
 data class PresentationTime(
     val instant: Instant,
     val role: PresentationTimeRole,
 ) {
-    fun localDateTime(zone: TimeZone = MonthlyBuckets.REPORT_TIME_ZONE): LocalDateTime = instant.toLocalDateTime(zone)
+    fun localDateTime(): LocalDateTime = instant.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE)
 
-    fun localDate(zone: TimeZone = MonthlyBuckets.REPORT_TIME_ZONE): LocalDate = localDateTime(zone).date
+    fun localDate(): LocalDate = localDateTime().date
 
     /** The local wall-clock text (`2026-11-27T10:47`), never a bare UTC instant. */
-    fun text(zone: TimeZone = MonthlyBuckets.REPORT_TIME_ZONE): String {
-        val local = localDateTime(zone)
+    fun text(): String {
+        val local = localDateTime()
         val month = local.monthNumber.toString().padStart(2, '0')
         val day = local.dayOfMonth.toString().padStart(2, '0')
         val hour = local.hour.toString().padStart(2, '0')
@@ -169,35 +168,44 @@ data class PresentationAmount(
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The six ways a display slot can be empty, each with its own frozen copy. `Present` holding zero
- * is the REAL ZERO: a ledger that stated `0.00 CNY` is never rendered through an absence branch.
+ * The five absent states. This is a separate supertype so the absent-copy renderer below accepts
+ * only a member of this closed set: a present value cannot be passed to it at compile time, which
+ * is what stops a real amount from silently rendering as an empty string.
+ */
+sealed interface PresentationAbsence
+
+/**
+ * The six display outcomes, each with its own state. `Present` holding zero is the REAL ZERO: a
+ * ledger that stated `0.00 CNY` is never rendered through an absence branch.
  */
 sealed interface PresentationValue<out T> {
-    data object NotLoaded : PresentationValue<Nothing>
+    data object NotLoaded : PresentationValue<Nothing>, PresentationAbsence
 
-    data object Failed : PresentationValue<Nothing>
+    data object Failed : PresentationValue<Nothing>, PresentationAbsence
 
-    data object NoRecords : PresentationValue<Nothing>
+    data object NoRecords : PresentationValue<Nothing>, PresentationAbsence
 
-    data object Unclassified : PresentationValue<Nothing>
+    data object Unclassified : PresentationValue<Nothing>, PresentationAbsence
 
-    data object NotEligible : PresentationValue<Nothing>
+    data object NotEligible : PresentationValue<Nothing>, PresentationAbsence
 
     data class Present<T>(
         val value: T,
     ) : PresentationValue<T>
 }
 
-/** The frozen copy of one absent state; `Present` has no copy because it renders its value. */
-fun presentationValueText(value: PresentationValue<*>): String =
+/**
+ * The frozen copy of one absent state. The parameter type is [PresentationAbsence], so a caller
+ * holding a [PresentationValue.Present] has no overload to call and gets a compile-time error
+ * instead of an empty string.
+ */
+fun presentationValueText(value: PresentationAbsence): String =
     when (value) {
         PresentationValue.NotLoaded -> "未加载"
         PresentationValue.Failed -> "读取失败"
         PresentationValue.NoRecords -> "无记录"
         PresentationValue.Unclassified -> "未分类"
         PresentationValue.NotEligible -> "无对账资格"
-        is PresentationValue.Present<*> -> ""
-        else -> ""
     }
 
 /** True only for a stated value that happens to be zero — never for an absence branch. */
@@ -229,9 +237,9 @@ data class PresentationCategory(
  * leg (a hidden EXPENSE/INCOME posting account) whose account has no category mapping sets
  * [Resolved.hasUnclassified] instead of inventing a category.
  *
- * A real `ASSET`/`LIABILITY` leg has no classification obligation: its account legitimately has no
- * `posting_account_id` row, so it never becomes 未分类. The authority for that exclusion is the
- * domain [LedgerCatalog]'s own accounts (`real_account = 1` and kind ASSET/LIABILITY); when the
+ * Classification obligation follows the account kind: only `EXPENSE`/`INCOME` accounts have one.
+ * Real `ASSET`/`LIABILITY` legs and `EQUITY` legs legitimately carry no `posting_account_id` row,
+ * so they never become 未分类. The authority is the domain [LedgerCatalog]'s own accounts; when the
  * catalog is absent or the account is unknown, the leg stays fail-closed as unclassified.
  */
 sealed interface CategoryProjection {
@@ -253,14 +261,15 @@ private data class CategoryNode(
 /**
  * Resolve one row's categories from the catalog association only: `catalog_category.posting_account_id`
  * matched against each posting's `accountId`. The snapshot is the UI-side cache; the domain
- * catalog is the fallback source. Both are sorted by stable [CategoryId] before the posting-account
- * association, matching `QueryTransactionDetail`'s deterministic first-wins mapping.
+ * catalog is the fallback source. Association candidates are sorted by stable [CategoryId] text and
+ * installed first-wins, so two categories claiming the same posting account always resolve to the
+ * smaller id regardless of input order.
  *
  * The result preserves the postings' own order (first occurrence wins), so the home badges can
- * follow the posting order instead of an arbitrary map order. A posting account with no category
- * mapping marks `hasUnclassified` only when it is NOT a real `ASSET`/`LIABILITY` leg; those legs
- * carry no category by design. An absent catalog or an account missing from it stays fail-closed
- * (unclassified), so a missing authority never reads as a clean classification.
+ * follow the posting order instead of an arbitrary map order. A leg whose account kind is
+ * `EXPENSE`/`INCOME` and has no category mapping marks `hasUnclassified`; real `ASSET`/`LIABILITY`
+ * and `EQUITY` legs carry no category by design. An absent catalog or an account missing from it
+ * stays fail-closed (unclassified), so a missing authority never reads as a clean classification.
  */
 fun projectCategories(
     postings: List<Posting>,
@@ -279,14 +288,13 @@ fun projectCategories(
                 }
             else -> return CategoryProjection.NotLoaded
         }
-    val byAccount =
-        nodes
-            .filter { it.postingAccountId != null }
-            .sortedBy { it.categoryId.value }
-            .associateBy { requireNotNull(it.postingAccountId) }
+    val byAccount = LinkedHashMap<String, CategoryNode>()
+    for (node in nodes.filter { it.postingAccountId != null }.sortedBy { it.categoryId.value }) {
+        byAccount.putIfAbsent(requireNotNull(node.postingAccountId), node)
+    }
     val byId = nodes.associateBy { it.categoryId }
     val nameCounts = nodes.filter { it.parentId != null }.groupingBy { it.name }.eachCount()
-    // The catalog, not the posting list, decides which legs are categoryless by design.
+    // The catalog, not the posting list, decides which kinds owe a category.
     val accounts = catalog?.accounts?.associateBy { it.id }.orEmpty()
     val ordered = LinkedHashMap<CategoryId, PresentationCategory>()
     var hasUnclassified = false
@@ -294,11 +302,11 @@ fun projectCategories(
         val node = byAccount[posting.accountId.value]
         if (node == null) {
             val account = accounts[posting.accountId]
-            val realNonCategoryLeg =
-                account != null &&
-                    account.realAccount &&
-                    (account.kind == AccountKind.ASSET || account.kind == AccountKind.LIABILITY)
-            if (!realNonCategoryLeg) hasUnclassified = true
+            // A known EXPENSE/INCOME account owes one category. An unknown account (or no catalog
+            // at all) also stays unclassified: the authority is unavailable, so fail closed.
+            val owesCategory =
+                account == null || account.kind == AccountKind.EXPENSE || account.kind == AccountKind.INCOME
+            if (owesCategory) hasUnclassified = true
             continue
         }
         if (ordered.containsKey(node.categoryId)) continue
@@ -369,8 +377,8 @@ sealed interface HomeAmountProjection {
  * both business times.
  *
  * - main title = first non-blank note, else the single resolved category name, else the Chinese
- *   business type; only category-bearing legs participate in the 未分类 check (real ASSET/LIABILITY
- *   legs are categoryless by design);
+ *   business type; only `EXPENSE`/`INCOME` legs participate in the 未分类 check (real ASSET/LIABILITY
+ *   and EQUITY legs are categoryless by design);
  * - badges = resolved categories in posting order, capped at three, with the remaining distinct
  *   count stated rather than dropped silently; [hasUnclassified] is the stable badge state for a
  *   row whose category-bearing leg has no mapping;
@@ -456,33 +464,6 @@ private fun checkedPresentationAdd(
     if (right > 0 && left > Long.MAX_VALUE - right) return null
     if (right < 0 && left < Long.MIN_VALUE - right) return null
     return left + right
-}
-
-/**
- * The distinct posting ids whose CATEGORY-BEARING account had no category mapping. A real
- * `ASSET`/`LIABILITY` leg never appears here: it has no classification obligation. With no
- * authority catalog the check stays fail-closed and reports every unmapped posting.
- */
-fun unclassifiedPostingIds(
-    postings: List<Posting>,
-    snapshot: CatalogSnapshotView?,
-    catalog: LedgerCatalog?,
-): List<PostingId> {
-    val mappedAccounts =
-        when {
-            snapshot != null -> snapshot.categories.map { it.postingAccountId?.value }
-            catalog != null -> catalog.categories.map { it.postingAccountId?.value }
-            else -> return emptyList()
-        }.filterNotNull().toSet()
-    val accounts = catalog?.accounts?.associateBy { it.id }.orEmpty()
-    return postings
-        .filter { it.accountId.value !in mappedAccounts }
-        .filterNot { posting ->
-            val account = accounts[posting.accountId]
-            account != null &&
-                account.realAccount &&
-                (account.kind == AccountKind.ASSET || account.kind == AccountKind.LIABILITY)
-        }.map { it.id }
 }
 
 // ---------------------------------------------------------------------------------------------

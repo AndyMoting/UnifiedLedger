@@ -1,8 +1,6 @@
 package com.unifiedledger.android
 
 import com.unifiedledger.ui.UiPresentationProfile
-import com.unifiedledger.ui.UiPresentationPolicy
-import com.unifiedledger.ui.uiPresentationPolicy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -16,6 +14,5 @@ class AndroidUiPresentationProfileTest {
     fun theAndroidRootSelectsTheAndroidProfile() {
         assertEquals(UiPresentationProfile.ANDROID, ANDROID_UI_PRESENTATION_PROFILE)
         assertNotEquals(UiPresentationProfile.LEGACY, ANDROID_UI_PRESENTATION_PROFILE)
-        assertEquals(UiPresentationPolicy.ANDROID, uiPresentationPolicy(ANDROID_UI_PRESENTATION_PROFILE))
     }
 }

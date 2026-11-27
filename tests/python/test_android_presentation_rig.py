@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 from android_fontscale.sampler import (
+    DEFAULT_UI_MODE,
     PRESENTATION_EVIDENCE_PLAN,
     PRESENTATION_PROFILE_NAME,
     PRESENTATION_SCREENS,
@@ -11,7 +12,9 @@ from android_fontscale.sampler import (
     SampleError,
     UI_MODES,
     gate_profile_problems,
+    gate_ui_mode_problems,
     ui_mode_night_value,
+    ui_mode_readback_problem,
 )
 
 
@@ -69,10 +72,31 @@ class PresentationProfileTests(unittest.TestCase):
 
     def test_ui_modes_map_to_the_platform_night_value(self):
         self.assertEqual(("light", "dark"), UI_MODES)
+        self.assertEqual("light", DEFAULT_UI_MODE)
         self.assertEqual("no", ui_mode_night_value("light"))
         self.assertEqual("yes", ui_mode_night_value("dark"))
         with self.assertRaises(SampleError):
             ui_mode_night_value("sepia")
+
+    def test_ui_mode_readback_requires_the_exact_independent_line(self):
+        self.assertIsNone(ui_mode_readback_problem("Night mode: no\n", "light"))
+        self.assertIsNone(ui_mode_readback_problem("Night mode: yes\n", "dark"))
+        # Unknown commands, a stale other mode, a duplicated line and a prefixed line all fail.
+        for raw in (
+            "Unknown command: uimode",
+            "",
+            "Night mode: yes\n",
+            "Night mode: no\n",
+            "Night mode: no\nNight mode: no\n",
+            "Night mode: no (cached)",
+        ):
+            self.assertIsNotNone(ui_mode_readback_problem(raw, "light"), raw)
+        self.assertIsNotNone(ui_mode_readback_problem("Night mode: yes", "light"))
+
+    def test_gate_ui_mode_must_match_the_host_record(self):
+        self.assertEqual([], gate_ui_mode_problems({"ui_mode": "light"}, "light"))
+        self.assertTrue(gate_ui_mode_problems({}, "light"))
+        self.assertTrue(gate_ui_mode_problems({"ui_mode": "dark"}, "light"))
 
     def test_gate_accepts_a_presentation_host_and_rejects_a_swapped_profile(self):
         expected = [screen.stem for screen in PRESENTATION_SCREENS]

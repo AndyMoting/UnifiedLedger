@@ -121,14 +121,23 @@ class PPresentationProjectionTest {
     }
 
     @Test
-    fun absenceStatesHaveDistinctCopyAndRealZeroStaysPresent() {
-        assertEquals("未加载", presentationValueText(PresentationValue.NotLoaded))
-        assertEquals("读取失败", presentationValueText(PresentationValue.Failed))
-        assertEquals("无记录", presentationValueText(PresentationValue.NoRecords))
-        assertEquals("未分类", presentationValueText(PresentationValue.Unclassified))
-        assertEquals("无对账资格", presentationValueText(PresentationValue.NotEligible))
+    fun absenceStatesHaveDistinctCopyAndCannotSilentlyRenderEmpty() {
+        val copies =
+            listOf(
+                presentationValueText(PresentationValue.NotLoaded),
+                presentationValueText(PresentationValue.Failed),
+                presentationValueText(PresentationValue.NoRecords),
+                presentationValueText(PresentationValue.Unclassified),
+                presentationValueText(PresentationValue.NotEligible),
+            )
+        assertEquals(listOf("未加载", "读取失败", "无记录", "未分类", "无对账资格"), copies)
+        assertEquals(5, copies.toSet().size)
+        assertTrue(copies.all { it.isNotBlank() })
 
         val zero = PresentationValue.Present(PresentationAmount(0L, cny))
+        // The absent-copy renderer accepts only PresentationAbsence, so a present value has no
+        // overload to fall into: it cannot silently become an empty string.
+        assertTrue(zero !is PresentationAbsence)
         assertTrue(isRealZero(zero))
         assertTrue(!isRealZero(PresentationValue.NoRecords))
         assertTrue(!isRealZero(PresentationValue.Present(PresentationAmount(1L, cny))))
@@ -197,6 +206,28 @@ class PPresentationProjectionTest {
         assertEquals("交通 > 早餐", resolved.categories[0].pathText)
         assertEquals("交通 > 早餐", resolved.categories[0].displayName)
         assertEquals("餐饮 > 早餐", resolved.categories[1].displayName)
+        assertTrue(!resolved.hasUnclassified)
+    }
+
+    @Test
+    fun duplicatePostingAccountMappingsResolveToTheSmallerCategoryIdFirstWins() {
+        // The larger id is listed first on purpose: a last-wins map would pick it, while the
+        // frozen association sorts by CategoryId text and installs first-wins.
+        val snapshot =
+            snapshot(
+                listOf(
+                    category("cat-z", null, "后置", "acct-shared"),
+                    category("cat-a", null, "前置", "acct-shared"),
+                ),
+            )
+
+        val resolved =
+            assertIs<CategoryProjection.Resolved>(
+                projectCategories(listOf(posting("p1", "acct-shared", -100L)), snapshot, null),
+            )
+
+        assertEquals(listOf("cat-a"), resolved.categories.map { it.categoryId.value })
+        assertEquals("前置", resolved.categories.single().displayName)
         assertTrue(!resolved.hasUnclassified)
     }
 
@@ -288,6 +319,7 @@ class PPresentationProjectionTest {
                     listOf(
                         account("acct-asset", AccountKind.ASSET),
                         account("acct-liability", AccountKind.LIABILITY),
+                        account("acct-equity", AccountKind.EQUITY),
                         account("acct-expense", AccountKind.EXPENSE, real = false),
                     ),
                 categories = emptyList(),
@@ -403,7 +435,7 @@ class PPresentationProjectionTest {
 
         val amounts = assertIs<HomeAmountProjection.Lines>(projectHomeRow(row, categorySnapshot(), catalog).amounts)
 
-        // MAIN-A2: two real legs are never summed into one -12.34 line; each keeps its account.
+        // Two real legs are never summed into one -12.34 line; each keeps its account.
         assertEquals(listOf(-1_000L, -234L), amounts.lines.map { it.amount.minorUnits })
         assertEquals(listOf("acct-asset", "acct-liability"), amounts.lines.map { it.accountId.value })
         assertEquals(listOf("acct-asset", "acct-liability"), amounts.lines.map { it.accountName })
@@ -466,6 +498,26 @@ class PPresentationProjectionTest {
     }
 
     @Test
+    fun aBalanceAdjustmentWithAssetAndEquityLegsCarriesNoCategoryObligation() {
+        val row =
+            row(
+                TransactionKind.BALANCE_ADJUSTMENT,
+                null,
+                listOf(
+                    posting("p1", "acct-asset", -500L),
+                    posting("p2", "acct-equity", 500L),
+                ),
+            )
+
+        val projection = projectHomeRow(row, snapshot(emptyList()), catalog)
+
+        assertTrue(!projection.hasUnclassified)
+        assertTrue(projection.categoryBadges.isEmpty())
+        assertEquals("余额调整", projection.title)
+        assertEquals(HomeTitleSource.BUSINESS_TYPE, projection.titleSource)
+    }
+
+    @Test
     fun mixedCurrenciesStayOnSeparateLines() {
         val row =
             row(
@@ -484,9 +536,9 @@ class PPresentationProjectionTest {
 
     @Test
     fun aRealPaymentLegCarriesNoCategoryObligationSoTheHiddenCategoryStillNamesTheRow() {
-        // MAIN-A1: the ordinary expense is hidden-category leg (+12.34 on 早餐's posting account)
-        // plus the real payment leg (-12.34 on a real ASSET account). The real leg has no category by
-        // design and must not mark the row 未分类, so a no-note row still takes the category name.
+        // V-A5/V-A6: the ordinary expense is a hidden-category leg (+12.34 on 早餐's posting
+        // account) plus the real payment leg (-12.34 on a real ASSET account). The real leg has no
+        // category by design and must not mark the row 未分类, so a no-note row takes 早餐.
         val row =
             row(
                 TransactionKind.EXPENSE,

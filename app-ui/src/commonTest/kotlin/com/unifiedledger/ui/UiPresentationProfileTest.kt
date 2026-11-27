@@ -3,7 +3,6 @@ package com.unifiedledger.ui
 import com.unifiedledger.domain.CurrencyUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
 
 /**
  * D-369 A profile vectors: the default profile must keep the existing output exactly, and the
@@ -28,16 +27,6 @@ class UiPresentationProfileTest {
         assertEquals("35.50 CNY", presentationAmountForProfile(3_550L, cny, UiPresentationProfile.ANDROID))
         assertEquals("-12.34 CNY", presentationAmountForProfile(-1_234L, cny, UiPresentationProfile.ANDROID))
         assertEquals("0.00 CNY", presentationAmountForProfile(0L, cny, UiPresentationProfile.ANDROID))
-    }
-
-    @Test
-    fun theTwoProfilesSelectDistinctPolicies() {
-        assertEquals(UiPresentationPolicy.LEGACY, uiPresentationPolicy(UiPresentationProfile.LEGACY))
-        assertEquals(UiPresentationPolicy.ANDROID, uiPresentationPolicy(UiPresentationProfile.ANDROID))
-        assertNotEquals(
-            uiPresentationPolicy(UiPresentationProfile.LEGACY),
-            uiPresentationPolicy(UiPresentationProfile.ANDROID),
-        )
     }
 
     @Test
