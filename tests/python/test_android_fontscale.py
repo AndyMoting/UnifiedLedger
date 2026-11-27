@@ -786,6 +786,7 @@ class P806Profile(unittest.TestCase):
         self.assertEqual(
             (
                 TapStep("分析"),
+                ScrollStep("更多分析"),
                 TapStep("更多分析"),
                 ScrollStep("报表期间"),
                 ScrollStep("净支出（含退款） 17.34 CNY"),

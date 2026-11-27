@@ -325,6 +325,19 @@ class P503AndroidTabPresentationTest {
     }
 
     @Test
+    fun ordinaryIncomeInTheCurrencyTotalsAloneStillCountsAsIncome() {
+        // Uncategorized-only ordinary income: no income category row exists, but the currency's own
+        // ordinaryIncomeMinorUnits is non-zero, so the month did state income (the helper's explicit
+        // fallback). This is a disambiguation of the existing behavior, not a new rule.
+        val uncategorizedOnly = monthlyActivity(income = 5_000L, expense = 1_234L, includeIncomeCategories = false)
+        assertTrue(activityHasIncome(uncategorizedOnly))
+        assertTrue(androidAnalysisLayout(UiPresentationProfile.ANDROID, uncategorizedOnly).showsIncomeRegion)
+
+        // The real-zero case stays "no income" (it is loaded and states 0, not an absence).
+        assertFalse(activityHasIncome(monthlyActivity(income = 0L, expense = 1_234L)))
+    }
+
+    @Test
     fun theTrendAndTheIndependentReportMoveBehindMoreAnalysisOnlyOnAndroid() {
         val activity = monthlyActivity(income = 0L, expense = 1L)
         val android = androidAnalysisLayout(UiPresentationProfile.ANDROID, activity)
@@ -879,6 +892,7 @@ class P503AndroidTabPresentationTest {
     private fun monthlyActivity(
         income: Long,
         expense: Long,
+        includeIncomeCategories: Boolean = true,
     ): MonthlyActivity =
         MonthlyActivity(
             ledgerId = ledgerId,
@@ -897,7 +911,7 @@ class P503AndroidTabPresentationTest {
                     ),
                 ),
             expenseCategories = listOf(categoryTotal("cat-food", "餐饮", expense)),
-            incomeCategories = if (income == 0L) emptyList() else listOf(categoryTotal("cat-salary", "工资", income)),
+            incomeCategories = if (income == 0L || !includeIncomeCategories) emptyList() else listOf(categoryTotal("cat-salary", "工资", income)),
         )
 
     private fun calendarRow(

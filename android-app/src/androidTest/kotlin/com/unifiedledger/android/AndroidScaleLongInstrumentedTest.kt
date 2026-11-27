@@ -1283,14 +1283,15 @@ class AndroidScaleLongInstrumentedTest {
         // inserts its title and category badges before the times, so that shape cannot anchor this
         // row. The row's statistics text is therefore the stable locator (one transaction on this
         // surface, so it is unique) while the content description's first segment is not fixed.
-        // Run 43850577023's previous
-        // ascent-from-inner-text locator found no clickable ancestor and fell into clickNode's
-        // coordinate fallback, which this environment refuses outright
-        // (`coordinate tap injection refused`, AndroidScaleUi.kt:342; the same refusal took the
-        // month stepper out in D-340). Opening is therefore BEST-EFFORT with evidence: the row's
-        // presence is already pinned above by the flow header and the day group, and a refused
-        // synthetic tap says nothing about the product — it says this harness cannot inject
-        // coordinates. The detail copy that follows is verified only when the screen opened.
+        // Run 43850577023's failure came from a locator prefix that did not match the row text
+        // rendered at that time (`EXPENSE，统计时间 …` against the row's actual sentence), so no
+        // target was found and clickNode fell into its coordinate fallback, which this environment
+        // refuses outright (`coordinate tap injection refused`, AndroidScaleUi.kt:342; the same
+        // refusal took the month stepper out in D-340). Opening is therefore BEST-EFFORT with
+        // evidence: the row's presence is already pinned above by the flow header and the day
+        // group, and a refused synthetic tap says nothing about the product — it says this harness
+        // cannot inject coordinates. The detail copy that follows is verified only when the screen
+        // opened.
         val statisticsText = statisticsPresentationTime(Instant.parse("2026-01-15T08:00:00+08:00")).text()
         check(ui.has(statisticsText, prefix = true)) { "the Android HOME row must print its Shanghai statistics text [$statisticsText]" }
         val transactionDetailOpened =

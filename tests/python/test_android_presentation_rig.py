@@ -62,12 +62,17 @@ class PresentationProfileTests(unittest.TestCase):
         # D-369 B keeps the independent report behind 更多分析 on Android. Both Android report
         # captures must expand that labelled section and then scroll the report header on screen
         # (QR-A4: the report itself is visible, not merely present in the tree).
-        expected_lead = (TapStep("分析"), TapStep("更多分析"), ScrollStep(P806_REPORT_TITLE))
+        expected_lead = (
+            TapStep("分析"),
+            ScrollStep("更多分析"),
+            TapStep("更多分析"),
+            ScrollStep(P806_REPORT_TITLE),
+        )
 
         p806_report = next(screen for screen in PROFILES["p806"].screens if screen.stem == "report")
-        self.assertEqual(expected_lead, p806_report.steps[:3])
+        self.assertEqual(expected_lead, p806_report.steps[:4])
         self.assertEqual(P806_REPORT_TITLE, p806_report.marker)
-        self.assertIsInstance(p806_report.steps[3], ScrollStep)
+        self.assertIsInstance(p806_report.steps[4], ScrollStep)
 
         presentation = next(screen for screen in PRESENTATION_SCREENS if screen.stem == "presentation-analysis")
         self.assertEqual(expected_lead, presentation.steps)
