@@ -17,6 +17,13 @@ from android_fontscale.sampler import (
     PRESENTATION_CALENDAR_EMPTY_MARKER,
     PRESENTATION_CALENDAR_EMPTY_TITLE,
     PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT,
+    PRESENTATION_CATEGORY_DAILY,
+    PRESENTATION_CATEGORY_FOOD,
+    PRESENTATION_CATEGORY_FOOD_LUNCH,
+    PRESENTATION_CATEGORY_TRANSPORT,
+    PRESENTATION_CATEGORY_TRANSPORT_BREAKFAST,
+    PRESENTATION_CATEGORY_TRAVEL,
+    PRESENTATION_CATEGORY_TRAVEL_FLIGHT,
     PRESENTATION_CROSS_DAY_ACCOUNT,
     PRESENTATION_CROSS_DAY_AMOUNT_B,
     PRESENTATION_CROSS_DAY_DATE_A,
@@ -29,7 +36,10 @@ from android_fontscale.sampler import (
     PRESENTATION_EVIDENCE_PLAN,
     PRESENTATION_HOME_COUNT,
     PRESENTATION_MANAGEMENT_ABSENT,
+    PRESENTATION_MANAGEMENT_ACCOUNTS,
+    PRESENTATION_MANAGEMENT_CATEGORIES,
     PRESENTATION_MANAGEMENT_MARKER,
+    PRESENTATION_MANAGEMENT_STEMS,
     PRESENTATION_MANAGEMENT_TITLE,
     PRESENTATION_MULTI_CATEGORY_LEDGER_ID,
     PRESENTATION_MULTI_CATEGORY_NOTE,
@@ -83,9 +93,38 @@ PRESENTATION_STEMS = [
     "presentation-reconciliation",
     "presentation-reconciliation-cross-day",
     "presentation-catalog-management",
+    "presentation-catalog-categories-upper",
+    "presentation-catalog-categories-middle",
+    "presentation-catalog-categories-lower",
     "presentation-analysis",
     "presentation-calendar-empty",
 ]
+
+# The presentation seed's expense tree as the route renders it (P503CatalogManagementScreen.kt:
+# CategoriesSection renders each group row followed by that group's child rows): CatalogProjection.kt
+# sorts each level by (parentId, name), so the groups are 交通 < 差旅 < 日用品 < 餐饮 and each group's
+# children follow its own row. The second column is the row's height at 1.3, derived in sampler.py's
+# block comment from run 46058888914's account rows: one bodyLarge line (80 px, group rows) or one
+# bodyMedium line (71 px, leaf rows) plus one measured 127 px TextButton row plus the 4 dp paddings
+# (21 px) that both row kinds carry.
+CATEGORY_ROWS = (
+    ("交通", 228),
+    ("交通 / 早餐", 219),
+    ("差旅", 228),
+    ("差旅 / 机票", 219),
+    ("日用品", 228),
+    ("日用品 / 咖啡", 219),
+    ("日用品 / 零食", 219),
+    ("餐饮", 228),
+    ("餐饮 / 午餐", 219),
+    ("餐饮 / 早餐", 219),
+)
+# The management route's 1.3 viewport: the top bar's own nodes end at y=275, the dock clips the
+# scrolling content at y=2133, and one `scroll_swipe_points` swipe moves the content by
+# window_height/3 = 800 px over the dump's 2400 px window.
+CATEGORY_VIEWPORT_TOP = 275
+CATEGORY_VIEWPORT_BOTTOM = 2133
+CATEGORY_SWIPE_STEP = 800
 
 
 class PresentationProfileTests(unittest.TestCase):
@@ -166,11 +205,13 @@ class PresentationProfileTests(unittest.TestCase):
         management_steps = by_stem["presentation-catalog-management"].steps
         management_tap = management_steps.index(TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True))
         self.assertIn(ScrollStep(PRESENTATION_MANAGEMENT_TITLE), management_steps[:management_tap])
-        # The route inherits the entry-tap offset, so its title can be above the viewport; the
-        # on-screen category button is the speech target and is scrolled to after the route opens.
+        # The route opens at the top of its list, so the accounts frame's speech target is the
+        # account row the capture already requires: the TalkBack limb proves the DATA row is
+        # announced instead of repeating the screenshot marker. The button ScrollStep is still the
+        # last step; it is what puts that row inside the frame.
         self.assertEqual(ScrollStep(PRESENTATION_MANAGEMENT_MARKER), management_steps[-1])
         self.assertEqual(
-            (PRESENTATION_MANAGEMENT_MARKER,),
+            (PRESENTATION_MANAGEMENT_ACCOUNTS[0],),
             tuple(check.target for check in by_stem["presentation-catalog-management"].speech),
         )
         # I3: a real TalkBack target must be IN the window, so the two screens whose speech target
@@ -192,6 +233,153 @@ class PresentationProfileTests(unittest.TestCase):
             (PRESENTATION_HOME_COUNT, PRESENTATION_MULTI_CATEGORY_REMAINING),
             by_stem["presentation-multi-currency"].absent,
         )
+
+    def test_the_management_categories_are_split_across_viewports_without_dropping_one(self):
+        # D-369 E2d: the management route is one verticalScroll Column, but the device dump carries
+        # only the rows inside the scroll viewport (run 46058888914: the 1.3 frame ends at the
+        # 支出分类 header, clipped at the dock's top edge y=2133, and holds no 交通 row although the
+        # window node still reports [0,0][1080,2400]). The ten rows of CATEGORY_ROWS are ~2226 px at
+        # 1.3 against an ~1858 px viewport, so the tree is captured as three frames, each anchored
+        # on the row that bounds its own required block.
+        by_stem = {screen.stem: screen for screen in PRESENTATION_SCREENS}
+        management = by_stem["presentation-catalog-management"]
+        upper = by_stem["presentation-catalog-categories-upper"]
+        middle = by_stem["presentation-catalog-categories-middle"]
+        lower = by_stem["presentation-catalog-categories-lower"]
+        # The accounts screen keeps the route guard and names the account rows it photographs.
+        self.assertEqual((PRESENTATION_MANAGEMENT_ABSENT,), management.absent)
+        self.assertEqual(PRESENTATION_MANAGEMENT_MARKER, management.marker)
+        self.assertEqual(PRESENTATION_MANAGEMENT_ACCOUNTS, management.required)
+        # All four seeded group names stay required, each on exactly one of the three captures.
+        required = upper.required + middle.required + lower.required
+        for name in PRESENTATION_MANAGEMENT_CATEGORIES:
+            self.assertEqual(1, required.count(name), name)
+        self.assertEqual(
+            (PRESENTATION_CATEGORY_TRANSPORT, PRESENTATION_CATEGORY_TRAVEL, PRESENTATION_CATEGORY_TRAVEL_FLIGHT),
+            upper.required,
+        )
+        # 日用品 is the middle frame's OWN anchor: the stop condition puts it inside the viewport by
+        # construction, so the frame needs no group row above it. Its other entry is the leaf row
+        # directly under 交通 — the row the old 交通-to-anchor arithmetic left out — so the frame
+        # proves a leaf path and a group row, not one group name alone.
+        self.assertEqual(
+            (PRESENTATION_CATEGORY_TRANSPORT_BREAKFAST, PRESENTATION_CATEGORY_DAILY),
+            middle.required,
+        )
+        self.assertEqual(
+            (PRESENTATION_CATEGORY_FOOD, PRESENTATION_CATEGORY_FOOD_LUNCH),
+            lower.required,
+        )
+        # Each frame scrolls forward to its own anchor (the leaf row one step BELOW its group block,
+        # or the group row itself) and uses that same string as its marker: the forward-only swipe
+        # stops at first appearance, so the block above the anchor is what stays in the window.
+        self.assertEqual((ScrollStep(PRESENTATION_CATEGORY_TRAVEL_FLIGHT),), upper.steps)
+        self.assertEqual(PRESENTATION_CATEGORY_TRAVEL_FLIGHT, upper.marker)
+        self.assertEqual((ScrollStep(PRESENTATION_CATEGORY_DAILY),), middle.steps)
+        self.assertEqual(PRESENTATION_CATEGORY_DAILY, middle.marker)
+        self.assertEqual((ScrollStep(PRESENTATION_CATEGORY_FOOD_LUNCH),), lower.steps)
+        self.assertEqual(PRESENTATION_CATEGORY_FOOD_LUNCH, lower.marker)
+        # Each frame speaks its own group name; the leaf paths stay out of speech because TalkBack's
+        # reading of `/` is unverified.
+        self.assertEqual((PRESENTATION_CATEGORY_TRAVEL,), tuple(check.target for check in upper.speech))
+        self.assertEqual((PRESENTATION_CATEGORY_DAILY,), tuple(check.target for check in middle.speech))
+        self.assertEqual((PRESENTATION_CATEGORY_FOOD,), tuple(check.target for check in lower.speech))
+        # They sit straight after the accounts screen, in the rendered (name-sorted) order, so every
+        # swipe moves forward and no capture ever needs to scroll back up.
+        stems = [screen.stem for screen in PRESENTATION_SCREENS]
+        self.assertEqual(
+            [
+                stems.index("presentation-catalog-management") + 1,
+                stems.index("presentation-catalog-categories-upper") + 1,
+                stems.index("presentation-catalog-categories-middle") + 1,
+            ],
+            [
+                stems.index("presentation-catalog-categories-upper"),
+                stems.index("presentation-catalog-categories-middle"),
+                stems.index("presentation-catalog-categories-lower"),
+            ],
+        )
+        # Dropping any capture un-covers at least one group name: the split is load bearing.
+        for dropped in (
+            "presentation-catalog-categories-upper",
+            "presentation-catalog-categories-middle",
+            "presentation-catalog-categories-lower",
+        ):
+            remaining = [name for screen in PRESENTATION_SCREENS if screen.stem != dropped for name in screen.required]
+            self.assertTrue(
+                [name for name in PRESENTATION_MANAGEMENT_CATEGORIES if name not in remaining],
+                dropped,
+            )
+        # The gate requires the whole management set, so dropping any one of the four stems is red.
+        self.assertEqual([], gate_evidence_plan_problems(PRESENTATION_PROFILE_NAME))
+        for dropped in PRESENTATION_MANAGEMENT_STEMS:
+            remaining = tuple(screen for screen in PRESENTATION_SCREENS if screen.stem != dropped)
+            self.assertTrue(
+                gate_evidence_plan_problems(PRESENTATION_PROFILE_NAME, screens=remaining),
+                dropped,
+            )
+
+    def _assert_category_frame_margin(self, screen: Screen) -> None:
+        """F-03's one-row-of-slack rule for one category frame (the positive control below reuses it)."""
+        heights = {name: height for name, height in CATEGORY_ROWS}
+        rows = [name for name, _ in CATEGORY_ROWS]
+        band = (CATEGORY_VIEWPORT_BOTTOM - CATEGORY_SWIPE_STEP) - CATEGORY_VIEWPORT_TOP
+        # Each frame's required block is listed in rendered order and ends on its own anchor.
+        self.assertEqual(screen.marker, screen.required[-1], screen.stem)
+        self.assertEqual(
+            [],
+            [name for name in screen.required if name not in heights],
+            f"{screen.stem}: a required row outside CATEGORY_ROWS cannot be margin-proven; add it",
+        )
+        indexes = [rows.index(name) for name in screen.required]
+        self.assertEqual(sorted(indexes), indexes, screen.stem)
+        top, anchor = indexes[0], indexes[-1]
+        self.assertGreater(anchor, top, f"{screen.stem} must require at least one row above its anchor")
+        # Consecutive row text tops differ by the upper row's height, so the distance from the
+        # topmost required row to the anchor is the sum of the heights it spans.
+        distance = sum(heights[rows[index]] for index in range(top, anchor))
+        self.assertLess(
+            distance,
+            band,
+            f"{screen.stem}: {rows[top]} sits {distance} px above {screen.marker}, outside the {band} px band",
+        )
+        self.assertLess(
+            distance,
+            band - 219,
+            f"{screen.stem}: {rows[top]} leaves under one leaf row of slack above {screen.marker}",
+        )
+
+    def test_every_category_frame_keeps_a_row_of_slack_above_its_anchor(self):
+        # F-03: a forward swipe can leave its target a whole swipe above the dock edge, so a required
+        # row is proven only while its distance above the frame's own anchor leaves at least one leaf
+        # row of slack inside the viewport: the worst stop puts the anchor at
+        # CATEGORY_VIEWPORT_BOTTOM - CATEGORY_SWIPE_STEP = 1333, and the row above it must stay below
+        # CATEGORY_VIEWPORT_TOP = 275 with one 219 px leaf row to spare. 1.3 is the binding scale —
+        # its rows are taller and its dock sits 9 px higher — so the model is stated there; at 1.0
+        # the same blocks keep more room.
+        by_stem = {screen.stem: screen for screen in PRESENTATION_SCREENS}
+        for stem in (
+            "presentation-catalog-categories-upper",
+            "presentation-catalog-categories-middle",
+            "presentation-catalog-categories-lower",
+        ):
+            self._assert_category_frame_margin(by_stem[stem])
+        # Positive control: the old two-frame split put 日用品 on the same capture as the 餐饮 / 午餐
+        # anchor, four rendered rows (894 px) above it, leaving 164 px of slack — under the one-leaf
+        # row this rule demands. The control shows the rule rejects that arrangement rather than
+        # describing it.
+        old_lower = Screen(
+            "presentation-catalog-categories-lower",
+            (ScrollStep(PRESENTATION_CATEGORY_FOOD_LUNCH),),
+            PRESENTATION_CATEGORY_FOOD_LUNCH,
+            required=(
+                PRESENTATION_CATEGORY_DAILY,
+                PRESENTATION_CATEGORY_FOOD,
+                PRESENTATION_CATEGORY_FOOD_LUNCH,
+            ),
+        )
+        with self.assertRaises(AssertionError):
+            self._assert_category_frame_margin(old_lower)
 
     def test_a_screen_after_a_detail_capture_starts_with_back(self):
         # The detail surface is a sibling of the tab shell (P503App.kt:5804 against the shell's
@@ -286,10 +474,27 @@ class PresentationProfileTests(unittest.TestCase):
             ("ordinary-expense", ("presentation-home",)),
             ("technical-details", ("presentation-technical-collapsed",)),
         )
-        # The management screen is missing from the synthetic table, which is a problem by itself.
+        # The management screen is missing from the synthetic table, which is a problem by itself:
+        # the whole D7 management set (accounts + all three category viewports) is required.
         self.assertEqual(
-            ["the D7 management screen stem presentation-catalog-management is absent"],
+            [f"the D7 management screen stem {stem} is absent" for stem in PRESENTATION_MANAGEMENT_STEMS],
             problems(complete),
+        )
+        # Dropping ONE of the split category frames is red by itself: the three together are what
+        # keeps all four seeded group names required.
+        one_gone = screens + tuple(
+            Screen(stem, (), "x")
+            for stem in PRESENTATION_MANAGEMENT_STEMS
+            if stem != "presentation-catalog-categories-lower"
+        )
+        self.assertEqual(
+            ["the D7 management screen stem presentation-catalog-categories-lower is absent"],
+            gate_evidence_plan_problems(
+                PRESENTATION_PROFILE_NAME,
+                screens=one_gone,
+                evidence_plan=plan,
+                scenario_stems=complete,
+            ),
         )
         # A mapped stem the profile does not capture is red. This is the branch that replaced the E1
         # deferred list: a scenario can no longer be excused by declaring it deferred.

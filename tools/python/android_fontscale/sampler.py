@@ -53,9 +53,10 @@ decidable: the font scale actually took effect, every screenshot is a real image
 blank frame, and each screen's marker text is present in the accessibility tree at that scale (a
 row removed from the composition loses its text node) while the strings its previous screen renders
 are gone (a capture whose navigation did not land is not evidence). A scrollable screen is NOT
-judged for viewport containment here: its off-screen children stay in the tree, so "the marker is
-present" never proves "the marker is visible"; the seeded screen's own dump and the artifact read
-cover that half.
+judged for viewport containment here: the dump carries only the rows inside its scroll viewport (a
+row outside it is ABSENT, a partially visible one is reported clipped at the edge), so "the marker
+is present" proves the row reached the viewport, never that it is shown in full; the screenshot and
+the artifact read cover that half.
 "No visual overflow" is still a human judgement on the artifact — this rig makes that judgement
 cheap, it does not replace it.
 """
@@ -306,7 +307,45 @@ PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT = ("0.00", "共 0 笔")
 PRESENTATION_MANAGEMENT_MARKER = "新建一级分类"
 PRESENTATION_MANAGEMENT_TITLE = "账户与分类管理"
 PRESENTATION_MANAGEMENT_ABSENT = P8_00_ASSET_TARGET
-PRESENTATION_MANAGEMENT_REQUIRED = ("餐饮", "交通", "日用品", "差旅")
+# - The management route's account rows (E2d): AccountsSection renders one Text per account as
+#   `name（kind）` (P503CatalogManagementScreen.kt:286-290) and the P369 seed names the four rows
+#   (P369PresentationSeedWriterTest.kt:739-745). The route opens at the TOP of its list in every
+#   combination of run 46058888914 (the 账户与分类管理 title sits at y=340 at 1.3 and y=349 at 1.0),
+#   so all four rows are in the window at capture. Only the LAST TWO rows are required: the marker
+#   ScrollStep can stop up to one swipe (a third of the 2400 px window) higher than the two observed
+#   stops, which would put 对账样本账户 above the top bar while 跨日界样本账户 and 默认支付账户
+#   (681 px and 382 px above the marker at 1.3) stay inside the window.
+PRESENTATION_MANAGEMENT_ACCOUNTS = ("跨日界样本账户", "默认支付账户")
+# - The seeded expense groups, in the order the route RENDERS them. The seed lists 餐饮,交通,日用品,
+#   差旅 (P369PresentationSeedWriterTest.kt:659-668), but CatalogProjection.kt:69 sorts each tree
+#   level by (parentId, name) and UTF-16 puts 交通 < 差旅 < 日用品 < 餐饮. The forward-only scroll
+#   steps and the three-frame split depend on the rendered order, never on the seed's list order.
+PRESENTATION_CATEGORY_TRANSPORT = "交通"
+PRESENTATION_CATEGORY_TRAVEL = "差旅"
+PRESENTATION_CATEGORY_DAILY = "日用品"
+PRESENTATION_CATEGORY_FOOD = "餐饮"
+PRESENTATION_MANAGEMENT_CATEGORIES = (
+    PRESENTATION_CATEGORY_TRANSPORT,
+    PRESENTATION_CATEGORY_TRAVEL,
+    PRESENTATION_CATEGORY_DAILY,
+    PRESENTATION_CATEGORY_FOOD,
+)
+# The leaf path rows: LeafRow renders `groupName / childName` (P503CatalogManagementScreen.kt:
+# 408-411), and the seed's children give 差旅/机票, 交通/早餐, 日用品/咖啡 then 零食 (咖啡 < 零食),
+# and 餐饮/午餐 then 早餐 (午餐 < 早餐). 差旅/机票 and 餐饮/午餐 are the anchors of the frames whose
+# required block sits above them; 交通/早餐 is the middle frame's row above its own anchor.
+PRESENTATION_CATEGORY_TRAVEL_FLIGHT = "差旅 / 机票"
+PRESENTATION_CATEGORY_FOOD_LUNCH = "餐饮 / 午餐"
+PRESENTATION_CATEGORY_TRANSPORT_BREAKFAST = "交通 / 早餐"
+# The D7 management page's whole capture set (the accounts screen plus the three category viewports).
+# The gate requires every stem, so deleting one frame cannot silently shrink the evidence back to a
+# screen whose `required` names only the groups that happened to fit in its viewport.
+PRESENTATION_MANAGEMENT_STEMS = (
+    "presentation-catalog-management",
+    "presentation-catalog-categories-upper",
+    "presentation-catalog-categories-middle",
+    "presentation-catalog-categories-lower",
+)
 PRESENTATION_ACCOUNT_FLOW_REQUIRED = ("CNY 12.34", f"{SEEDED_ACCOUNT_NAME} 12.34 CNY")
 PRESENTATION_RECONCILIATION_REQUIRED = (SEEDED_TRANSFER_NOTE, "12.34 CNY")
 
@@ -725,9 +764,16 @@ def scroll_swipe_points(xml_text: str) -> tuple[int, int, int, int]:
 def find_reachable_center(xml_text: str, label: str, contains: bool = False) -> tuple[int, int] | None:
     """Centre of the first matching node whose centre is INSIDE the dump's window bounds.
 
-    A scrollable Compose form exposes its off-screen children too, so "the label is in the dump" is
-    not "the label is reachable": a centre below the window is exactly the dead tap a bare
-    `dump_contains` would accept.
+    The dump carries only what a scroll container's viewport shows: a row entirely outside the
+    viewport is ABSENT from the dump, and a partially visible row is reported clipped at the
+    viewport edge. Run 46058888914 measures both on the management route's verticalScroll column:
+    at 1.3 the last content node is the 支出分类 header reported (42,2085)-(615,2133), i.e. clipped
+    at the dock's top edge (the same header is 63 px tall at 1.0), while the window node still
+    reports [0,0][1080,2400] and NO 交通 row exists in the dump at all. "The label is in the dump"
+    is therefore already a visibility claim, and the window-bounds test below is the remaining
+    bound: it rejects a centre the dump reports outside the window, but it cannot recover a row the
+    dump omits — a caller that needs the row to exist at all asserts it with `dump_contains`, which
+    is what a screen's `required` does.
     """
     if not label:
         raise SampleError("an empty label cannot be looked up on screen")
@@ -821,9 +867,11 @@ def visible_absent_problems(xml_text: str, visible_absent: tuple[str, ...]) -> l
 def viewport_problems(xml_text: str, marker: str) -> list[str]:
     """The marker node's whole rect must sit inside the dump's window bounds.
 
-    `marker_problems` proves the string is in the tree, which a scrollable screen keeps true for
-    off-screen children; the supplemental report frame must show the natural-day statement IN
-    FULL, so its node may not be clipped by the viewport edge either.
+    The dump carries only what the scroll viewport shows, so `marker_problems` proves the marker is
+    in the tree — not that its node is unclipped — and this containment test is the only extra
+    bound the dump settles: it rejects a node reported beyond the window. A node the dump reports
+    clipped at the viewport edge still lies inside the window, so the supplemental report frame's
+    requirement (the natural-day statement shown IN FULL) keeps the artifact read as its proof.
     """
     nodes = _nodes(xml_text)
     if not nodes:
@@ -1754,10 +1802,17 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 # (P503App.kt passes the sampled OverviewEmpty.originListScroll back to the screen), which leaves
 # 总借入 ABOVE the viewport where a forward-only ScrollStep can never reach it. For the same
 # reachability reason every screen whose speech target is not guaranteed above the fold scrolls to
-# that exact target before the speech pass: 未核对 1 条 on the queue, 总借入 on ACCOUNTS, and
-# 新建一级分类 on the management route. That last target is the on-screen category button because
-# the route reuses the entry tap's scroll offset, so its 账户与分类管理 title is not guaranteed to be
-# inside the window; the cost is that the speech target and the screenshot marker become one literal.
+# that exact target before the speech pass: 未核对 1 条 on the queue and 总借入 on ACCOUNTS. The
+# management route scrolls to its 新建一级分类 button instead, and that step is what puts the account
+# row the screen actually SPEAKS (跨日界样本账户) inside the frame. The speech target is that account
+# row, not the scrolled-to marker: the route opens at the top of its list (all four rows are in the
+# frame), so the TalkBack limb proves a DATA row's announcement instead of repeating the screenshot
+# marker. The route's three category frames speak their group names (差旅, 日用品, 餐饮) for the
+# same reason: none of those targets — like 跨日界样本账户 on the accounts frame — has been exercised
+# on device yet, so the probe's ability to focus a category or account row through its four-ancestor
+# rule is what the next sweep proves, not this table. Leaf paths (`差旅 / 机票`) stay out of every
+# speech target: TalkBack's reading of the `/` is unverified, while each required literal is a plain
+# word the fragments carry verbatim.
 #
 # System Back walks the captured surfaces: from the USD detail it returns the retained HOME overview
 # (P503Reducer.kt:2107-2109), from the reconciliation queue it returns the carried account flow whole
@@ -1771,8 +1826,9 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 #   from the transfer detail onto the retained HOME list, which is still scrolled to the transfer
 #   row (slot 2). The multi-category row is slot 3, i.e. BELOW it, so one forward ScrollStep reaches
 #   it; tapping it opens the multi-category detail and a forward scroll walks down that page to the
-#   技术信息 toggle (the page is a plain verticalScroll Column, so the toggle is in the tree from the
-#   start and the swipe only has to bring it into the window). `presentation-technical-expanded`
+#   技术信息 toggle (the page is a plain verticalScroll Column whose rows outside the viewport are
+#   absent from the dump, so the swipe is what brings the toggle into the tree at all).
+#   `presentation-technical-expanded`
 #   taps that same toggle in place, so both states are photographed on the same page.
 #   `presentation-multiple-categories` then keeps its own leading Back — it leaves the expanded
 #   detail for the retained list and finds the multi-category row where it was tapped — so neither
@@ -1783,11 +1839,71 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 #   p369-recon-asset, p369-usd-asset, p369-window-asset — SqlDelightCatalogStore.kt:434 over
 #   `Ledger.sq` `selectCatalogAccounts ... ORDER BY account_id`), so the window account is BELOW it
 #   and one forward ScrollStep reaches it. Tap the row -> its account flow -> 账户对账 -> queue, then
-#   scroll the B row onto the screen (the queue is a verticalScroll Column, so the row is in the
-#   tree; the swipe is what puts its centre inside the window for the speech pass).
+#   scroll the B row into the viewport (the queue is a verticalScroll Column, and the dump carries
+#   only the rows inside its viewport, so the swipe is what puts B's row in the tree and its centre
+#   inside the window for the speech pass).
 #   `presentation-catalog-management` keeps its two Backs: they leave the WINDOW queue the same way
 #   and land on the ACCOUNTS list restored at the window row — the last account row — with the
 #   management entry below it, so its forward ScrollStep still reaches it.
+#
+# E2d splits the management page into an accounts frame plus THREE category frames because ONE
+# viewport cannot carry the whole category tree. The route is a plain verticalScroll Column
+# (P503CatalogManagementScreen.kt:104-106), so every row is composed, but the accessibility dump the
+# `required` strings are checked against carries only the rows that intersect the scroll viewport: in
+# run 46058888914 the 1.3 dump ends at the 支出分类 header, reported (42,2085)-(615,2133) — 48 px,
+# against the same header's 63 px at 1.0 — and holds NO 交通 row although the dump's window node still
+# reports [0,0][1080,2400]. At 1.0 the last content node is the 交通 group Text at
+# (42,2080)-(129,2137), and the leaf row below it — one group row further down, 2080 + 21 + 57 +
+# 127 = ≈2285 — is absent although 2285 is inside the 2400 px window: the prune boundary is the dock
+# top (2142 at 1.0, 2133 at 1.3), not the window. A row behind the dock is therefore absent evidence,
+# not present-but-clipped. Whether the same clip runs at the top bar (y=275) is unproven in this run,
+# so the margin arithmetic below assumes it does — the stricter reading, and the one that counts a
+# row above the bar as gone.
+#
+# Row geometry, derived from the account rows of those same dumps: a 16 dp padding measures 42 px, so
+# 1 dp = 2.625 px; the account row's 299 px pitch at 1.3 is one bodyLarge line (80 px), one
+# bodyMedium line (71 px), the 4 dp paddings (21 px) and ONE 48 dp TextButton row — 127 px as a row,
+# the same row measured 126 px as a clickable node. A category group row is that button row plus one
+# bodyLarge line and the paddings: 228 px at 1.3 (211 at 1.0). A leaf row swaps in a bodyMedium line:
+# 219 px at 1.3 (201 at 1.0). The rendered order is NAME order (CatalogProjection.kt:69): 交通,
+# 交通/早餐, 差旅, 差旅/机票, 日用品, 日用品/咖啡, 日用品/零食, 餐饮, 餐饮/午餐, 餐饮/早餐 — ten
+# rows, 2226 px at 1.3, against the 1858 px viewport between the top bar's bottom (measured: the
+# bar's own nodes end at y=275) and the dock top (2133 at 1.3).
+#
+# Where a forward swipe can leave its target: a ScrollStep swipes the content by window_height/3
+# (800 px over the dump's 2400 px window, scroll_swipe_points) and stops at the FIRST frame whose
+# dump carries the target, so the target's text top comes to rest anywhere between (dock top − 800)
+# and the dock top — it does NOT have to land at the dock edge. The rows above it stay inside the
+# window while their distance is under 2133 − 800 − 275 = 1058 px. That bound counts the 800 px drag
+# only: a fling can carry the content further, which is why every frame keeps more than one rendered
+# row (219 px) of slack inside the band.
+#
+# The three frames, each anchored on the row that bounds its own required block:
+# - `presentation-catalog-categories-upper` scrolls to `差旅 / 机票`, the leaf directly BELOW 差旅,
+#   and requires 交通 + 差旅 + that leaf. 交通 sits 675 px above the anchor at 1.3 — the 交通 group
+#   row (228) plus 交通's OWN 早餐 leaf row (219) plus the 差旅 group row (228); the earlier note
+#   left that leaf row out and claimed 445 px — so the margin to the 1058 px band is 383 px, and the
+#   frame survives a swipe that carries up to ≈1180 px instead of 800.
+# - `presentation-catalog-categories-middle` scrolls to `日用品` ITSELF and requires that group name
+#   plus `交通 / 早餐`, 666 px above it (the 早餐 leaf, the 差旅 group and the 差旅 / 机票 leaf). The
+#   anchor cannot come to rest outside the viewport — it is the stop condition — and the row above it
+#   keeps 392 px of margin.
+# - `presentation-catalog-categories-lower` scrolls to `餐饮 / 午餐`, the 餐饮 group's first leaf
+#   (午餐 sorts before 早餐), and requires 餐饮 + that leaf; 餐饮 is one group row above the anchor
+#   (228 px), 830 px of margin.
+# - What the split FIXES: 日用品 used to ride on the lower frame, four rendered rows above the
+#   anchor (日用品, 咖啡, 零食, 餐饮) = 894 px at 1.3. That stayed inside the band only while one
+#   swipe carried under ≈960 px, i.e. 164 px of slack — less than one leaf row (219 px) — so any
+#   fling past the 800 px drag reds it. Putting 日用品 on its own frame removes that coin flip.
+# - The accounts frame keeps the route guard and names the two account rows it films.
+#
+# Evidence strength, stated honestly: `required` is a SUBSTRING test over every node, so a group name
+# never proves its GROUP row. 差旅 and 餐饮 are also carried by a leaf path the same frame requires
+# (差旅 / 机票, 餐饮 / 午餐), which makes them redundant there; 交通 and 日用品 are the two group
+# names no other required string of their frame implies — but each is still a substring of its own
+# leaf paths (交通 / 早餐, 日用品 / 咖啡), so a missing group row with its leaves present would pass
+# the check. The middle frame's stop condition is the one place the GROUP row is addressed exactly
+# (`find_reachable_center`'s exact match, not `dump_contains`), and the screenshot carries the rest.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -1937,8 +2053,50 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         ),
         PRESENTATION_MANAGEMENT_MARKER,
         absent=(PRESENTATION_MANAGEMENT_ABSENT,),
-        required=PRESENTATION_MANAGEMENT_REQUIRED,
-        speech=(SpeechCheck(PRESENTATION_MANAGEMENT_MARKER, (PRESENTATION_MANAGEMENT_MARKER,)),),
+        required=PRESENTATION_MANAGEMENT_ACCOUNTS,
+        speech=(
+            SpeechCheck(
+                PRESENTATION_MANAGEMENT_ACCOUNTS[0],
+                (PRESENTATION_MANAGEMENT_ACCOUNTS[0],),
+            ),
+        ),
+    ),
+    # E2d: three category frames, each anchored on the row that bounds its required block — the leaf
+    # row directly below the group names it requires, or the group row itself (the block comment above
+    # the table derives the viewport geometry and the margin each block keeps).
+    Screen(
+        "presentation-catalog-categories-upper",
+        (ScrollStep(PRESENTATION_CATEGORY_TRAVEL_FLIGHT),),
+        PRESENTATION_CATEGORY_TRAVEL_FLIGHT,
+        absent=(PRESENTATION_MANAGEMENT_ABSENT,),
+        required=(
+            PRESENTATION_CATEGORY_TRANSPORT,
+            PRESENTATION_CATEGORY_TRAVEL,
+            PRESENTATION_CATEGORY_TRAVEL_FLIGHT,
+        ),
+        speech=(SpeechCheck(PRESENTATION_CATEGORY_TRAVEL, (PRESENTATION_CATEGORY_TRAVEL,)),),
+    ),
+    Screen(
+        "presentation-catalog-categories-middle",
+        (ScrollStep(PRESENTATION_CATEGORY_DAILY),),
+        PRESENTATION_CATEGORY_DAILY,
+        absent=(PRESENTATION_MANAGEMENT_ABSENT,),
+        required=(
+            PRESENTATION_CATEGORY_TRANSPORT_BREAKFAST,
+            PRESENTATION_CATEGORY_DAILY,
+        ),
+        speech=(SpeechCheck(PRESENTATION_CATEGORY_DAILY, (PRESENTATION_CATEGORY_DAILY,)),),
+    ),
+    Screen(
+        "presentation-catalog-categories-lower",
+        (ScrollStep(PRESENTATION_CATEGORY_FOOD_LUNCH),),
+        PRESENTATION_CATEGORY_FOOD_LUNCH,
+        absent=(PRESENTATION_MANAGEMENT_ABSENT,),
+        required=(
+            PRESENTATION_CATEGORY_FOOD,
+            PRESENTATION_CATEGORY_FOOD_LUNCH,
+        ),
+        speech=(SpeechCheck(PRESENTATION_CATEGORY_FOOD, (PRESENTATION_CATEGORY_FOOD,)),),
     ),
     Screen(
         "presentation-analysis",
@@ -2360,12 +2518,13 @@ def gate_evidence_plan_problems(
 
     Plan section 2.4 asks the mapping to be asserted rather than trusted: every scenario name is
     accounted for exactly once and in the plan's order, every scenario resolves to at least one
-    stem of this profile's screen table, no stem stands for two scenarios, and the management
-    screen D7 adds is present. There is no deferred branch: a scenario that names a stem this
-    profile does not capture is red, so dropping a screen can never quietly leave a scenario
-    unproven. A non-presentation profile has no mapping to check. The parameters default to the
-    module constants so the unit test can feed synthetic tables without touching the real
-    configuration.
+    stem of this profile's screen table, no stem stands for two scenarios, and every stem of the
+    D7 management page's capture set ([PRESENTATION_MANAGEMENT_STEMS]) is present — the accounts
+    frame plus the three category viewports the page cannot fit into one frame. There is no deferred
+    branch: a scenario that names a stem this profile does not capture is red, so dropping a screen
+    can never quietly leave a scenario unproven. A non-presentation profile has no mapping to
+    check. The parameters default to the module constants so the unit test can feed synthetic
+    tables without touching the real configuration.
     """
     if profile_name != PRESENTATION_PROFILE_NAME:
         return []
@@ -2390,8 +2549,9 @@ def gate_evidence_plan_problems(
             owner[stem] = name
             if stem not in stems:
                 problems.append(f"scenario {name!r} maps {stem!r}, which this profile does not capture")
-    if "presentation-catalog-management" not in stems:
-        problems.append("the D7 management screen stem presentation-catalog-management is absent")
+    for stem in PRESENTATION_MANAGEMENT_STEMS:
+        if stem not in stems:
+            problems.append(f"the D7 management screen stem {stem} is absent")
     return problems
 
 
