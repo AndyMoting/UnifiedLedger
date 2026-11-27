@@ -221,12 +221,11 @@ fun P503OverviewScreen(
                 }
                 if (collapsedDays[group.date] != true) {
                     items(group.rows, key = { it.transactionId.value }) { row ->
-                        val androidRow =
-                            if (catalogSnapshot != null || ledgerCatalog != null) {
-                                homeRowAndroidPresentationFor(profile, row, catalogSnapshot, ledgerCatalog)
-                            } else {
-                                null
-                            }
+                        // D-369 B: the Android profile renders EVERY row through A's projection —
+                        // with no catalog loaded it shows the projection's honest 未加载/读取失败
+                        // state, never the legacy enum/UTC line. Only the LEGACY profile keeps the
+                        // pre-B row (the helper decides on the profile alone).
+                        val androidRow = homeRowAndroidPresentationFor(profile, row, catalogSnapshot, ledgerCatalog)
                         if (androidRow != null) {
                             LedgerEntryFlowRowAndroid(
                                 androidRow = androidRow,
@@ -253,7 +252,11 @@ fun P503OverviewScreen(
                 Text("当前交易（最近 ${state.transactions.size} 笔，共 ${state.transactionTotal} 笔）", style = MaterialTheme.typography.titleMedium)
             }
             items(state.transactions, key = { it.transactionId.value }) { row ->
-                CurrentTransactionRow(row, state.accountNames)
+                if (androidTabPresentation(profile)) {
+                    CurrentTransactionRowAndroid(row, state.accountNames)
+                } else {
+                    CurrentTransactionRow(row, state.accountNames)
+                }
             }
             if (homeShowsAccountBalancesTail(profile)) {
                 item {
@@ -328,6 +331,12 @@ internal fun LedgerEntryFlowRow(
     // as before); the drilldown passes [p806MinorUnitsText], which is exact at Long.MIN_VALUE.
     amountText: (Long, Int) -> String = ::formatMinorUnits,
 ) {
+    // D-369 B / C-SPEC-02: this row is shared by HOME, the search result list and the report
+    // drilldown. Reading the profile HERE gives every caller the right copy without touching those
+    // surfaces: LEGACY keeps the pre-B text byte-for-byte, ANDROID shows the Chinese business name
+    // and the local statistics time with each posting's own account, exact signed amount and
+    // currency code (the caller's amountText still formats the numbers).
+    val profile = LocalUiPresentationProfile.current
     Column(
         modifier =
             Modifier
@@ -341,11 +350,11 @@ internal fun LedgerEntryFlowRow(
                 // C04 (spec 6.4): the flow row announces as one node carrying the effective
                 // kind, the statistics time and every exact posting value with sign, account
                 // name and currency code — the ordered list's values stay TalkBack-reachable.
-                .semantics { contentDescription = flowRowContentDescription(row, accountNames, amountText) }
+                .semantics { contentDescription = flowRowContentDescriptionFor(profile, row, accountNames, amountText) }
                 .padding(vertical = 4.dp),
     ) {
         Text(
-            "${row.kind} · 统计 ${row.statisticsAt}" + (row.note?.let { note -> " · $note" } ?: ""),
+            flowRowHeaderText(profile, row),
             style = MaterialTheme.typography.bodyMedium,
         )
         row.postings.forEach { posting ->
@@ -459,6 +468,37 @@ internal fun LedgerEntryFlowRowAndroid(
             androidRow.amountAbsenceText?.let { absence ->
                 Text(absence, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
             }
+        }
+    }
+}
+
+@Composable
+private fun CurrentTransactionRowAndroid(
+    row: CurrentVersionRow,
+    accountNames: Map<AccountId, String>,
+) {
+    val header = currentRowAndroidHeader(row.kind, row.occurredAt)
+    val amountLines =
+        row.postings.map { posting ->
+            currentRowAndroidAmountLine(
+                accountNames[posting.accountId] ?: posting.accountId.value,
+                posting.amount.minorUnits,
+                posting.amount.currency,
+            )
+        }
+    val palette = LocalP8Palette.current
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                // D-369 B: the same values the row shows are the announced sentence; no enum
+                // constant, no bare UTC instant, and no currency-less number.
+                .semantics { contentDescription = currentRowAndroidContentDescription(header, amountLines) },
+    ) {
+        Text(header, style = MaterialTheme.typography.bodyMedium, color = palette.onSurface)
+        amountLines.forEach { line ->
+            Text(line, style = MaterialTheme.typography.bodySmall, color = palette.onSurface)
         }
     }
 }

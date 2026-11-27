@@ -143,6 +143,7 @@ import com.unifiedledger.domain.BudgetScope
 import com.unifiedledger.domain.CatalogItemKind
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.MerchantId
 import com.unifiedledger.domain.Money
 import com.unifiedledger.domain.P705FailureCode
@@ -381,6 +382,13 @@ private fun P503AppContent(
     // and the null-keyed option derivations stay empty until the first snapshot lands (提交入口
     // 以必填 null 不提交保持账务安全).
     var cachedCatalogSnapshot by remember(ledger) { mutableStateOf<CatalogSnapshotView?>(null) }
+    // D-369 B (spec section 7.1): the catalog the cached snapshot BELONGS to. The Android home row
+    // needs account names/kinds for its per-leg amounts and category paths for its badges, and it
+    // must never read the facade's construction-time catalog (stale after a rename or a new
+    // account). This value lands in the SAME write as `cachedCatalogSnapshot`, from the same leased
+    // read ([P503LedgerFacade.currentAuthoritativeCatalog] beside `catalogSnapshot()`), so the pair
+    // can never mix two catalog versions; a failed catalog read keeps the previous pair.
+    var cachedAuthoritativeCatalog by remember(ledger) { mutableStateOf<LedgerCatalog?>(null) }
     // The single-flight admission and the stale-merge decision live in the pure, JVM-tested
     // [P503CatalogSnapshotLoadCoordinator] (the P503HostCoordinator extraction precedent).
     val catalogSnapshotLoadCoordinator = remember(ledger) { P503CatalogSnapshotLoadCoordinator() }
@@ -429,7 +437,21 @@ private fun P503AppContent(
                 // P7-06 06.1 (D-176; spec 4.3): the read runs under an operation lease, and the
                 // acquire-time generation travels to the landing hop (4.4) so a result captured
                 // under a superseded graph is discarded instead of polluting the new one.
-                val outcome = ledger.leased { facade, _ -> runCatching { facade.catalogSnapshot() }.getOrNull() }
+                val outcome =
+                    ledger.leased { facade, _ ->
+                        // D-369 B: the snapshot and the catalog it belongs to are ONE leased read,
+                        // so the display pair (snapshot + catalog) can never mix two catalog
+                        // versions. Both are current-session authorities, never the construction-time
+                        // catalog. Read off the main thread, exactly like the snapshot.
+                        val snapshot = runCatching { facade.catalogSnapshot() }.getOrNull()
+                        val catalog =
+                            if (snapshot == null) {
+                                null
+                            } else {
+                                runCatching { facade.currentAuthoritativeCatalog() }.getOrNull()
+                            }
+                        snapshot to catalog
+                    }
                 // P7-08 08.B-2: the selectable tag/merchant projection loads in the SAME leased
                 // read as the catalog snapshot (one lease, one trigger — a rename/disable/delete
                 // that changes the catalog snapshot also refreshes the selector's options). A null
@@ -451,7 +473,18 @@ private fun P503AppContent(
                     when (outcome) {
                         is LeaseOutcome.Completed ->
                             if (ledger.isCurrentGeneration(outcome.generation)) {
-                                cachedCatalogSnapshot = catalogSnapshotLoadCoordinator.loadCompleted(cachedCatalogSnapshot, outcome.value)
+                                // D-369 B: a snapshot without its catalog is not a usable display
+                                // pair — keep the last successful pair instead of a fresh snapshot
+                                // beside a stale catalog (never half-new).
+                                val freshSnapshot = outcome.value?.first
+                                val freshCatalog = outcome.value?.second
+                                val pairComplete = catalogDisplayPairComplete(freshSnapshot, freshCatalog)
+                                cachedCatalogSnapshot =
+                                    catalogSnapshotLoadCoordinator.loadCompleted(
+                                        cachedCatalogSnapshot,
+                                        if (pairComplete) freshSnapshot else null,
+                                    )
+                                if (pairComplete && freshCatalog != null) cachedAuthoritativeCatalog = freshCatalog
                                 // D-203 startup trace: the snapshot read landed.
                                 StartupTrace.emit("read.catalogSnapshot end kind=completed")
                             } else {
@@ -4223,13 +4256,25 @@ private fun P503AppContent(
         // P7-06 06.1 (D-176; spec 4.3(b)): the refresh + snapshot pair runs under one operation
         // lease (the synchronous main-thread pair).
         val refreshReadModel = shouldRefreshReadModelAfterCatalogCommand(result)
-        val fresh =
+        val freshPair =
             ledger.probe { facade ->
                 if (refreshReadModel) {
                     facade.refreshCatalog()
                 }
-                runCatching { facade.catalogSnapshot() }.getOrNull()
-            } ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
+                // D-369 B: the display pair lands together — the refreshed snapshot and the catalog
+                // this refresh rebuilt, read in one probe (the current-session authority, never the
+                // construction-time catalog).
+                val snapshot = runCatching { facade.catalogSnapshot() }.getOrNull()
+                val catalog =
+                    if (snapshot == null) {
+                        null
+                    } else {
+                        runCatching { facade.currentAuthoritativeCatalog() }.getOrNull()
+                    }
+                snapshot to catalog
+            }
+        val freshSnapshot = freshPair?.first ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
+        val freshCatalog = freshPair?.second
         if (refreshReadModel) {
             // R1 (spec 6.2/7.3, D-027): HOME's balances/transaction lines come from the read
             // model, which now reads through the refreshed session; re-query it via the existing
@@ -4238,8 +4283,13 @@ private fun P503AppContent(
             // snapshot must not drop the read-model refresh chain.
             refresh()
         }
-        val snapshot = fresh ?: return
-        cachedCatalogSnapshot = snapshot
+        val snapshot = freshSnapshot ?: return
+        // D-369 B: the cached display pair only advances when BOTH halves are present; otherwise the
+        // previous pair stands (the management payload below still dispatches this snapshot).
+        if (catalogDisplayPairComplete(snapshot, freshCatalog) && freshCatalog != null) {
+            cachedCatalogSnapshot = snapshot
+            cachedAuthoritativeCatalog = freshCatalog
+        }
         val payload =
             CatalogSnapshotView(
                 snapshot.catalogVersion,
@@ -4342,16 +4392,31 @@ private fun P503AppContent(
     // order, see [dispatchCatalogCommandResult]).
     fun refreshCatalogSnapshot() {
         // P7-06 06.1 (spec 4.3(b)): the synchronous refresh + snapshot pair runs under one lease.
-        val fresh =
+        // D-369 B: the same probe reads the catalog the refreshed snapshot belongs to, so the cached
+        // display pair advances together (and a rename/new account is visible to the Android home
+        // row without a restart).
+        val freshPair =
             ledger.probe { facade ->
                 facade.refreshCatalog()
-                runCatching { facade.catalogSnapshot() }.getOrNull()
+                val snapshot = runCatching { facade.catalogSnapshot() }.getOrNull()
+                val catalog =
+                    if (snapshot == null) {
+                        null
+                    } else {
+                        runCatching { facade.currentAuthoritativeCatalog() }.getOrNull()
+                    }
+                snapshot to catalog
             }
         // Fired BEFORE the degenerate-snapshot return (the base order): an unavailable snapshot
         // must not drop the read-model refresh chain.
         refresh()
-        val snapshot = fresh ?: return
-        cachedCatalogSnapshot = snapshot
+        val snapshot = freshPair?.first ?: return
+        val freshCatalog = freshPair?.second
+        // D-369 B: never half-new — the pair only advances when both halves landed.
+        if (catalogDisplayPairComplete(snapshot, freshCatalog) && freshCatalog != null) {
+            cachedCatalogSnapshot = snapshot
+            cachedAuthoritativeCatalog = freshCatalog
+        }
         val payload =
             CatalogSnapshotView(
                 snapshot.catalogVersion,
@@ -5560,6 +5625,12 @@ private fun P503AppContent(
                                             onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
                                             onSampleScroll = homeFlowScrollSampler,
                                             onRegisterListState = { homeFlowListState = it },
+                                            // D-369 B: the cached display pair (authoritative
+                                            // snapshot + the catalog it was read with). Both are
+                                            // cache reads; no facade/database read happens during
+                                            // composition, and the LEGACY profile ignores them.
+                                            catalogSnapshot = cachedCatalogSnapshot,
+                                            ledgerCatalog = cachedAuthoritativeCatalog,
                                             catalogSnapshot = current.catalogSnapshot,
                                             ledgerCatalog = ledger.catalog,
                                             onSelectMonth = ::selectMonth,
@@ -6503,6 +6574,9 @@ private fun P503AppContent(
                                         // P8-06 batch 3: the SAME hoisted scroll state as the live
                                         // analysis page, so the retained page keeps its position.
                                         scrollState = analysisScrollState,
+                                        // D-369 B: the same cached display pair as the live page.
+                                        catalogSnapshot = cachedCatalogSnapshot,
+                                        ledgerCatalog = cachedAuthoritativeCatalog,
                                     )
                                 } else {
                                     P503InfrastructureReadScreen(onRetryRefresh = retryRefresh)
@@ -6915,6 +6989,11 @@ private fun P503RetainedOverviewFailureScreen(
     // P8-06 batch 3 (D-362 1/2): the analysis position hoisted by [P503App]; the retained page and
     // the live page share it, so a drilldown round trip never moves the scroll.
     scrollState: ScrollState,
+    // D-369 B: the cached display pair (authoritative snapshot + the catalog it was read with), so
+    // the retained read-failure HOME row renders the same Android face as the live page. Both are
+    // cache reads handed down by [P503App]; null is the honest 未加载 state.
+    catalogSnapshot: CatalogSnapshotView? = null,
+    ledgerCatalog: LedgerCatalog? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -6955,6 +7034,11 @@ private fun P503RetainedOverviewFailureScreen(
                     onSelectTransaction = {},
                     onSelectMonth = {},
                     interactionsEnabled = false,
+                    // D-369 B: the retained read-failure page renders the same Android row, so it
+                    // takes the same cached pair (a null pair is the honest 未加载 state, never the
+                    // legacy enum/UTC line).
+                    catalogSnapshot = cachedCatalogSnapshot,
+                    ledgerCatalog = cachedAuthoritativeCatalog,
                 )
             P503Tab.ANALYSIS ->
                 P503AnalysisScreen(

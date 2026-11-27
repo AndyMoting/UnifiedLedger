@@ -26,15 +26,20 @@ import com.unifiedledger.application.PresentationValue
 import com.unifiedledger.application.SelectableMonthsResult
 import com.unifiedledger.application.TransactionDetailLeg
 import com.unifiedledger.application.TransactionReconciliationLeg
+import com.unifiedledger.application.occurredPresentationTime
+import com.unifiedledger.application.presentationAmountText
 import com.unifiedledger.application.presentationCategoryTintSlot
 import com.unifiedledger.application.presentationValueText
 import com.unifiedledger.application.projectCategoryShares
 import com.unifiedledger.application.projectHomeRow
+import com.unifiedledger.application.statisticsPresentationTime
+import com.unifiedledger.application.transactionKindBusinessName
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionKind
+import kotlin.time.Instant
 import kotlinx.datetime.YearMonth
 
 // P7-03.C/D pure presentation decisions (D-145; spec sections 4.3/6.4, R-Q06-4, R-Q07-3, C04).
@@ -441,6 +446,64 @@ internal fun flowRowContentDescription(
 }
 
 /**
+ * The LEGACY header of the shared flow row, extracted verbatim so the pre-B output stays
+ * byte-identical: effective kind, the raw statistics instant and the note when it is present.
+ */
+internal fun flowRowLegacyHeaderText(row: LedgerEntryRow): String =
+    "${row.kind} · 统计 ${row.statisticsAt}" + (row.note?.let { note -> " · $note" } ?: "")
+
+/**
+ * D-369 B / C-SPEC-02: the shared flow row is used by HOME, the search result list and the report
+ * drilldown, so its profile decision lives here rather than in each caller.
+ *
+ * [UiPresentationProfile.ANDROID] renders the Chinese business name, the statistics time as the
+ * frozen local wall clock ([statisticsPresentationTime], never a bare UTC instant) and the note only
+ * when it carries content; postings keep their own account name, signed exact amount and currency
+ * code, and the caller's [amountText] still formats them (the P806 drilldown passes
+ * [p806MinorUnitsText] so `Long.MIN_VALUE` stays exact). [UiPresentationProfile.LEGACY] keeps the
+ * pre-B text exactly.
+ */
+internal fun flowRowHeaderText(
+    profile: UiPresentationProfile,
+    row: LedgerEntryRow,
+): String =
+    if (androidTabPresentation(profile)) {
+        val time = statisticsPresentationTime(row.statisticsAt).text()
+        val note = row.note?.takeIf { it.isNotBlank() }
+        transactionKindBusinessName(row.kind) + " · 统计 " + time + (note?.let { " · $it" } ?: "")
+    } else {
+        flowRowLegacyHeaderText(row)
+    }
+
+/**
+ * The shared flow row's TalkBack sentence for the current profile. Android announces the same
+ * Chinese business name and local time it displays plus every exact amount line; LEGACY delegates
+ * to [flowRowContentDescription] unchanged.
+ */
+internal fun flowRowContentDescriptionFor(
+    profile: UiPresentationProfile,
+    row: LedgerEntryRow,
+    accountNames: Map<AccountId, String>,
+    amountText: (Long, Int) -> String = ::formatMinorUnits,
+): String {
+    if (!androidTabPresentation(profile)) return flowRowContentDescription(row, accountNames, amountText)
+    val time = statisticsPresentationTime(row.statisticsAt).text()
+    val note = row.note?.takeIf { it.isNotBlank() }
+    val head = transactionKindBusinessName(row.kind) + "，统计时间 " + time + (note?.let { "，备注 $it" } ?: "")
+    val legs =
+        row.postings.joinToString("；") { posting ->
+            flowRowPostingLineText(
+                accountNames[posting.accountId] ?: posting.accountId.value,
+                posting.amount.minorUnits,
+                posting.amount.currency.precision,
+                posting.amount.currency.code,
+                amountText,
+            )
+        }
+    return if (legs.isEmpty()) head else "$head；$legs"
+}
+
+/**
  * One flow-row posting line, shared by the row's VISIBLE text and its TalkBack label so the two can
  * never format a value differently. [amountText] defaults to the legacy [formatMinorUnits]; the
  * P806 drilldown passes [p806MinorUnitsText] so a legitimate `Long.MIN_VALUE` posting renders its
@@ -622,6 +685,18 @@ internal fun homeRowAndroidPresentation(
 /** One badge's visible text: the stable `#` mark plus the category's display name (path-aware). */
 internal fun homeBadgeText(badge: PresentationCategory): String = "#" + badge.displayName
 
+/**
+ * D-369 B: whether one authoritative snapshot read produced a USABLE display pair.
+ *
+ * The snapshot and the catalog it belongs to land together, and only together: a read whose catalog
+ * half failed keeps the previous successful pair, so the home row can never render a fresh snapshot
+ * beside a stale catalog (or the reverse). This is the single decision the host's landing path uses.
+ */
+internal fun catalogDisplayPairComplete(
+    snapshot: CatalogSnapshotView?,
+    catalog: LedgerCatalog?,
+): Boolean = snapshot != null && catalog != null
+
 /** 「其余 N 个」 for the categories beyond the third badge; null when nothing was dropped. */
 internal fun homeRemainingBadgesText(remaining: Int): String? = if (remaining > 0) "其余 $remaining 个" else null
 
@@ -711,7 +786,9 @@ internal fun androidAnalysisLayout(
     } else {
         AndroidAnalysisLayout(
             showsRawSummary = true,
-            showsExpenseRanking = true,
+            // LEGACY keeps the pre-B expense region: the pie chart plus the exact table, chosen by
+            // [P503CategoryRegion] with `withPie = true` — never the Android ranking.
+            showsExpenseRanking = false,
             showsIncomeRegion = true,
             keepsTrendInline = true,
             keepsReportInline = true,
@@ -725,6 +802,19 @@ internal fun activityHasIncome(activity: MonthlyActivity?): Boolean {
     if (activity.incomeCategories.isNotEmpty()) return true
     return activity.currencies.any { row -> row.ordinaryIncomeMinorUnits != 0L }
 }
+
+/**
+ * D-369 B: the 更多分析 toggle. The open flag is a view preference of this one section, not ledger
+ * state, so it stays in the screen with `remember` — the query and period cursors it reveals live in
+ * the shared state and are untouched by collapsing the section. No `rememberSaveable` precedent
+ * exists in this module and no saveable artifact is declared by `app-ui`'s compose dependencies, so
+ * this batch keeps the plain in-composition state rather than adding a dependency for it. Accepted
+ * limit: the section collapses again if the screen's composition scope is recreated; the data it
+ * shows is re-derived from the same state either way.
+ */
+internal fun moreAnalysisOpenLabel(open: Boolean): String = if (open) "收起更多分析" else "更多分析"
+
+internal fun toggledMoreAnalysis(open: Boolean): Boolean = !open
 
 /** One exact-table row of a category ranking (always available, even when the bars are refused). */
 internal data class CategoryShareExactRow(
@@ -749,15 +839,20 @@ internal data class AndroidCategoryShareSection(
 }
 
 /**
- * The horizontal ranking per currency, over A's [projectCategoryShares]. Only non-negative exact
- * amounts feed the chart (a refund-heavy category shows its exact signed value in [exactRows] but
- * never a misleading bar); a currency with no positive contribution has no chart and an explicit
- * [CategoryShareFailure.ZERO_DENOMINATOR]. Currencies are never mixed or converted.
+ * The horizontal ranking per currency, over A's [projectCategoryShares].
+ *
+ * Every exact row goes to the helper unchanged — a negative net is NOT filtered out, so a
+ * refund-heavy category makes the helper answer [CategoryShareProjection.NoChart] with
+ * [CategoryShareFailure.NEGATIVE_AMOUNT] instead of being dropped and letting the remaining
+ * categories claim a misleading 100%. The negative (and zero) values stay visible in [exactRows].
+ * Currencies are never mixed or converted.
  */
 internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>): List<AndroidCategoryShareSection> {
     val exactByCurrency = LinkedHashMap<CurrencyUnit, MutableList<CategoryShareExactRow>>()
     for (category in categories) {
         for (total in category.totals) {
+            // The two parts are a fold of exact postings (MonthlyBuckets), so their sum is exact;
+            // projectCategoryShares additionally refuses any overflow it meets on the way.
             val net = total.positiveMinorUnits + total.refundMinorUnits
             exactByCurrency
                 .getOrPut(total.currency) { ArrayList() }
@@ -765,13 +860,8 @@ internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>
         }
     }
     return exactByCurrency.map { (currency, exactRows) ->
-        val inputs =
-            exactRows.mapNotNull { row ->
-                row.amountMinorUnits.takeIf { it > 0L }?.let { amount ->
-                    CategoryShareInput(row.categoryId, row.name, amount)
-                }
-            }
-        val projection = if (inputs.isEmpty()) null else projectCategoryShares(inputs)
+        val inputs = exactRows.map { row -> CategoryShareInput(row.categoryId, row.name, row.amountMinorUnits) }
+        val projection = projectCategoryShares(inputs)
         when (projection) {
             is CategoryShareProjection.Chart ->
                 AndroidCategoryShareSection(
@@ -783,8 +873,9 @@ internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>
                 )
             is CategoryShareProjection.NoChart ->
                 AndroidCategoryShareSection(currency, emptyList(), exactRows, projection.reason, 0L)
-            // An empty input list is reported as the explicit zero-denominator refusal below.
-            null, CategoryShareProjection.NoCategories ->
+            // The exact table is non-empty by construction above, so NoCategories is unreachable;
+            // it is reported as the explicit zero-denominator refusal rather than a blank graphic.
+            CategoryShareProjection.NoCategories ->
                 AndroidCategoryShareSection(currency, emptyList(), exactRows, CategoryShareFailure.ZERO_DENOMINATOR, 0L)
         }
     }
@@ -839,3 +930,28 @@ internal fun calendarDayCountText(
     } else {
         "${day.transactionCount} 笔"
     }
+
+/**
+ * D-369 B: the bounded current-state fallback row ([com.unifiedledger.application.CurrentVersionRow],
+ * rendered when the monthly cycle is not loaded). It has no catalog on the presentation state, so
+ * every display value comes from the pure projection alone: the Chinese business type, the local
+ * wall-clock occurred time and the exact `amount + code` per posting. The Android profile never
+ * prints the enum constant or a bare UTC instant here, and it never invents an amount.
+ */
+internal fun currentRowAndroidHeader(
+    kind: TransactionKind,
+    occurredAt: Instant,
+): String = transactionKindBusinessName(kind) + " · 发生 " + occurredPresentationTime(occurredAt).text()
+
+/** One current-state posting line, shared by the visible text and the TalkBack sentence. */
+internal fun currentRowAndroidAmountLine(
+    accountName: String,
+    minorUnits: Long,
+    currency: CurrencyUnit,
+): String = "$accountName ${presentationAmountText(minorUnits, currency)}"
+
+/** The current-state row's one announced sentence: the header plus every exact amount line. */
+internal fun currentRowAndroidContentDescription(
+    header: String,
+    amountLines: List<String>,
+): String = if (amountLines.isEmpty()) header else header + "；" + amountLines.joinToString("；")

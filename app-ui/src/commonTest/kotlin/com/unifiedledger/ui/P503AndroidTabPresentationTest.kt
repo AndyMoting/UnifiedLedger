@@ -1,9 +1,22 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.BudgetMonthView
+import com.unifiedledger.application.BudgetMonthViewResult
+import com.unifiedledger.application.CatalogAuthority
+import com.unifiedledger.application.CatalogAuthorityReader
+import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CategoryTreeView
+import com.unifiedledger.application.ConfirmedExpenseReceipt
+import com.unifiedledger.application.ConfirmedIncomeReceipt
+import com.unifiedledger.application.ConfirmedTransferReceipt
+import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentState
+import com.unifiedledger.application.LedgerCurrentStateReadPort
 import com.unifiedledger.application.LedgerEntryRow
+import com.unifiedledger.application.ManualExpenseCommitRecord
+import com.unifiedledger.application.ManualIncomeCommitRecord
+import com.unifiedledger.application.ManualTransferCommitRecord
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
 import com.unifiedledger.application.MonthlyCategoryTotal
@@ -12,6 +25,7 @@ import com.unifiedledger.application.P806CalendarCurrencyView
 import com.unifiedledger.application.P806CalendarDayView
 import com.unifiedledger.application.P806Window
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.RequestId
 import com.unifiedledger.application.presentationCategoryTintSlot
 import com.unifiedledger.domain.Account
 import com.unifiedledger.domain.AccountId
@@ -34,7 +48,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -329,9 +345,28 @@ class P503AndroidTabPresentationTest {
                 listOf(categoryTotal("cat-a", "餐饮", 1_000L), categoryTotal("cat-b", "退款", -500L)),
             ).single()
 
-        assertEquals(listOf("餐饮"), section.chartRows.map { it.name })
-        // The non-positive category stays visible in the exact table (signs never masked).
+        // The negative net is NOT filtered out: A's helper refuses the chart (a filtered list would
+        // have let 餐饮 claim a misleading 100.0%).
+        assertEquals(CategoryShareFailure.NEGATIVE_AMOUNT, section.failure)
+        assertTrue(section.chartRows.isEmpty())
+        assertFalse(section.rendersBars)
+        // Both exact rows stay visible with their signs preserved.
         assertEquals(listOf("餐饮", "退款"), section.exactRows.map { it.name })
+        assertEquals(listOf(1_000L, -500L), section.exactRows.map { it.amountMinorUnits })
+    }
+
+    @Test
+    fun aZeroOrOverflowingTotalRefusesTheChartWithItsOwnReason() {
+        val zero = androidCategoryShareSections(listOf(categoryTotal("cat-a", "餐饮", 0L))).single()
+        assertEquals(CategoryShareFailure.ZERO_DENOMINATOR, zero.failure)
+        assertEquals(listOf(0L), zero.exactRows.map { it.amountMinorUnits })
+
+        val overflow =
+            androidCategoryShareSections(
+                listOf(categoryTotal("cat-a", "餐饮", Long.MAX_VALUE), categoryTotal("cat-b", "交通", 1L)),
+            ).single()
+        assertEquals(CategoryShareFailure.OVERFLOW, overflow.failure)
+        assertTrue(overflow.chartRows.isEmpty())
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -373,9 +408,28 @@ class P503AndroidTabPresentationTest {
     // ---------------------------------------------------------------------------------------------
 
     @Test
-    fun anUnconfiguredBudgetKeepsAShortNoteAndTheSettingsEntryOnAndroid() {
-        assertEquals(BudgetNoticeMode.SHORT, budgetNoticeMode(UiPresentationProfile.ANDROID, view = null))
-        assertEquals(BudgetNoticeMode.FULL, budgetNoticeMode(UiPresentationProfile.LEGACY, view = null))
+    fun anUnconfiguredBudgetIsOnlyASuccessfulEmptyMonth() {
+        val emptyMonth =
+            BudgetMonthViewResult.Success(
+                BudgetMonthView(
+                    ledgerId = ledgerId,
+                    month = YearMonth(2026, 11),
+                    catalogVersion = 1L,
+                    total = null,
+                    categories = emptyList(),
+                ),
+            )
+        // Only a SUCCESSFUL read that states no configured scope is 未配置.
+        assertTrue(budgetIsUnconfigured(emptyMonth))
+        assertEquals(BudgetNoticeMode.SHORT, budgetNoticeMode(UiPresentationProfile.ANDROID, emptyMonth))
+        // Not loaded and both failures keep the full statement — they never claim 未配置.
+        assertFalse(budgetIsUnconfigured(null))
+        assertEquals(BudgetNoticeMode.FULL, budgetNoticeMode(UiPresentationProfile.ANDROID, null))
+        assertFalse(budgetIsUnconfigured(BudgetMonthViewResult.Unavailable))
+        assertEquals(BudgetNoticeMode.FULL, budgetNoticeMode(UiPresentationProfile.ANDROID, BudgetMonthViewResult.Unavailable))
+        assertFalse(budgetIsUnconfigured(BudgetMonthViewResult.InvalidState))
+        // LEGACY always keeps the full explanation.
+        assertEquals(BudgetNoticeMode.FULL, budgetNoticeMode(UiPresentationProfile.LEGACY, emptyMonth))
         assertEquals("还没有设置预算。", BUDGET_UNCONFIGURED_SHORT_TEXT)
     }
 
@@ -432,6 +486,161 @@ class P503AndroidTabPresentationTest {
 
         assertEquals(elsewhere, reducer.reduce(elsewhere, P503UiEvent.OpenCatalogManagement))
         assertEquals(elsewhere, reducer.reduce(elsewhere, P503UiEvent.CloseCatalogManagement))
+    }
+
+    @Test
+    fun theLegacyAnalysisScreenKeepsThePieRegionAndTheInlineSections() {
+        val activity = monthlyActivity(income = 5_000L, expense = 1_234L)
+        val legacy = androidAnalysisLayout(UiPresentationProfile.LEGACY, activity)
+
+        // LEGACY selects the pre-B expense region (P503CategoryRegion withPie = true), never the
+        // Android ranking; the mean of `showsExpenseRanking = false` is that the screen's else
+        // branch runs.
+        assertFalse(legacy.showsExpenseRanking)
+        assertTrue(legacy.showsIncomeRegion)
+        assertTrue(legacy.showsRawSummary)
+        assertTrue(legacy.keepsTrendInline)
+        assertTrue(legacy.keepsReportInline)
+        assertFalse(legacy.showsMoreAnalysis)
+
+        val android = androidAnalysisLayout(UiPresentationProfile.ANDROID, activity)
+        assertTrue(android.showsExpenseRanking)
+        assertFalse(android.showsRawSummary)
+    }
+
+    @Test
+    fun theAndroidRowIsChosenEvenWithoutACatalogAndStatesTheAbsence() {
+        val row = row(TransactionKind.EXPENSE, null, listOf(posting("p1", "acct-asset", -1_234L)))
+
+        // The Android decision never falls back to the legacy enum/UTC row: with no catalog the row
+        // still comes from A's projection and states 未加载 for the amounts.
+        val android = assertNotNull(homeRowAndroidPresentationFor(UiPresentationProfile.ANDROID, row, null, null))
+        assertEquals("未加载", android.amountAbsenceText)
+        assertTrue(android.amountLines.isEmpty())
+        // The title is the Chinese business type, never the enum constant.
+        assertEquals("支出", android.title)
+        assertFalse(homeRowAndroidContentDescription(android).contains("EXPENSE"))
+
+        // LEGACY is the only profile that renders the pre-B row.
+        assertNull(homeRowAndroidPresentationFor(UiPresentationProfile.LEGACY, row, null, null))
+    }
+
+    @Test
+    fun theCurrentStateFallbackRowUsesTheChineseKindAndLocalTime() {
+        // The monthly-not-loaded fallback row has no catalog; the Android face still shows the
+        // Chinese business type, the local wall-clock time and exact amount+code — no enum, no UTC.
+        val header = currentRowAndroidHeader(TransactionKind.EXPENSE, Instant.parse("2026-11-10T12:00:00Z"))
+        assertEquals("支出 · 发生 2026-11-10T20:00", header)
+        val line = currentRowAndroidAmountLine("现金", -1_234L, cny)
+        assertEquals("现金 -12.34 CNY", line)
+
+        val description = currentRowAndroidContentDescription(header, listOf(line))
+        assertFalse(description.contains("EXPENSE"))
+        assertFalse(description.contains("Z"))
+        assertTrue(description.contains("-12.34 CNY"))
+    }
+
+    @Test
+    fun aRenamedOrNewlyAddedAccountComesFromTheSessionAuthority() {
+        // The construction-time catalog is empty (the "old" state); the session authority knows the
+        // account created since. The display projection must read the session's catalog.
+        val sessionCatalog =
+            assertIs<DomainResult.Success<LedgerCatalog>>(
+                LedgerCatalog.create(
+                    accounts =
+                        listOf(
+                            Account(
+                                id = AccountId("acct-new"),
+                                ledgerId = ledgerId,
+                                kind = AccountKind.ASSET,
+                                currency = cny,
+                                ownedByUser = true,
+                                realAccount = true,
+                                name = "新账户",
+                            ),
+                        ),
+                    categories = emptyList(),
+                ),
+            ).value
+        val reader = CatalogAuthorityReader { CatalogAuthority(ledgerId, sessionCatalog, 2L) }
+        val session = CatalogConsumerSession(reader, ledgerId, reader.load(ledgerId)!!, TestReadPort())
+        val facade = minimalP503LedgerFacade(catalogSession = session)
+
+        assertSame(sessionCatalog, facade.currentAuthoritativeCatalog())
+        assertEquals(listOf("新账户"), facade.currentAuthoritativeCatalog().accounts.map { it.name })
+
+        val row = row(TransactionKind.EXPENSE, null, listOf(posting("p1", "acct-new", -1_234L)))
+        val fromSession = homeRowAndroidPresentation(row, null, facade.currentAuthoritativeCatalog())
+        assertEquals(listOf("新账户 -12.34 CNY"), fromSession.amountLines.map { "${it.accountName} ${it.amount.text}" })
+
+        // The construction-time catalog does not know the account: it is an explicit failure (never
+        // an invented amount and never a silent empty list).
+        assertEquals("读取失败", homeRowAndroidPresentation(row, null, facade.catalog).amountAbsenceText)
+    }
+
+    @Test
+    fun aSnapshotWithoutItsCatalogIsNotAUsableDisplayPair() {
+        val snapshot = categorySnapshot()
+        assertTrue(catalogDisplayPairComplete(snapshot, catalog))
+        assertFalse(catalogDisplayPairComplete(null, catalog))
+        assertFalse(catalogDisplayPairComplete(snapshot, null))
+        assertFalse(catalogDisplayPairComplete(null, null))
+    }
+
+    @Test
+    fun theMoreAnalysisToggleIsAViewPreference() {
+        assertEquals("更多分析", moreAnalysisOpenLabel(open = false))
+        assertEquals("收起更多分析", moreAnalysisOpenLabel(open = true))
+        assertTrue(toggledMoreAnalysis(false))
+        assertFalse(toggledMoreAnalysis(true))
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The shared flow row (HOME / search / report drilldown)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun theSharedFlowRowHeaderFollowsTheProfile() {
+        val row = row(TransactionKind.EXPENSE, "午饭", listOf(posting("p1", "acct-asset", -1_234L)))
+
+        // LEGACY: the pre-B text verbatim (enum constant + the raw statistics instant).
+        assertEquals("EXPENSE · 统计 2026-11-10T12:00:00Z · 午饭", flowRowHeaderText(UiPresentationProfile.LEGACY, row))
+        assertEquals(flowRowLegacyHeaderText(row), flowRowHeaderText(UiPresentationProfile.LEGACY, row))
+
+        // ANDROID: Chinese business name + the frozen local wall clock, no enum, no bare UTC.
+        assertEquals("支出 · 统计 2026-11-10T20:00 · 午饭", flowRowHeaderText(UiPresentationProfile.ANDROID, row))
+        assertFalse(flowRowHeaderText(UiPresentationProfile.ANDROID, row).contains("EXPENSE"))
+        assertFalse(flowRowHeaderText(UiPresentationProfile.ANDROID, row).contains("Z"))
+
+        // A note that carries no content is not displayed on Android; LEGACY keeps it verbatim.
+        val blankNote = row(TransactionKind.EXPENSE, "   ", listOf(posting("p1", "acct-asset", -1L)))
+        assertEquals("支出 · 统计 2026-11-10T20:00", flowRowHeaderText(UiPresentationProfile.ANDROID, blankNote))
+        assertEquals("EXPENSE · 统计 2026-11-10T12:00:00Z ·    ", flowRowHeaderText(UiPresentationProfile.LEGACY, blankNote))
+    }
+
+    @Test
+    fun theSharedFlowRowTalkbackKeepsTheCallersAmountFormatter() {
+        // The P806 drilldown passes its own exact formatter (Long.MIN_VALUE is off by one under the
+        // legacy one); the Android sentence must keep using it.
+        val extreme = row(TransactionKind.EXPENSE, "极值", listOf(posting("p1", "acct-asset", Long.MIN_VALUE)))
+
+        val android = flowRowContentDescriptionFor(UiPresentationProfile.ANDROID, extreme, emptyMap(), ::p806MinorUnitsText)
+        assertTrue(android.startsWith("支出，统计时间 2026-11-10T20:00"))
+        assertTrue(android.contains("-92233720368547758.08 CNY"))
+        assertFalse(android.contains("EXPENSE"))
+        assertFalse(android.contains("Z"))
+
+        // LEGACY keeps the pre-B sentence exactly.
+        val legacy = flowRowContentDescriptionFor(UiPresentationProfile.LEGACY, extreme, emptyMap())
+        assertTrue(legacy.startsWith("EXPENSE，统计时间 2026-11-10T12:00:00Z"))
+        assertEquals(flowRowContentDescription(extreme, emptyMap()), legacy)
+
+        // Both profiles keep the caller's per-posting account/label, amount and currency code.
+        val named = mapOf(AccountId("acct-asset") to "现金")
+        assertEquals(
+            "支出，统计时间 2026-11-10T20:00，备注 极值；现金 -92233720368547758.08 CNY",
+            flowRowContentDescriptionFor(UiPresentationProfile.ANDROID, extreme, named, ::p806MinorUnitsText),
+        )
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -571,4 +780,39 @@ class P503AndroidTabPresentationTest {
             currencies = currencies,
             transactionCount = count,
         )
+
+    /** The session's read port: no read is reached by these presentation assertions. */
+    private class TestReadPort : LedgerCurrentStateReadPort {
+        override fun loadCurrentRows(ledgerId: LedgerId): List<CurrentVersionRow> = emptyList()
+
+        override fun findManualExpenseByRequest(
+            ledgerId: LedgerId,
+            requestId: RequestId,
+        ): ManualExpenseCommitRecord? = null
+
+        override fun findManualExpenseByReceipt(
+            ledgerId: LedgerId,
+            receipt: ConfirmedExpenseReceipt,
+        ): ManualExpenseCommitRecord? = null
+
+        override fun findManualIncomeByRequest(
+            ledgerId: LedgerId,
+            requestId: RequestId,
+        ): ManualIncomeCommitRecord? = null
+
+        override fun findManualIncomeByReceipt(
+            ledgerId: LedgerId,
+            receipt: ConfirmedIncomeReceipt,
+        ): ManualIncomeCommitRecord? = null
+
+        override fun findManualTransferByRequest(
+            ledgerId: LedgerId,
+            requestId: RequestId,
+        ): ManualTransferCommitRecord? = null
+
+        override fun findManualTransferByReceipt(
+            ledgerId: LedgerId,
+            receipt: ConfirmedTransferReceipt,
+        ): ManualTransferCommitRecord? = null
+    }
 }

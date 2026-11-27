@@ -581,6 +581,16 @@ fun P503AnalysisScreen(
                     uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
                     reloadRequired = monthlyReloadRequired,
                 )
+            } else {
+                // The LEGACY profile keeps the pre-B expense region byte-for-byte: the pie chart
+                // (R-Q07-3) above the same exact table and drilldown.
+                P503CategoryRegion(
+                    title = "支出分类",
+                    categories = monthlyActivity?.expenseCategories ?: emptyList(),
+                    withPie = true,
+                    uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
+                    reloadRequired = monthlyReloadRequired,
+                )
             }
             if (layout.showsIncomeRegion) {
                 Spacer(Modifier.height(8.dp))
@@ -619,8 +629,8 @@ fun P503AnalysisScreen(
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { moreAnalysisOpen = !moreAnalysisOpen }) {
-                Text(if (moreAnalysisOpen) "收起更多分析" else "更多分析")
+            TextButton(onClick = { moreAnalysisOpen = toggledMoreAnalysis(moreAnalysisOpen) }) {
+                Text(moreAnalysisOpenLabel(moreAnalysisOpen))
             }
             if (moreAnalysisOpen) {
                 P503MonthlyTrendRegion(
