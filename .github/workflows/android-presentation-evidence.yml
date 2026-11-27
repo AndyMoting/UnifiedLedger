@@ -133,45 +133,21 @@ jobs:
           emulator-boot-timeout: 300
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: |
-            set -u
-            failures=0
-            for ui in light dark; do
-              for scale in 1.0 1.3; do
-                python3 tools/ci/android-fontscale.py run \
-                  --evidence "${EVIDENCE_ROOT}/${ui}-${scale}" \
-                  --sha "${EXPECTED_SHA}" \
-                  --profile presentation \
-                  --seed "${SEED_DB}" \
-                  --font-scale "${scale}" \
-                  --ui-mode "${ui}" \
-                  --avd-name ul-presentation \
-                  --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
-                  || failures=1
-              done
-            done
-            exit "${failures}"
+          # THIS VALUE MUST STAY ONE COMMAND LINE. The action runs `script:` one line at a time,
+          # each as its own `sh -c`, so multi-line control flow there is never one program: run
+          # 46054038653 executed the loop header alone (`[command]/usr/bin/sh -c for ui in light
+          # dark; do`), it failed at once (`Syntax error: end of file unexpected (expecting
+          # "done")`, exit 2), and no capture line ever ran. A `run:` block is one script — that
+          # run's gate loop worked — but the four combinations must share this one AVD session,
+          # so the loop lives in tools/ci/android-presentation-sweep.py instead.
+          script: python3 tools/ci/android-presentation-sweep.py run --evidence-root "${EVIDENCE_ROOT}" --sha "${EXPECTED_SHA}" --seed "${SEED_DB}" --avd-name ul-presentation --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
       - name: Re-derive every combination's gate from the evidence on disk
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -u
-          failures=0
-          for ui in light dark; do
-            for scale in 1.0 1.3; do
-              python3 tools/ci/android-fontscale.py gate \
-                --evidence "${EVIDENCE_ROOT}/${ui}-${scale}" \
-                --sha "${EXPECTED_SHA}" \
-                --profile presentation \
-                --seed "${SEED_DB}" \
-                --font-scale "${scale}" \
-                --ui-mode "${ui}" \
-                --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
-                || failures=1
-            done
-          done
-          exit "${failures}"
+        # The same script and the same four combinations as the capture: one definition, so the
+        # gate can never judge a different set than the sweep recorded.
+        run: python3 tools/ci/android-presentation-sweep.py gate --evidence-root "${EVIDENCE_ROOT}" --sha "${EXPECTED_SHA}" --seed "${SEED_DB}" --avd-name ul-presentation --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
       - name: Upload the sweep evidence
         if: always()
         uses: actions/upload-artifact@v4
