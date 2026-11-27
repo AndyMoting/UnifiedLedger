@@ -19,13 +19,13 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 - `profile=refund` (the P8-03 V-14 leg): the same seeded database, whose confirmed manual expense
   is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
   its confirmation page at the requested scale;
-- `profile=presentation` (D-369 E1): an independent target over the dedicated P369 presentation
+- `profile=presentation` (D-369 E1/E2): an independent target over the dedicated P369 presentation
   seed (six transactions: ordinary expense, transfer, multi-category, multi-currency, two
   fixed-instant cross-day transfers) that captures the current presentation surfaces in either
   platform `ui_mode` (light default, dark opt-in) and records REAL TalkBack on every screen.
   `PRESENTATION_EVIDENCE_PLAN` names the eight plan scenarios and `PRESENTATION_SCENARIO_STEMS`
-  maps six of them onto this table; the cross-day reconciliation and technical-collapse screens
-  are deferred to Block B, so this profile never cites a frame as an accepted E2 result;
+  maps every one of them onto this table — there is no deferred scenario left — so the mapping
+  gate's only contract is that each scenario resolves to a captured stem;
 - `profile=p806` (the P8-06 batch 6 V-12 leg): an independent anonymous seed of two fixed expenses
   on one clock-relative day, driving the ANALYSIS report region (plus a second scrolled frame that
   shows the natural-day statement in full), the calendar day cell and that day's drilldown rows at
@@ -245,12 +245,12 @@ PRESENTATION_EVIDENCE_PLAN: tuple[str, ...] = (
     "technical-details",
 )
 
-# D-369 E1: which captured stems stand for which plan scenario. Block A implements six of the
-# eight scenarios; the last two stay deferred until Block B's production text lands (C batch), so
-# they are named here with the stems they will add and listed in PRESENTATION_DEFERRED_SCENARIOS.
-# A stem belongs to exactly one scenario, and every implemented stem below is in
-# PRESENTATION_SCREENS; the unit test (tests/python/test_android_presentation_rig.py) holds both
-# directions of that contract.
+# D-369 E1: which captured stems stand for which plan scenario. E2 completes the two scenarios
+# E1 left deferred — the cross-day reconciliation queue and the technical-information disclosure —
+# so every one of the eight now resolves to at least one stem of PRESENTATION_SCREENS and no
+# deferred list is left to bypass that check. A stem belongs to exactly one scenario, and every
+# mapped stem is in PRESENTATION_SCREENS; the unit test
+# (tests/python/test_android_presentation_rig.py) holds both directions of that contract.
 PRESENTATION_SCENARIO_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ordinary-expense", ("presentation-ordinary-expense",)),
     ("multiple-categories", ("presentation-multiple-categories",)),
@@ -260,10 +260,6 @@ PRESENTATION_SCENARIO_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("single-category-ranking", ("presentation-analysis",)),
     ("cross-day-reconciliation", ("presentation-reconciliation-cross-day",)),
     ("technical-details", ("presentation-technical-collapsed", "presentation-technical-expanded")),
-)
-PRESENTATION_DEFERRED_SCENARIOS: tuple[str, ...] = (
-    "cross-day-reconciliation",
-    "technical-details",
 )
 
 # E1 presentation profile's production literals, each copied from the source the device renders
@@ -313,6 +309,67 @@ PRESENTATION_MANAGEMENT_ABSENT = P8_00_ASSET_TARGET
 PRESENTATION_MANAGEMENT_REQUIRED = ("餐饮", "交通", "日用品", "差旅")
 PRESENTATION_ACCOUNT_FLOW_REQUIRED = ("CNY 12.34", f"{SEEDED_ACCOUNT_NAME} 12.34 CNY")
 PRESENTATION_RECONCILIATION_REQUIRED = (SEEDED_TRANSFER_NOTE, "12.34 CNY")
+
+# - The cross-day queue (E2 scenario `cross-day-reconciliation`): both 2020 transfers land in
+#   `p369-window-asset` (跨日界样本账户 — the seed writer's WINDOW_ACCOUNT_NAME) and are PENDING, so
+#   the list face renders `未核对 2 条` (reconciliationUncheckedPartitionText,
+#   P503ReconciliationPresentation.kt:132). A row is ONE Text node,
+#   reconciliationQueueRowText(row, ANDROID) (P503ReconciliationPresentation.kt:200-211): the date
+#   comes from reconciliationRowDateText (:175-182), i.e. occurredPresentationTime(...).localDate()
+#   — the Asia/Shanghai natural day (PresentationProjection.kt:104, MonthlyBuckets.kt:44) — then
+#   the transaction's own note, cAmountText (P503LedgerViewPresentation.kt:1089-1093, which is
+#   `presentationAmountText`: exact minor units, no sign for a positive leg, code appended) and the
+#   status label. P408ReconciliationStatus.PENDING.label is 待对账 (P408Reconciliation.kt:36).
+#   15:30Z is Shanghai 23:30 on 01-15 while 16:30Z is Shanghai 00:30 on 01-16 — ONE UTC day, two
+#   natural days — so the negative marker is the line the old UTC bucket would print for B:
+#   `2020-01-15 · 跨日界样本B`.
+PRESENTATION_CROSS_DAY_ACCOUNT = "跨日界样本账户"
+PRESENTATION_CROSS_DAY_NOTE_A = "跨日界样本A"
+PRESENTATION_CROSS_DAY_NOTE_B = "跨日界样本B"
+PRESENTATION_CROSS_DAY_DATE_A = "2020-01-15"
+PRESENTATION_CROSS_DAY_DATE_B = "2020-01-16"
+PRESENTATION_CROSS_DAY_AMOUNT_A = "5.00 CNY"
+PRESENTATION_CROSS_DAY_AMOUNT_B = "6.00 CNY"
+PRESENTATION_CROSS_DAY_STATUS = "待对账"
+PRESENTATION_CROSS_DAY_QUEUE_COUNT = "未核对 2 条"
+PRESENTATION_CROSS_DAY_ROW_A = (
+    f"{PRESENTATION_CROSS_DAY_DATE_A} · {PRESENTATION_CROSS_DAY_NOTE_A} · "
+    f"{PRESENTATION_CROSS_DAY_AMOUNT_A} · {PRESENTATION_CROSS_DAY_STATUS}"
+)
+PRESENTATION_CROSS_DAY_ROW_B = (
+    f"{PRESENTATION_CROSS_DAY_DATE_B} · {PRESENTATION_CROSS_DAY_NOTE_B} · "
+    f"{PRESENTATION_CROSS_DAY_AMOUNT_B} · {PRESENTATION_CROSS_DAY_STATUS}"
+)
+# The pre-C-batch UTC-day bucket for B's stored instant: a row that still printed the UTC date would
+# render exactly this, so its presence on the cross-day capture is the regression this screen vetoes.
+PRESENTATION_CROSS_DAY_UTC_ERROR = f"{PRESENTATION_CROSS_DAY_DATE_A} · {PRESENTATION_CROSS_DAY_NOTE_B}"
+
+# - The multi-category detail's 技术信息 area (E2 scenario `technical-details`):
+#   TechnicalInfoSection (P503LedgerView.kt:890-918) renders ONE toggle whose contentDescription is
+#   TechnicalInfoDisclosure.spokenText() (P503LedgerViewPresentation.kt:1135-1142); the three labels
+#   are :1097-1099. The toggle merges its children, and the expanded body is
+#   clearAndSetSemantics (P503LedgerView.kt:915), so the announcement — built from the SAME
+#   disclosure rows — is what both states expose to the accessibility tree; the visible body text
+#   stays a screenshot judgement. The seed's multi-category row has five legs, so
+#   cTransactionDetailTechnicalRows (P503LedgerViewPresentation.kt:1166-1172) yields 3 + 5 = 8 rows,
+#   and their values are the seed writer's own ids (P369PresentationSeedWriterTest:
+#   MULTI_CATEGORY_TRANSACTION_ID plus its `-version` and posting-id suffixes). The expanded state's
+#   other affordance label, C_TECHNICAL_INFO_COLLAPSE_LABEL = 收起技术信息 (:1099), is the toggle's
+#   onClickLabel there and is deliberately NOT a required speech string: the expanded announcement
+#   does not carry it (only an action hint could, and its wording is unverified), so requiring it
+#   would be a guess rather than evidence.
+PRESENTATION_TECHNICAL_HEADER = "技术信息"
+PRESENTATION_TECHNICAL_EXPAND_LABEL = "展开技术信息"
+PRESENTATION_TECHNICAL_ROW_COUNT = 8
+PRESENTATION_TECHNICAL_COLLAPSED = (
+    f"{PRESENTATION_TECHNICAL_HEADER}，已收起，共 {PRESENTATION_TECHNICAL_ROW_COUNT} 项，"
+    f"{PRESENTATION_TECHNICAL_EXPAND_LABEL}"
+)
+PRESENTATION_TECHNICAL_EXPANDED = f"{PRESENTATION_TECHNICAL_HEADER}，共 {PRESENTATION_TECHNICAL_ROW_COUNT} 项："
+PRESENTATION_MULTI_CATEGORY_LEDGER_ID = SEEDED_LEDGER_ID
+PRESENTATION_MULTI_CATEGORY_TRANSACTION_ID = "p369-multi-category"
+PRESENTATION_MULTI_CATEGORY_VERSION_ID = "p369-multi-category-version"
+PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID = "p369-multi-category-payment"
 
 
 def ui_mode_night_value(ui_mode: str) -> str:
@@ -1708,6 +1765,29 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 # is ACCOUNTS (P503Reducer.kt:2335). The management route itself is left by the 分析 dock, not by
 # Back: a bottom-bar tap clears catalogManagementSurface (P503Reducer.kt:1502), which is how the
 # analysis screen leaves it.
+#
+# E2's two additions keep that walk intact by sitting exactly where their starting state exists:
+# - `presentation-technical-collapsed` follows `presentation-detail`, so its first step is a Back
+#   from the transfer detail onto the retained HOME list, which is still scrolled to the transfer
+#   row (slot 2). The multi-category row is slot 3, i.e. BELOW it, so one forward ScrollStep reaches
+#   it; tapping it opens the multi-category detail and a forward scroll walks down that page to the
+#   技术信息 toggle (the page is a plain verticalScroll Column, so the toggle is in the tree from the
+#   start and the swipe only has to bring it into the window). `presentation-technical-expanded`
+#   taps that same toggle in place, so both states are photographed on the same page.
+#   `presentation-multiple-categories` then keeps its own leading Back — it leaves the expanded
+#   detail for the retained list and finds the multi-category row where it was tapped — so neither
+#   its steps nor the multi-currency screen's change.
+# - `presentation-reconciliation-cross-day` follows `presentation-reconciliation`, whose capture
+#   ends on the 对账样本账户 queue. Two Backs (queue -> that account flow -> ACCOUNTS list restored
+#   at the tapped row) put the list at slot 2 of its account_id order (asset-payment-local,
+#   p369-recon-asset, p369-usd-asset, p369-window-asset — SqlDelightCatalogStore.kt:434 over
+#   `Ledger.sq` `selectCatalogAccounts ... ORDER BY account_id`), so the window account is BELOW it
+#   and one forward ScrollStep reaches it. Tap the row -> its account flow -> 账户对账 -> queue, then
+#   scroll the B row onto the screen (the queue is a verticalScroll Column, so the row is in the
+#   tree; the swipe is what puts its centre inside the window for the speech pass).
+#   `presentation-catalog-management` keeps its two Backs: they leave the WINDOW queue the same way
+#   and land on the ACCOUNTS list restored at the window row — the last account row — with the
+#   management entry below it, so its forward ScrollStep still reaches it.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -1745,6 +1825,44 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         absent=(PRESENTATION_HOME_COUNT,),
         required=(P8_02_RESULT_DEBIT, P8_02_RESULT_CREDIT),
         speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+    ),
+    # The technical area's two states. The collapsed capture is the DEFAULT state of the page — no
+    # tap precedes its marker — and the expanded capture changes only that toggle. `absent` carries
+    # the transaction id on the collapsed frame (the normal rows never print it, so its appearance
+    # would mean the identifiers leaked out of the fold) and the collapsed sentence on the expanded
+    # frame (so a tap that missed, or a body that never replaced the collapsed announcement, is red).
+    Screen(
+        "presentation-technical-collapsed",
+        (
+            BACK,
+            ScrollStep(PRESENTATION_MULTI_CATEGORY_NOTE),
+            TapStep(PRESENTATION_MULTI_CATEGORY_NOTE, contains=True),
+            # Eight rows sit after the 账目信息 card's five leg rows and five reconciliation rows, so
+            # at 1.3x the toggle can be more than one viewport below the fold; the budget only
+            # bounds the swipe loop, it never turns a red frame green.
+            scroll_until(PRESENTATION_TECHNICAL_COLLAPSED, max_swipes=8),
+        ),
+        PRESENTATION_TECHNICAL_COLLAPSED,
+        absent=(PRESENTATION_HOME_COUNT, PRESENTATION_MULTI_CATEGORY_TRANSACTION_ID),
+        required=(PRESENTATION_TECHNICAL_EXPAND_LABEL,),
+        speech=(SpeechCheck(PRESENTATION_TECHNICAL_COLLAPSED, (PRESENTATION_TECHNICAL_EXPAND_LABEL,)),),
+    ),
+    Screen(
+        "presentation-technical-expanded",
+        (TapStep(PRESENTATION_TECHNICAL_COLLAPSED),),
+        PRESENTATION_TECHNICAL_EXPANDED,
+        absent=(PRESENTATION_TECHNICAL_COLLAPSED,),
+        required=(
+            PRESENTATION_MULTI_CATEGORY_LEDGER_ID,
+            PRESENTATION_MULTI_CATEGORY_VERSION_ID,
+            PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID,
+        ),
+        speech=(
+            SpeechCheck(
+                PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID,
+                (PRESENTATION_MULTI_CATEGORY_VERSION_ID, PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID),
+            ),
+        ),
     ),
     Screen(
         "presentation-multiple-categories",
@@ -1785,6 +1903,28 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         absent=(ACCOUNT_FLOW_HEADER,),
         required=PRESENTATION_RECONCILIATION_REQUIRED,
         speech=(SpeechCheck(SEEDED_QUEUE_MARKER, (SEEDED_QUEUE_MARKER,)),),
+    ),
+    # The cross-day queue: B's row line is both the marker and the scroll/speech target, so the
+    # capture cannot pass on a date that is merely present elsewhere in the tree.
+    Screen(
+        "presentation-reconciliation-cross-day",
+        (
+            BACK,
+            BACK,
+            ScrollStep(PRESENTATION_CROSS_DAY_ACCOUNT),
+            TapStep(PRESENTATION_CROSS_DAY_ACCOUNT, contains=True),
+            TapStep(RECONCILIATION_TITLE),
+            ScrollStep(PRESENTATION_CROSS_DAY_ROW_B),
+        ),
+        PRESENTATION_CROSS_DAY_ROW_B,
+        absent=(PRESENTATION_CROSS_DAY_UTC_ERROR, ACCOUNT_FLOW_HEADER),
+        required=(PRESENTATION_CROSS_DAY_QUEUE_COUNT, PRESENTATION_CROSS_DAY_ROW_A),
+        speech=(
+            SpeechCheck(
+                PRESENTATION_CROSS_DAY_ROW_B,
+                (PRESENTATION_CROSS_DAY_DATE_B, PRESENTATION_CROSS_DAY_NOTE_B, PRESENTATION_CROSS_DAY_AMOUNT_B),
+            ),
+        ),
     ),
     Screen(
         "presentation-catalog-management",
@@ -2215,23 +2355,23 @@ def gate_evidence_plan_problems(
     screens: tuple[Screen, ...] | None = None,
     evidence_plan: tuple[str, ...] | None = None,
     scenario_stems: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
-    deferred: tuple[str, ...] | None = None,
 ) -> list[str]:
     """The gate's re-derivation of the plan-to-screen mapping for the presentation profile.
 
     Plan section 2.4 asks the mapping to be asserted rather than trusted: every scenario name is
-    accounted for exactly once, every IMPLEMENTED scenario resolves to at least one stem of this
-    profile's screen table, a deferred scenario's stems are not in the table yet (Block B adds
-    them), no stem stands for two scenarios, and the management screen D7 adds is present. A
-    non-presentation profile has no mapping to check. The parameters default to the module
-    constants so the unit test can feed synthetic tables without touching the real configuration.
+    accounted for exactly once and in the plan's order, every scenario resolves to at least one
+    stem of this profile's screen table, no stem stands for two scenarios, and the management
+    screen D7 adds is present. There is no deferred branch: a scenario that names a stem this
+    profile does not capture is red, so dropping a screen can never quietly leave a scenario
+    unproven. A non-presentation profile has no mapping to check. The parameters default to the
+    module constants so the unit test can feed synthetic tables without touching the real
+    configuration.
     """
     if profile_name != PRESENTATION_PROFILE_NAME:
         return []
     screens = PRESENTATION_SCREENS if screens is None else screens
     evidence_plan = PRESENTATION_EVIDENCE_PLAN if evidence_plan is None else evidence_plan
     scenario_stems = PRESENTATION_SCENARIO_STEMS if scenario_stems is None else scenario_stems
-    deferred = PRESENTATION_DEFERRED_SCENARIOS if deferred is None else deferred
     problems: list[str] = []
     names = [name for name, _ in scenario_stems]
     if names != list(evidence_plan):
@@ -2248,10 +2388,7 @@ def gate_evidence_plan_problems(
             if stem in owner:
                 problems.append(f"stem {stem!r} is mapped to both {owner[stem]!r} and {name!r}")
             owner[stem] = name
-            if name in deferred:
-                if stem in stems:
-                    problems.append(f"deferred scenario {name!r} already maps captured stem {stem!r}")
-            elif stem not in stems:
+            if stem not in stems:
                 problems.append(f"scenario {name!r} maps {stem!r}, which this profile does not capture")
     if "presentation-catalog-management" not in stems:
         problems.append("the D7 management screen stem presentation-catalog-management is absent")
