@@ -1107,9 +1107,9 @@ internal fun groupDispositionItemComparisonToggleDescription(
             UiPresentationProfile.ANDROID -> ""
         }
     return if (expanded) {
-        "收起$subject$separator的第 $itemOrdinal 条比较信息"
+        "收起$subject${separator}的第 $itemOrdinal 条比较信息"
     } else {
-        "展开$subject$separator的第 $itemOrdinal 条比较信息"
+        "展开$subject${separator}的第 $itemOrdinal 条比较信息"
     }
 }
 
