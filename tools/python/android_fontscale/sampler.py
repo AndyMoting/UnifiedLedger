@@ -485,6 +485,20 @@ TALKBACK_READY_TIMEOUT_S = 90
 TALKBACK_READY_POLL_INTERVAL_S = 1.0
 # The window tail the readiness artifact keeps, so a red run is diagnosable from the evidence alone.
 TALKBACK_READY_TAIL_LINES = 60
+# D-369 E2f (run 46074246784): "TalkBack spoke once" is not yet "TalkBack's engine can speak". The
+# readiness read accepted ONE startup fragment ("TalkBack on") while the TTS engine was still
+# initialising; the focus command that followed then produced a window with no utterance and the
+# gate correctly failed it. TalkBack logs `Speaking fragment text=…` only when it hands the text to
+# the engine, so a readiness limb that keys on that line is exactly "the engine worked"; the
+# `TTS is not ready` rows name an utterance the engine DROPPED and must not be read as speech.
+# Readiness therefore also requires the LAST speech event to be a spoken fragment, never a dropped
+# one, and a command whose window still carries no utterance is re-issued once as a WHOLE command
+# under a fresh id after a bounded readiness wait. Two commands is the bound: the observed TTS
+# initialisation finished within seconds, every attempt costs up to the 75 s command poll, and a
+# second silent window is already the red signal the gate must see.
+TALKBACK_COMMAND_ATTEMPTS = 2
+TALKBACK_RETRY_READY_TIMEOUT_S = 30
+TALKBACK_RETRY_READY_POLL_INTERVAL_S = 1.0
 # P8-07 batch D r4 (T2): the prompt arrives AFTER that announcement, so one clear at the enable
 # boundary cannot cover it. The panel is re-read in bounded rounds, spaced further apart, until
 # NOTIFICATION_DIALOG_QUIET_READS consecutive reads render no prompt at all.
@@ -930,6 +944,18 @@ _TALKBACK_FRAGMENT = re.compile(
     r"[ \t]*Speaking fragment text=(.*?), utteranceId=",
     re.MULTILINE,
 )
+# The utterance the engine DROPPED, on the same brief columns one message later. Its payload quotes
+# the intended words (`Item: {utteranceId:"", fragments:[{text:日用品, …}]}`), which is exactly why
+# the fragment recognizer above must stay anchored to `Speaking fragment text=`: the dropped
+# utterance was never spoken. Run 46074246784's four middle management captures all carry this row
+# (light-1.3/talkback-presentation-catalog-categories-middle.txt), and the three green combinations
+# derive their genuine `Speaking fragment text="日用品"` from a later row in the same window, so this
+# recognizer is the place the two shapes are told apart.
+_TALKBACK_TTS_NOT_READY = re.compile(
+    r"^[VDIWEF]/talkback(?:[ \t]*\([ \t]*\d+\))?:[ \t]*SpeechControllerImpl(?:\([ \t]*\d+\))?:"
+    r"[ \t]*TTS is not ready\.",
+    re.MULTILINE,
+)
 _COMMAND_NEEDLE64 = re.compile(r"\bneedle64=([A-Za-z0-9+/=]+)")
 
 # The mask the probe logs when its accessibility service connects (D0 on the device side; kept in
@@ -1057,8 +1083,12 @@ def talkback_level_summary_value(xml_text: str) -> str | None:
 def speech_fragments(log_text: str) -> list[str]:
     """Every TalkBack utterance fragment in `log_text`, in log order, unquoted and verbatim.
 
-    `SpeechControllerImpl` logs a silenced fragment as the literal `text=null` (unquoted); that is
-    no utterance at all, so it never counts as a spoken fragment.
+    Only the `Speaking fragment text=…` row is an utterance, because only that row is logged after
+    the engine accepted the text. The dropped-utterance row (`TTS is not ready … Item:
+    {utteranceId:"", fragments:[{text:…}]}`) quotes the intended words but was never spoken, so it
+    is not counted here — a `TTS is not ready` payload can never satisfy a speech check. A silenced
+    fragment is the literal `text=null` (unquoted); that is no utterance at all either, so it never
+    counts as a spoken fragment.
     """
     fragments = []
     for match in _TALKBACK_FRAGMENT.finditer(log_text):
@@ -1110,34 +1140,50 @@ def _speech_contains(spoken: str, needle: str) -> bool:
 
 
 def talkback_readiness(log_text: str) -> tuple[bool, list[str]]:
-    """`(ready, fragments)`: TalkBack's own utterances in the window since the enable write.
+    """`(ready, fragments)`: TalkBack has spoken and its LAST speech event was not dropped.
 
     Readiness is TalkBack SPEAKING, not TalkBack being enabled. The settings read-back, the bound
     service listing and the probe's acknowledgement all only say the service was asked to run; the
     first real-device round shows a focus request refused while TalkBack was still announcing
     itself. Any fragment counts: the startup announcement is spoken in the device locale, so keying
     on an English literal would make readiness a locale dependency rather than a proof.
+
+    Speaking once is not enough while the engine is still initialising (D-369 E2f, run
+    46074246784): the startup fragment is logged, the NEXT utterance is answered with
+    `TTS is not ready` and dropped, and the command that follows records a window with no
+    utterance. So the last speech event has to be a spoken fragment too; a dropped utterance after
+    it is the engine saying it is not ready yet, and the caller must keep waiting.
     """
     fragments = speech_fragments(log_text)
-    return bool(fragments), fragments
+    if not fragments:
+        return False, fragments
+    spoken_positions = [
+        match.start() for match in _TALKBACK_FRAGMENT.finditer(log_text) if match.group(1) != "null"
+    ]
+    dropped_positions = [match.start() for match in _TALKBACK_TTS_NOT_READY.finditer(log_text)]
+    if dropped_positions and (not spoken_positions or dropped_positions[-1] > spoken_positions[-1]):
+        return False, fragments
+    return True, fragments
 
 
 def talkback_readiness_artifact(
-    waited_s: float, polls: int, fragments: list[str], log_text: str
+    waited_s: float, polls: int, fragments: list[str], log_text: str, ready: bool
 ) -> str:
     """The readiness gate's own raw record: how long it waited and the window that decided.
 
     Kept on both outcomes. A ready pass explains why the first command waited; a timed-out pass
-    carries the log that never showed an utterance, so the red run is diagnosable from the evidence
-    directory without a re-run.
+    carries the log that never showed an utterance (or whose last speech event was a dropped one),
+    so the red run is diagnosable from the evidence directory without a re-run.
     """
     lines = [
-        f"# readiness: {'ready' if fragments else 'timeout'}",
+        f"# readiness: {'ready' if ready else 'timeout'}",
         f"# waited: {waited_s:.1f} s",
         f"# logcat reads: {polls}",
         f"# talkback fragments: {len(fragments)}",
     ]
     lines.extend(f"# fragment: {fragment}" for fragment in fragments)
+    if fragments and not ready:
+        lines.append("# last speech event: dropped utterance (TTS is not ready)")
     lines.append("# log tail:")
     lines.extend(log_text.splitlines()[-TALKBACK_READY_TAIL_LINES:])
     return "\n".join(lines) + "\n"
@@ -1397,6 +1443,40 @@ def focus_retry_reason(
         return "the notification prompt was cleared just before this command"
     if first_command and readiness_delayed:
         return "TalkBack only finished starting inside this pass"
+    return ""
+
+
+def talkback_window_fragments(window: list[str], command_id: int) -> list[str]:
+    """This command's own utterances: only the lines strictly between begin and end.
+
+    The same parser and the same window slice `talkback_check_verdict` uses, so "the command
+    produced no utterance" is decided by the artifact, never by a caller's guess.
+    """
+    return speech_fragments("\n".join(_speech_window_lines(window, command_id)))
+
+
+def talkback_silent_retry_reason(window: dict[str, object]) -> str:
+    """The transient a window with no utterance may be retried in, or "" when it must stand.
+
+    D-369 E2f: run 46074246784's `light-1.0` home screen recorded a command that never began a
+    window at all, and its middle management screen recorded a completed accepted window with no
+    utterance — both while the TTS engine was still initialising. Either shape earns ONE more whole
+    command under a fresh id (the bound lives in the caller, `TALKBACK_COMMAND_ATTEMPTS`). A refused
+    focus has its own bounded retry (`focus_retry_reason`) and is not this transient, and a window
+    that carries any utterance stands even when a required value is missing: re-issuing it would not
+    be a transient, it would be re-rolling the die on the device's own reading.
+    """
+    if not window.get("completed"):
+        return "the command's speech window never completed"
+    if window.get("problem"):
+        return ""
+    command_id = window.get("id")
+    if not isinstance(command_id, int):
+        return ""
+    if window.get("accepted") and not talkback_window_fragments(
+        [str(line) for line in window.get("lines") or []], command_id
+    ):
+        return "the accepted window produced no utterance (the TTS engine was not ready)"
     return ""
 
 
@@ -1904,6 +1984,20 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 # leaf paths (交通 / 早餐, 日用品 / 咖啡), so a missing group row with its leaves present would pass
 # the check. The middle frame's stop condition is the one place the GROUP row is addressed exactly
 # (`find_reachable_center`'s exact match, not `dump_contains`), and the screenshot carries the rest.
+#
+# The group row is also the middle frame's SPEECH target and stays so (D-369 E2f, run 46074246784):
+# GroupRow renders the name as a `Text` whose action buttons sit in a SIBLING Row
+# (P503CatalogManagementScreen.kt:364-393, the name Text at :365-368), so the name itself is not
+# focusable and has no focusable ancestor inside the probe's four-level walk
+# (A11yFocusProbeService.java:122 MAX_FOCUS_ANCESTOR_DEPTH). EVERY group row reports exactly that,
+# 差旅 and 餐饮 included; the probe then sends ACTION_ACCESSIBILITY_FOCUS to the visible Text itself
+# when no ancestor qualifies (:836-838, :886), and Compose answers
+# `focus-result … accepted=true source=action` (:818). The name is therefore announced: the same run's
+# middle captures carry `Speaking fragment text="日用品"` inside the accepted window in light-1.3,
+# dark-1.0 and dark-1.3, next to the identical `Speaking fragment text="差旅"` of the upper frame.
+# Moving the target to a leaf row would buy nothing and cost the unverified `/` reading that is the
+# stated reason leaf paths stay out of every speech target (see the block comment above); the
+# four-level constant is not what limits this screen.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -3340,33 +3434,51 @@ class Sampler:
             polls = ready.get("polls")
             readiness_delayed = isinstance(polls, int) and polls > 1
             for index, check in enumerate(screen.speech):
-                self.talkback_sequence += 1
-                command_id = self.talkback_sequence
-                window = self.talkback_focus(check.target, command_id)
-                lines.append(f"# target: {check.target}")
-                lines.append(f"# command: {command_id}")
-                lines.extend(str(line) for line in window["lines"])
-                # T3: one bounded retry, only inside a named transient, and always as a WHOLE
-                # command under a fresh id — the four-stage window is never split. The rejected
-                # window stays in the artifact; `# retry=1` names the command it belongs to.
-                retry_reason = ""
-                if _window_focus_rejected(window):
-                    cleared_now = self.handle_notification_permission_dialog()
-                    retry_reason = focus_retry_reason(
-                        window,
-                        first_command=index == 0,
-                        dialog_cleared=bool(settled.get("clears")) or cleared_now,
-                        readiness_delayed=readiness_delayed,
-                    )
-                if retry_reason:
+                # D-369 E2f: a command is a WHOLE four-stage window under one fresh id, and the
+                # bounded second attempt below re-runs all of it. `attempt` is the number of
+                # commands already spent on this check, so the loop spends at most
+                # TALKBACK_COMMAND_ATTEMPTS commands and the LAST window is the one recorded.
+                attempt = 0
+                while True:
                     self.talkback_sequence += 1
-                    retry_id = self.talkback_sequence
-                    lines.append(f"# retry=1 previous-command: {command_id} reason: {retry_reason}")
-                    window = self.talkback_focus(check.target, retry_id)
-                    command_id = retry_id
+                    command_id = self.talkback_sequence
+                    window = self.talkback_focus(check.target, command_id)
                     lines.append(f"# target: {check.target}")
                     lines.append(f"# command: {command_id}")
                     lines.extend(str(line) for line in window["lines"])
+                    # T3: one bounded retry, only inside a named transient, and always as a WHOLE
+                    # command under a fresh id — the four-stage window is never split. The rejected
+                    # window stays in the artifact; `# retry=1` names the command it belongs to.
+                    retry_reason = ""
+                    retry_waits_for_engine = False
+                    if _window_focus_rejected(window):
+                        cleared_now = self.handle_notification_permission_dialog()
+                        retry_reason = focus_retry_reason(
+                            window,
+                            first_command=index == 0,
+                            dialog_cleared=bool(settled.get("clears")) or cleared_now,
+                            readiness_delayed=readiness_delayed,
+                        )
+                    if not retry_reason:
+                        retry_reason = talkback_silent_retry_reason(window)
+                        retry_waits_for_engine = bool(retry_reason)
+                    if not retry_reason or attempt + 1 >= TALKBACK_COMMAND_ATTEMPTS:
+                        break
+                    lines.append(
+                        f"# retry={attempt + 1} previous-command: {command_id} reason: {retry_reason}"
+                    )
+                    if retry_waits_for_engine:
+                        # The window produced no utterance, so the engine may still be initialising:
+                        # wait, bounded, for a spoken fragment to be the last speech event, then
+                        # re-issue. The wait never decides anything — the window that follows does.
+                        retry_ready = self.wait_talkback_utterance_ready()
+                        lines.append(
+                            f"# retry-ready: ready={str(bool(retry_ready.get('ready'))).lower()} "
+                            f"waited={retry_ready.get('waited_s')}s "
+                            f"polls={retry_ready.get('polls')} "
+                            f"fragments={retry_ready.get('fragments')}"
+                        )
+                    attempt += 1
                 # D5: the picture is taken AFTER the target's own command completed, and its stem
                 # carries the command id that decided, so the gate can bind the png to this window.
                 shot = ""
@@ -3666,7 +3778,10 @@ class Sampler:
         host-visible proof that TalkBack has taken over is its own speech controller logging a
         fragment after that enable write, so the first command waits for it. A timeout fails closed
         — the seconds waited, the number of reads and the window's tail are named, and the pass does
-        not continue into a command that could only report a refusal.
+        not continue into a command that could only report a refusal. D-369 E2f also requires the
+        LAST speech event to be a spoken fragment (`talkback_readiness`): a dropped utterance after
+        the startup announcement means the engine is still initialising, and the command that would
+        follow can only record a silent window.
         """
         artifact_name = f"talkback-readiness-{stem}.txt"
         started = time.monotonic()
@@ -3683,10 +3798,17 @@ class Sampler:
             time.sleep(TALKBACK_READY_POLL_INTERVAL_S)
         waited_s = time.monotonic() - started
         (self.evidence / artifact_name).write_text(
-            talkback_readiness_artifact(waited_s, polls, fragments, log_text), encoding="utf-8"
+            talkback_readiness_artifact(waited_s, polls, fragments, log_text, ready),
+            encoding="utf-8",
         )
-        if not fragments:
+        if not ready:
             tail = "\n".join(log_text.splitlines()[-TALKBACK_READY_TAIL_LINES:])
+            if fragments:
+                raise SampleError(
+                    f"TalkBack's last speech event within {waited_s:.1f} s of being enabled was a "
+                    "dropped utterance (TTS is not ready), so no focus request can be driven yet; "
+                    f"see {artifact_name}; the window ended with:\n{tail}"
+                )
             raise SampleError(
                 f"TalkBack logged no utterance within {waited_s:.1f} s of being enabled "
                 f"({polls} logcat reads), so no focus request can be driven yet; see "
@@ -3698,6 +3820,33 @@ class Sampler:
             "polls": polls,
             "fragments": len(fragments),
             "artifact": artifact_name,
+        }
+
+    def wait_talkback_utterance_ready(self) -> dict[str, object]:
+        """Wait, bounded, for the engine to be past its not-ready burst, then let the retry run.
+
+        The silent-window retry (D-369 E2f) is the only caller. Unlike `wait_talkback_ready` this
+        never raises: a bound that expires is an observation, and the re-issued command's own window
+        still decides the check. The wait is short by design — on run 46074246784 the engine spoke
+        the pending announcement seconds after the dropped one, and the command after it was
+        accepted — so it can never become a way to sit out a genuinely silent screen.
+        """
+        started = time.monotonic()
+        deadline = started + TALKBACK_RETRY_READY_TIMEOUT_S
+        polls = 0
+        ready = False
+        fragments: list[str] = []
+        while True:
+            polls += 1
+            ready, fragments = talkback_readiness(self.logcat_tail())
+            if ready or time.monotonic() >= deadline:
+                break
+            time.sleep(TALKBACK_RETRY_READY_POLL_INTERVAL_S)
+        return {
+            "ready": ready,
+            "waited_s": round(time.monotonic() - started, 1),
+            "polls": polls,
+            "fragments": len(fragments),
         }
 
     def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:

@@ -1,6 +1,7 @@
 """D-369 E1 presentation rig configuration proofs (no device, no emulator, no Gradle)."""
 from __future__ import annotations
 
+import base64
 import subprocess
 import tempfile
 import unittest
@@ -67,6 +68,8 @@ from android_fontscale.sampler import (
     SampleError,
     ScrollStep,
     Screen,
+    SpeechCheck,
+    TALKBACK_COMMAND_ATTEMPTS,
     TapStep,
     UI_MODES,
     gate_evidence_plan_problems,
@@ -74,6 +77,10 @@ from android_fontscale.sampler import (
     gate_ui_mode_problems,
     marker_problems,
     screen_problems,
+    speech_fragments,
+    talkback_check_verdict,
+    talkback_readiness,
+    talkback_silent_retry_reason,
     ui_mode_night_value,
     ui_mode_readback_problem,
     visible_absent_problems,
@@ -774,6 +781,451 @@ class TraceAttemptTests(unittest.TestCase):
                 status, reason = sampler.attempt_trace()
             self.assertEqual("", status)
             self.assertIn("Permission denied", reason)
+
+
+# ---------------------------------------------------------------------------------------------------
+# D-369 E2f: TalkBack fragment provenance and the TTS-readiness retry (run 46074246784, candidate
+# cc76a0c9). Every log row below is VERBATIM from that run's sweep4 artifacts; only the probe's
+# node-dump rows (the `pass …/node text=…` block between focus-result and the end stage) are elided,
+# and the elision cannot create or remove an utterance.
+#
+# The finding these tests pin, in one place: the three "green" middle captures (light-1.3, dark-1.0,
+# dark-1.3) each carry a GENUINE `Speaking fragment text="日用品"` inside the accepted window, and the
+# `TTS is not ready … fragments:[{text:日用品,…}]` row is a dropped utterance the parser never
+# counts. So narrowing the fragment source does NOT turn those three captures red — they really
+# spoke the group row. light-1.0 is the one that is red, and it is red for a different reason: its
+# home command never began a window and its middle window completed accepted with no utterance.
+# ---------------------------------------------------------------------------------------------------
+_RUN = "46074246784"
+_DARK_MIDDLE = "local/artifacts/sweep4/dark-1.0/talkback-presentation-catalog-categories-middle.txt"
+_LIGHT_MIDDLE = "local/artifacts/sweep4/light-1.0/talkback-presentation-catalog-categories-middle.txt"
+
+# `light-1.3/talkback-presentation-catalog-categories-middle.txt`: the engine dropped the utterance.
+_TTS_NOT_READY_DAILY = (
+    'E/talkback: SpeechControllerImpl(15700): TTS is not ready. Attempted to speak before TTS was '
+    'initialized. Item: {utteranceId:"", fragments:[{text:日用品, earcons:[2132017155], '
+    "haptics:[2130903141], speechParams:Bundle[{pitch=1.0}]nonSpeechParams:Bundle[{}]"
+    "fragmentStartIndex:0}], uninterruptible:false, isGloballyUninterruptible:false, "
+    "mCanIgnoreInterrupts:false, flushGlobalTtsQueue:true, flags:2156, "
+    "creationTime:1795819396264}"
+)
+# The same file one announcement later: the engine actually spoke the group row.
+_SPEAKING_DAILY = (
+    'V/talkback: SpeechControllerImpl(15700): Speaking fragment text="日用品", '
+    "utteranceId=talkback_2, TtsSpan=null, locale=en_US, "
+    "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_VIEW_ACCESSIBILITY_FOCUSED displayId:0 "
+    "time:1871860"
+)
+_SPEAKING_STARTUP = (
+    'V/talkback: SpeechControllerImpl(28258): Speaking fragment text="TalkBack on", '
+    "utteranceId=talkback_0, TtsSpan=null, locale=null, event=null"
+)
+# `dark-1.0/talkback-presentation-catalog-categories-middle.txt` (cmd 16): the green window. The
+# group name is a non-focusable Text whose action buttons are siblings, so the probe logs
+# `target=none` for EVERY group row — and still answers accepted from the action it sends to the
+# visible Text itself, which is enough for TalkBack to announce it.
+_DARK_MIDDLE_WINDOW = (
+    'I/ULA11Y  (24830): command action=focus id=16 needle64=5pel55So5ZOB target="日用品"',
+    "I/ULA11Y  (24830): target id=16 found=true visible=true bounds=[42,1853][172,1916] "
+    'text="日用品" desc="" text64="5pel55So5ZOB" desc64="" actions=0x20340 clickable=false '
+    "scrollable=false",
+    'I/ULA11Y  (24830): focus-before id=16 found=true bounds=[42,296][519,330] '
+    'text64="6Leo5pel55WM5qC35pys6LSm5oi377yI6LWE5Lqn77yJ" desc64=""',
+    "I/ULA11Y  (24830): focus-target id=16 target=none reason=no-focusable-ancestor "
+    "focusNodeBounds=[42,1853][172,1916]",
+    "I/ULA11Y  (24830): speech-window-begin id=16",
+    "I/ULA11Y  (24830): focus-result id=16 found=true accepted=true source=action",
+    'V/talkback: SpeechControllerImpl(28258): Speaking fragment text="UnifiedLedger", '
+    "utteranceId=talkback_1, TtsSpan=null, locale=null, "
+    "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_WINDOWS_CHANGED displayId:0 time:2766931",
+    'V/talkback: SpeechControllerImpl(28258): Speaking fragment text="日用品", '
+    "utteranceId=talkback_2, TtsSpan=null, locale=en_US, "
+    "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_VIEW_ACCESSIBILITY_FOCUSED displayId:0 "
+    "time:2767859",
+    "I/ULA11Y  (24830): speech-window-end id=16",
+)
+# `light-1.0/talkback-presentation-catalog-categories-middle.txt` (cmd 17): completed, accepted, and
+# no utterance at all. The one fragment before the command line belongs to the PREVIOUS command's
+# window and must not count; the `TTS is not ready` rows sit even earlier, in cmd 16's window.
+_LIGHT_SILENT_WINDOW = (
+    'V/talkback: SpeechControllerImpl(13148): Speaking fragment text="UnifiedLedger", '
+    "utteranceId=talkback_1, TtsSpan=null, locale=null, "
+    "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_WINDOWS_CHANGED displayId:0 time:871788",
+    'I/ULA11Y  ( 4733): command action=focus id=17 needle64=5pel55So5ZOB target="日用品"',
+    "I/ULA11Y  ( 4733): target id=17 found=true visible=true bounds=[42,1857][172,1920] "
+    'text="日用品" desc="" text64="5pel55So5ZOB" desc64="" actions=0x20380 clickable=false '
+    "scrollable=false",
+    'I/ULA11Y  ( 4733): focus-before id=17 found=true bounds=[42,1857][172,1920] '
+    'text64="5pel55So5ZOB" desc64=""',
+    "I/ULA11Y  ( 4733): focus-clear id=17 answered=true",
+    "I/ULA11Y  ( 4733): focus-target id=17 target=none reason=no-focusable-ancestor "
+    "focusNodeBounds=[42,1857][172,1920]",
+    "I/ULA11Y  ( 4733): speech-window-begin id=17",
+    "I/ULA11Y  ( 4733): focus-result id=17 found=true accepted=true source=action",
+    "I/ULA11Y  ( 4733): speech-window-end id=17",
+)
+
+
+def _artifact(*rows: str) -> str:
+    """One recorded talkback artifact body: the rows in order, newline-terminated."""
+    return "\n".join(rows) + "\n"
+
+
+def _spoken(fragment: str, *, utterance_id: str = "talkback_2") -> str:
+    """A `Speaking fragment` row in the real brief shape (PID inside the controller columns)."""
+    return (
+        f'V/talkback: SpeechControllerImpl(28258): Speaking fragment text="{fragment}", '
+        f"utteranceId={utterance_id}, TtsSpan=null, locale=en_US, "
+        "event=type:EVENT_TYPE_ACCESSIBILITY subtype:TYPE_VIEW_ACCESSIBILITY_FOCUSED displayId:0 "
+        "time:1"
+    )
+
+
+def _probe_window(
+    *,
+    command_id: int,
+    target: str,
+    fragments: tuple[str, ...] = (),
+    pre_begin: tuple[str, ...] = (),
+    accepted: bool = True,
+    completed: bool = True,
+    problem: str = "",
+) -> dict[str, object]:
+    """A command window in the probe's own shape, for driving `p806_talkback_screen`."""
+    encoded = base64.b64encode(target.encode("utf-8")).decode("ascii")
+    lines = [
+        f'I/ULA11Y  ( 4733): command action=focus id={command_id} needle64={encoded} target="{target}"',
+        f"I/ULA11Y  ( 4733): target id={command_id} found=true visible=true "
+        f'bounds=[42,1857][172,1920] text="{target}" desc="" text64="{encoded}" desc64="" '
+        "actions=0x20380 clickable=false scrollable=false",
+        *pre_begin,
+        f"I/ULA11Y  ( 4733): speech-window-begin id={command_id}",
+        f"I/ULA11Y  ( 4733): focus-result id={command_id} found=true "
+        f"accepted={'true' if accepted else 'false'} source=action",
+        *(_spoken(fragment) for fragment in fragments),
+        f"I/ULA11Y  ( 4733): speech-window-end id={command_id}",
+    ]
+    if not completed:
+        lines = [f"I/ULA11Y  ( 4733): target id={command_id} found=false candidates=0 visible=0"]
+    return {
+        "id": command_id,
+        "target": target,
+        "completed": completed,
+        "accepted": accepted and completed,
+        "problem": problem,
+        "lines": lines,
+    }
+
+
+class TalkbackFragmentProvenance(unittest.TestCase):
+    """D-369 E2f: a speech check is satisfied only by a fragment TalkBack actually spoke."""
+
+    def test_the_dropped_utterance_payload_is_not_a_fragment(self) -> None:
+        # The row quotes the intended word inside its own payload. It is the engine REFUSING the
+        # utterance, so a required value can never be satisfied by it.
+        self.assertIn("日用品", _TTS_NOT_READY_DAILY)
+        self.assertEqual([], speech_fragments(_TTS_NOT_READY_DAILY))
+        # The real spoken row of the same file is the one that counts, and only that one.
+        self.assertEqual(["日用品"], speech_fragments(_SPEAKING_DAILY))
+        self.assertEqual(
+            ["日用品"], speech_fragments(_TTS_NOT_READY_DAILY + "\n" + _SPEAKING_DAILY + "\n")
+        )
+
+    def test_a_silent_accepted_window_stays_red_despite_a_fragment_before_the_command(self) -> None:
+        status, fragments, missing, reason = talkback_check_verdict(
+            _artifact(*_LIGHT_SILENT_WINDOW), 17, "日用品", ("日用品",)
+        )
+        self.assertEqual("fragments-missing", status)
+        self.assertEqual([], fragments)
+        self.assertEqual(["日用品"], missing)
+        self.assertEqual("the accepted window produced no TalkBack fragment", reason)
+
+    def test_the_green_middle_capture_derived_its_word_from_a_real_utterance(self) -> None:
+        # This is the finding that refutes "the gate counted the error payload": the dark-1.0
+        # capture passes on its own `Speaking fragment text="日用品"` row, which sits INSIDE the
+        # accepted window. Swapping that row for the dropped-utterance row carrying the same word
+        # must turn the very same window red — proving the green never came from the payload.
+        text = _artifact(*_DARK_MIDDLE_WINDOW)
+        status, fragments, missing, reason = talkback_check_verdict(
+            text, 16, "日用品", ("日用品",)
+        )
+        self.assertEqual("success", status)
+        self.assertEqual([], missing)
+        self.assertEqual("", reason)
+        self.assertIn("日用品", fragments)
+        dropped = _artifact(
+            *_DARK_MIDDLE_WINDOW[:6],
+            _TTS_NOT_READY_DAILY,
+            _DARK_MIDDLE_WINDOW[8],
+        )
+        self.assertEqual(
+            "fragments-missing", talkback_check_verdict(dropped, 16, "日用品", ("日用品",))[0]
+        )
+
+    def test_the_two_window_shapes_are_pinned_to_their_own_artifacts(self) -> None:
+        # A future edit that "fixes" the three green captures by excluding them would have to
+        # contradict the windows themselves, so the two shapes are asserted against their sources.
+        self.assertEqual(9, len(_DARK_MIDDLE_WINDOW))
+        self.assertEqual(9, len(_LIGHT_SILENT_WINDOW))
+        self.assertNotIn(_TTS_NOT_READY_DAILY, _DARK_MIDDLE_WINDOW)
+        self.assertNotIn(_TTS_NOT_READY_DAILY, _LIGHT_SILENT_WINDOW)
+        self.assertTrue(
+            any(
+                row.endswith("focus-result id=17 found=true accepted=true source=action")
+                for row in _LIGHT_SILENT_WINDOW
+            )
+        )
+        self.assertEqual(_RUN, "46074246784")
+        self.assertEqual(
+            "local/artifacts/sweep4/dark-1.0/talkback-presentation-catalog-categories-middle.txt",
+            _DARK_MIDDLE,
+        )
+        self.assertEqual(
+            "local/artifacts/sweep4/light-1.0/talkback-presentation-catalog-categories-middle.txt",
+            _LIGHT_MIDDLE,
+        )
+
+
+class TalkbackReadinessEngineTests(unittest.TestCase):
+    """D-369 E2f: "spoke once" is not readiness while the last speech event was dropped."""
+
+    def test_a_dropped_utterance_after_the_last_fragment_blocks_readiness(self) -> None:
+        log = _artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY)
+        self.assertEqual((False, ["TalkBack on"]), talkback_readiness(log))
+        # A later genuine fragment restores readiness: the engine is speaking again.
+        self.assertEqual(
+            (True, ["TalkBack on", "日用品"]),
+            talkback_readiness(_artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY, _SPEAKING_DAILY)),
+        )
+        # With no dropped row the original limb is unchanged (no locale literal is required).
+        self.assertEqual((True, ["TalkBack on"]), talkback_readiness(_artifact(_SPEAKING_STARTUP)))
+
+    def test_the_readiness_gate_fails_closed_while_the_engine_dropped_the_last_utterance(self) -> None:
+        # The generate side of the same rule: the first command is never driven while the engine's
+        # last answer was "not ready", and the artifact names which limb decided.
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            sampler = self._sampler(
+                evidence, [_artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY)]
+            )
+            with mock.patch("android_fontscale.sampler.TALKBACK_READY_TIMEOUT_S", 0.01), mock.patch(
+                "android_fontscale.sampler.TALKBACK_READY_POLL_INTERVAL_S", 0.0
+            ):
+                with self.assertRaises(SampleError) as raised:
+                    sampler.wait_talkback_ready("middle")
+            artifact = (evidence / "talkback-readiness-middle.txt").read_text(encoding="utf-8")
+        message = str(raised.exception)
+        self.assertIn("dropped utterance", message)
+        self.assertIn("TTS is not ready", message)
+        self.assertEqual("# readiness: timeout", artifact.splitlines()[0])
+        self.assertIn("# fragment: TalkBack on", artifact)
+        self.assertIn("# last speech event: dropped utterance", artifact)
+
+    def _sampler(self, evidence: Path, logs: list[str]) -> Sampler:
+        class _EngineWaitSampler(Sampler):
+            def __init__(self, path: Path, texts: list[str]) -> None:
+                super().__init__(
+                    adb_serial=None, evidence=path, font_scale=1.3, avd_name="ul-presentation"
+                )
+                self.texts = list(texts)
+                self.reads = 0
+
+            def logcat_tail(self, line_count: int = 4000) -> str:
+                self.reads += 1
+                return self.texts.pop(0) if len(self.texts) > 1 else self.texts[0]
+
+        return _EngineWaitSampler(evidence, logs)
+
+    def test_the_retry_wait_is_bounded_and_never_raises_on_a_still_dropped_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._sampler(
+                Path(tmp), [_artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY)]
+            )
+            with mock.patch("android_fontscale.sampler.TALKBACK_RETRY_READY_TIMEOUT_S", 0.01), mock.patch(
+                "android_fontscale.sampler.TALKBACK_RETRY_READY_POLL_INTERVAL_S", 0.0
+            ):
+                record = sampler.wait_talkback_utterance_ready()
+        self.assertFalse(record["ready"])
+        self.assertGreaterEqual(record["polls"], 1)
+        # The check's own window still decides; the wait only says "not yet".
+        self.assertEqual(1, record["fragments"])
+
+    def test_the_retry_wait_returns_as_soon_as_a_fragment_is_spoken(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._sampler(
+                Path(tmp),
+                [
+                    _artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY),
+                    _artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY, _SPEAKING_DAILY),
+                ],
+            )
+            with mock.patch("android_fontscale.sampler.TALKBACK_RETRY_READY_POLL_INTERVAL_S", 0.0):
+                record = sampler.wait_talkback_utterance_ready()
+        self.assertTrue(record["ready"])
+        self.assertEqual(2, record["polls"])
+
+
+class TalkbackSilentWindowRetry(unittest.TestCase):
+    """D-369 E2f: a window with no utterance is re-issued once, and the bound stays two commands."""
+
+    TARGET = "日用品"
+
+    class _RetrySampler(Sampler):
+        def __init__(self, evidence: Path, windows: list[dict[str, object]]) -> None:
+            super().__init__(
+                adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-presentation"
+            )
+            self.windows = list(windows)
+            self.focus_ids: list[int] = []
+            self.ready_calls = 0
+
+        def enable_talkback(self, stem: str) -> dict[str, object]:
+            return {
+                "status": "success",
+                "enabled_components": ["component"],
+                "enabled_services_file": f"talkback-enabled-{stem}.txt",
+                "talkback_bound": True,
+                "reason": "",
+            }
+
+        def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+            return {"status": "ready", "waited_s": 1.0, "polls": 1, "fragments": 1}
+
+        def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+            return {"clears": 0, "quiet_reads": 2, "quiet_after_round": 2, "rounds": 2}
+
+        def handle_notification_permission_dialog(self) -> bool:
+            return False
+
+        def talkback_focus(self, target: str, command_id: int) -> dict[str, object]:
+            self.focus_ids.append(command_id)
+            window = dict(self.windows.pop(0))
+            window["id"] = command_id
+            window["target"] = target
+            return window
+
+        def wait_talkback_utterance_ready(self) -> dict[str, object]:
+            self.ready_calls += 1
+            return {"ready": True, "waited_s": 0.1, "polls": 1, "fragments": 1}
+
+        def disable_talkback_accessibility(self) -> None:
+            pass
+
+        def wait_accessibility_disabled(self) -> bool:
+            return True
+
+    def _screen(self) -> Screen:
+        return Screen(
+            "presentation-catalog-categories-middle",
+            (),
+            PRESENTATION_CATEGORY_DAILY,
+            speech=(SpeechCheck(self.TARGET, (self.TARGET,)),),
+        )
+
+    def _drive(self, windows: list[dict[str, object]]) -> tuple[dict[str, object], list[int], str, int]:
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            sampler = self._RetrySampler(evidence, windows)
+            record = sampler.p806_talkback_screen(self._screen(), target_screenshots=False)
+            artifact = (evidence / "talkback-presentation-catalog-categories-middle.txt").read_text(
+                encoding="utf-8"
+            )
+        return record, sampler.focus_ids, artifact, sampler.ready_calls
+
+    def test_a_silent_window_is_reissued_after_the_readiness_wait(self) -> None:
+        # Exact cards from run 46074246784: light-1.0's silent accepted window, then the green one.
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET),
+            _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
+        ]
+        record, focus_ids, artifact, ready_calls = self._drive(windows)
+        self.assertEqual([1, 2], focus_ids)
+        self.assertEqual(1, ready_calls)
+        self.assertIn("# retry=1 previous-command: 1", artifact)
+        self.assertIn("produced no utterance", artifact)
+        self.assertIn("# retry-ready: ready=true", artifact)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(2, record["checks"][0]["command_id"])
+        # The verdict is re-derived from the window that decided, never from the first attempt.
+        self.assertEqual(
+            "success", talkback_check_verdict(artifact, 2, self.TARGET, (self.TARGET,))[0]
+        )
+
+    def test_two_silent_windows_fail_at_the_bound_without_a_third_command(self) -> None:
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET),
+            _probe_window(command_id=2, target=self.TARGET),
+        ]
+        record, focus_ids, artifact, ready_calls = self._drive(windows)
+        self.assertEqual(TALKBACK_COMMAND_ATTEMPTS, len(focus_ids))
+        self.assertEqual([1, 2], focus_ids)
+        self.assertEqual(1, ready_calls)
+        self.assertEqual("fragments-missing", record["status"])
+        self.assertEqual(2, record["checks"][0]["command_id"])
+        self.assertEqual(1, artifact.count("# retry="))
+        self.assertIn("# retry=1 previous-command: 1", artifact)
+
+    def test_a_window_that_never_began_is_reissued_the_same_way(self) -> None:
+        # light-1.0's home command is this shape: no probe rows at all, so the window cannot begin.
+        windows = [
+            _probe_window(
+                command_id=1,
+                target=self.TARGET,
+                completed=False,
+                problem="command id=1 never began a speech window",
+            ),
+            _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
+        ]
+        record, focus_ids, artifact, _ready_calls = self._drive(windows)
+        self.assertEqual([1, 2], focus_ids)
+        self.assertIn("never completed", artifact)
+        self.assertEqual("success", record["status"])
+
+    def test_a_spoken_window_is_not_retried_and_never_waits(self) -> None:
+        windows = [_probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,))]
+        record, focus_ids, artifact, ready_calls = self._drive(windows)
+        self.assertEqual([1], focus_ids)
+        self.assertEqual(0, ready_calls)
+        self.assertNotIn("# retry=", artifact)
+        self.assertEqual("success", record["status"])
+
+
+class TalkbackSilentRetryReason(unittest.TestCase):
+    """The retry predicate is a decision about the artifact, not about elapsed time."""
+
+    TARGET = "日用品"
+
+    def _window(self, **kwargs: object) -> dict[str, object]:
+        return _probe_window(command_id=1, target=self.TARGET, **kwargs)
+
+    def test_only_a_window_without_its_own_utterance_qualifies(self) -> None:
+        self.assertIn("no utterance", talkback_silent_retry_reason(self._window()))
+        self.assertEqual(
+            "", talkback_silent_retry_reason(self._window(fragments=(self.TARGET,)))
+        )
+        # A fragment before the begin stage belongs to another command's window.
+        self.assertIn(
+            "no utterance",
+            talkback_silent_retry_reason(
+                self._window(pre_begin=(_spoken(self.TARGET, utterance_id="prior"),))
+            ),
+        )
+        # A refused focus has its own named transient (`focus_retry_reason`), not this one.
+        self.assertEqual(
+            "", talkback_silent_retry_reason(self._window(accepted=False))
+        )
+        # A broken completed window is not re-rolled either.
+        self.assertEqual(
+            "",
+            talkback_silent_retry_reason(self._window(problem="command id=1 began more than one window")),
+        )
+        # A window that never completed is the race the retry exists for.
+        self.assertIn(
+            "never completed",
+            talkback_silent_retry_reason(
+                self._window(completed=False, problem="command id=1 never began a speech window")
+            ),
+        )
 
 
 if __name__ == "__main__":
