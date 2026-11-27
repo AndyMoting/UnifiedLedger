@@ -167,17 +167,14 @@ internal fun p806CalendarMonthMaxExpense(loaded: P806CalendarView): Long =
         ?.coerceAtLeast(0L)
         ?: 0L
 
-/** The typed failure copy for the calendar — never a zero month and never an empty claim. */
-internal fun p806CalendarFailureText(failure: P806SnapshotFailure): String =
-    when (failure) {
-        P806SnapshotFailure.Unavailable -> "日历读取失败，可点击重试。"
-        P806SnapshotFailure.CatalogVersionMismatch -> "账目目录已更新，可点击重试。"
-        is P806SnapshotFailure.CatalogReference -> "目录引用不一致（缺账户 / 跨账本 / 币种不符），日历不可用。"
-        P806SnapshotFailure.MissingProjection -> "账目缺少统计时间投影，日历不可用。"
-        P806SnapshotFailure.OccurredAtUnparseable -> "存在无法解析的资金发生时间，日历不可用。"
-        P806SnapshotFailure.InvalidState -> "日历数据不一致，不可用。"
-        P806SnapshotFailure.InvalidWindow -> "日历时间范围无效，不可用。"
-    }
+/**
+ * The typed failure copy for the calendar — never a zero month and never an empty claim.
+ *
+ * D-369 C: the calendar delegates to the one [p806SnapshotFailureUserText] mapping with its own
+ * [CPresentationSurface.CALENDAR] wording, so a new stable failure type is mapped once and the
+ * calendar's frozen sentences cannot drift from the mapping (a JVM test pins each one).
+ */
+internal fun p806CalendarFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.CALENDAR)
 
 /**
  * The label of the last accepted payload when the shown payload may NOT be the current cursor's own
@@ -187,10 +184,14 @@ internal fun p806CalendarFailureText(failure: P806SnapshotFailure): String =
  * success visible until the new landing). `null` only when the shown payload already belongs to the
  * current cursor month and neither a read nor a failure is outstanding.
  */
-internal fun p806CalendarOldContextText(state: P503AppState.Calendar): String? {
+internal fun p806CalendarOldContextText(
+    state: P503AppState.Calendar,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String? {
     val loaded = state.loaded ?: return null
     if (loaded.month == state.month && !state.loading && state.failure == null) return null
     val monthText = p806CalendarMonthLabel(loaded.month)
-    val asOfText = state.landedAsOf?.let { instant -> " · 读取时点 $instant" }.orEmpty()
+    // The payload's own read instant: a read time, not a business occurred/statistics time.
+    val asOfText = state.landedAsOf?.let { instant -> " · 读取时点 ${cReadInstantText(instant, profile)}" }.orEmpty()
     return "以下为 $monthText 上次成功读取的内容，可能已过期$asOfText。"
 }

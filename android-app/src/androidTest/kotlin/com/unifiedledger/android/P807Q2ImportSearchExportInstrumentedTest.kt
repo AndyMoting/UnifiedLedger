@@ -12,6 +12,7 @@ import com.unifiedledger.application.TransactionDetailLeg
 import com.unifiedledger.application.export.readable.READABLE_EXPORT_HEADERS
 import com.unifiedledger.application.export.readable.readableExportAmountText
 import com.unifiedledger.application.import.wechat.BoundedXlsxReader
+import com.unifiedledger.application.presentationTimes
 import com.unifiedledger.application.statisticsPresentationTime
 import com.unifiedledger.application.transactionKindBusinessName
 import com.unifiedledger.domain.TransactionKind
@@ -347,11 +348,16 @@ class P807Q2ImportSearchExportInstrumentedTest {
             "${P807Q2Flow1Facts.PREFIX} the detail headline must be the exact signed amount",
             ui.hasAppText(transactionHeadline(detail)),
         )
+        // The ANDROID detail card's own four lines (`cTransactionDetailUserLines`, D-369 C): the
+        // role-labelled `Asia/Shanghai` wall clock derived from this detail's raw stored instants —
+        // never the bare UTC instant, which the card no longer prints — the frozen 无 for the
+        // imported row's blank note, and the Chinese business name.
+        val times = presentationTimes(detail.occurredAt, detail.statisticsAt)
         sequenceOf(
-            "发生时间：${detail.occurredAt}",
-            "统计时间：${detail.statisticsAt}",
-            "备注：${detail.note ?: "无"}",
-            "类型：${detail.kind}",
+            "${times.occurred.role.label}：${times.occurred.text()}",
+            "${times.statistics.role.label}：${times.statistics.text()}",
+            "备注：${detail.note?.takeIf { note -> note.isNotBlank() } ?: "无"}",
+            "类型：${transactionKindBusinessName(detail.kind)}",
         ).forEach { line ->
             ui.seekApp(line)
             assertTrue("${P807Q2Flow1Facts.PREFIX} the detail must show the ledger's own line [$line]", ui.hasAppText(line))

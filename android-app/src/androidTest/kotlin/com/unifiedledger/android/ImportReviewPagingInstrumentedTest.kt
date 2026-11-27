@@ -246,6 +246,6 @@ private fun assertOneKindLine(signatures: List<String>) {
     assertEquals("every row must render one kind-and-facts line", 1, kindLines.size)
     assertTrue(
         "the row's kind line must name the ordinary-flow kind and the no-duplicate marker, got ${kindLines.single()}",
-        kindLines.single().startsWith("类型 ordinary_flow") && kindLines.single().endsWith("重复 无"),
+        kindLines.single().startsWith("类型 普通收支") && kindLines.single().endsWith("重复 无"),
     )
 }

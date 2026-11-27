@@ -239,7 +239,10 @@ internal fun p806ReportPeriodLabel(state: P806ReportRegionState): String {
  * shows whenever the current face is loading or failed, so an old payload is never mistaken for the
  * current result. `null` when nothing landed yet.
  */
-internal fun p806ReportLastSuccessContextText(state: P806ReportRegionState): String? {
+internal fun p806ReportLastSuccessContextText(
+    state: P806ReportRegionState,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String? {
     val view = state.landed ?: return null
     val periodText = view.period?.let { period -> "${period.startDate} 至 ${period.endDateInclusive}" } ?: "无"
     val kindPrefix = state.landedKind?.let { kind -> "${p806ReportPeriodKindLabel(kind)}：" }.orEmpty()
@@ -249,7 +252,7 @@ internal fun p806ReportLastSuccessContextText(state: P806ReportRegionState): Str
             .distinct()
             .joinToString("、")
             .ifEmpty { "无" }
-    val asOf = state.landedAsOf?.toString() ?: "不可用"
+    val asOf = state.landedAsOf?.let { instant -> cReadInstantText(instant, profile) } ?: "不可用"
     return "最近成功（期间 $kindPrefix$periodText；币种轴 $axis；读取时点 $asOf）"
 }
 
@@ -257,18 +260,7 @@ internal fun p806ReportLastSuccessContextText(state: P806ReportRegionState): Str
 internal fun p806ReportLastSuccessCaption(): String = "以下为最近一次成功载荷（旧数据）："
 
 /** The typed failure copy (D-343 section 3.8): explainable, never a bare zero and never a retry loop. */
-internal fun p806ReportFailureText(failure: P806SnapshotFailure): String =
-    when (failure) {
-        P806SnapshotFailure.Unavailable -> "报表读取不可用：请重试。"
-        P806SnapshotFailure.CatalogVersionMismatch -> "目录版本已变化：请重试。"
-        P806SnapshotFailure.MissingProjection -> "统计时间投影缺失：报表不可用。"
-        P806SnapshotFailure.OccurredAtUnparseable -> "存在无法解析的资金发生时间：报表不可用。"
-        P806SnapshotFailure.InvalidWindow -> "自定义区间的起止日期无效：请检查日期后重试。"
-        P806SnapshotFailure.InvalidState -> "报表数据不一致：请重试。"
-        is P806SnapshotFailure.CatalogReference ->
-            "目录引用不一致（缺账户 ${failure.unresolvedAccount}、跨账本 ${failure.crossLedgerAccount}、" +
-                "币种失配 ${failure.currencyMismatch}）：报表不可用。"
-    }
+internal fun p806ReportFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.REPORT)
 
 /** The two honest empty successes (D-343 section 3.7.7): no period at all, or a zero-contribution period. */
 internal fun p806ReportEmptyText(state: P806ReportRegionState): String =
@@ -697,7 +689,7 @@ private fun P806ReportCategorySection(
 @Composable
 private fun P806ReportLastSuccessBlock(state: P806ReportRegionState) {
     val view = state.landed ?: return
-    p806ReportLastSuccessContextText(state)?.let { context ->
+    p806ReportLastSuccessContextText(state, LocalUiPresentationProfile.current)?.let { context ->
         Text(context, style = MaterialTheme.typography.bodySmall)
     }
     if (view.period == null) return

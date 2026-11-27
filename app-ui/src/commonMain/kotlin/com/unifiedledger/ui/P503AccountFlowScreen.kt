@@ -243,16 +243,7 @@ internal fun accountFlowOldContextText(state: P503AppState.AccountFlow): String?
     }
 
 /** The typed failure copy — one reason per line, never a zero and never an empty account. */
-internal fun accountFlowFailureText(failure: P806SnapshotFailure): String =
-    when (failure) {
-        P806SnapshotFailure.Unavailable -> "账户流水读取失败，可点击重试。"
-        P806SnapshotFailure.CatalogVersionMismatch -> "账目目录已更新，请从第一页重试。"
-        is P806SnapshotFailure.CatalogReference -> "账户目录引用不一致（缺账户 / 跨账本 / 币种不符），不可用。"
-        P806SnapshotFailure.MissingProjection -> "账目缺少统计时间投影，账户流水不可用。"
-        P806SnapshotFailure.OccurredAtUnparseable -> "存在无法解析的资金发生时间，账户流水不可用。"
-        P806SnapshotFailure.InvalidState -> "账户流水数据不一致，不可用。"
-        P806SnapshotFailure.InvalidWindow -> "账户流水时间范围无效，不可用。"
-    }
+internal fun accountFlowFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.ACCOUNT_FLOW)
 
 /**
  * The typed-failure face with a REAL retry affordance (an OutlinedButton, the footer's RETRY
@@ -297,6 +288,7 @@ private fun P8AccountFlowRow(
     onSelectTransaction: ((TransactionId) -> Unit)?,
 ) {
     val palette = LocalP8Palette.current
+    val presentationProfile = LocalUiPresentationProfile.current
     Column(
         modifier =
             Modifier
@@ -311,11 +303,11 @@ private fun P8AccountFlowRow(
                 }
                 // C04: the row announces its exact values (the date axis, note, the leg with sign
                 // and currency) as one node.
-                .semantics { contentDescription = accountFlowRowContentDescription(row, accountName) }
+                .semantics { contentDescription = accountFlowRowContentDescription(row, accountName, presentationProfile) }
                 .padding(vertical = 6.dp),
     ) {
         Text(
-            accountFlowRowHeadlineText(row),
+            accountFlowRowHeadlineText(row, presentationProfile),
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
@@ -352,7 +344,12 @@ internal fun accountFlowRowAmountText(
         row.amount.currency.code
 
 /** The visible headline of one posting row: 「资金发生日期」 + the Shanghai local day + the note/kind. */
-internal fun accountFlowRowHeadlineText(row: P806AccountPostingRow): String = "资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + " · " + (row.note ?: row.kind.name)
+internal fun accountFlowRowHeadlineText(
+    row: P806AccountPostingRow,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String =
+    "资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + " · " +
+        (row.note ?: cBusinessKindText(row.kind, profile))
 
 /**
  * The posting row's accessibility label: effective kind, the SAME 「资金发生日期」 + Shanghai local
@@ -362,8 +359,9 @@ internal fun accountFlowRowHeadlineText(row: P806AccountPostingRow): String = "�
 internal fun accountFlowRowContentDescription(
     row: P806AccountPostingRow,
     accountName: String,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
 ): String {
-    val head = "${row.kind}，资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + (row.note?.let { "，备注 $it" } ?: "")
+    val head = "${cBusinessKindText(row.kind, profile)}，资金发生日期 " + occurredAtLocalDateText(row.occurredAt) + (row.note?.let { "，备注 $it" } ?: "")
     val leg = accountFlowRowAmountText(row, accountName)
     return "$head；$leg"
 }

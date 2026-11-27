@@ -21,12 +21,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408MatchCandidate
 import com.unifiedledger.application.P408MatchDisposition
 import com.unifiedledger.application.P801AccountReconciliationQueueRow
@@ -190,7 +190,7 @@ private fun ReconciliationQueueRowLine(
         // The row states the leg's own five-state label; whether it already carries an active
         // evidence link is the audit read-back's business (spec section 2.6), so nothing is
         // duplicated here.
-        Text(reconciliationQueueRowText(row), style = MaterialTheme.typography.bodyMedium)
+        Text(reconciliationQueueRowText(row, LocalUiPresentationProfile.current), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -308,21 +308,24 @@ private fun ReconciliationAuditBody(
     audit: P801ReconciledLegAudit,
     palette: com.unifiedledger.ui.theme.P8Palette,
 ) {
-    Text(reconciliationAuditHeadlineText(audit), style = MaterialTheme.typography.bodyMedium)
+    val presentationProfile = LocalUiPresentationProfile.current
+    Text(reconciliationAuditHeadlineText(audit, presentationProfile), style = MaterialTheme.typography.bodyMedium)
     if (audit.evidence.isEmpty()) {
         Text(reconciliationAuditNoLinkText(), style = MaterialTheme.typography.bodySmall)
     }
     audit.evidence.forEach { link ->
+        // The evidence SOURCE line stays verbatim (import handle, record ordinal, record kind and the
+        // persisted source time text) — the raw source fact is never re-written by a display rule.
         Text(
             reconciliationAuditSourceText(link),
             style = MaterialTheme.typography.bodySmall,
             color = palette.onSurfaceVariant,
         )
-        reconciliationAuditDecisionLines(link).forEach { line ->
+        reconciliationAuditDecisionLines(link, presentationProfile).forEach { line ->
             Text(line, style = MaterialTheme.typography.bodySmall)
         }
         link.history.forEach { entry ->
-            Text(reconciliationAuditLinkHistoryText(entry), style = MaterialTheme.typography.bodySmall)
+            Text(reconciliationAuditLinkHistoryText(entry, presentationProfile), style = MaterialTheme.typography.bodySmall)
         }
         HorizontalDivider(color = palette.divider)
     }
@@ -335,8 +338,17 @@ private fun ReconciliationAuditBody(
             Text(reconciliationAuditEmptyHistoryText(), style = MaterialTheme.typography.bodySmall)
         }
         reconciliation.history.forEach { entry ->
-            Text(reconciliationAuditStatusHistoryText(entry), style = MaterialTheme.typography.bodySmall)
+            Text(reconciliationAuditStatusHistoryText(entry, presentationProfile), style = MaterialTheme.typography.bodySmall)
         }
+    }
+    if (presentationProfile == UiPresentationProfile.ANDROID) {
+        // D-369 C: the leg's posting id, each evidence id and every stored audit instant (decision
+        // time, link/status history times) stay complete behind the shared 技术信息 control.
+        Spacer(Modifier.height(4.dp))
+        TechnicalInfoSection(
+            rows = reconciliationAuditTechnicalRows(audit),
+            toggleKey = audit.postingId,
+        )
     }
 }
 
@@ -354,7 +366,32 @@ private fun ReconciliationBindSection(
         // Entry A (F1): the target is the leg's own account and is never a user choice (spec
         // section 2.4); the carried account line is the exact account the queue was opened for.
         val targetLine = (state.returnTo as? ReconciliationBackTarget.Queue)?.state?.accountLine
-        Text("目标账户：${targetLine ?: state.accountId?.value ?: "—"}", style = MaterialTheme.typography.bodyMedium)
+        // D-369 C: LEGACY keeps the frozen expression verbatim (queue line, else raw account id,
+        // else the dash); ANDROID shows the queue line first, then the chosen account's display
+        // name, and states explicitly that the name is unavailable rather than printing a raw id.
+        val presentationProfile = LocalUiPresentationProfile.current
+        val selectedChoiceName = state.bindAccounts.firstOrNull { choice -> choice.accountId == state.accountId }?.name
+        Text(
+            "目标账户：" +
+                reconciliationTargetAccountText(
+                    targetLine = targetLine,
+                    selectedChoiceName = selectedChoiceName,
+                    accountIdValue = state.accountId?.value,
+                    profile = presentationProfile,
+                ),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (presentationProfile == UiPresentationProfile.ANDROID) {
+            // The raw target account id stays readable behind 技术信息 whether or not the visible
+            // line could name the account — the identity is never deleted. An empty row list
+            // renders no technical area at all.
+            state.accountId?.let { accountId ->
+                val targetTechRows = reconciliationTargetAccountTechnicalRows(accountId.value)
+                if (targetTechRows.isNotEmpty()) {
+                    TechnicalInfoSection(rows = targetTechRows, toggleKey = accountId)
+                }
+            }
+        }
         when (val bindable = state.bindableEvidence) {
             null ->
                 Text(
@@ -436,7 +473,7 @@ private fun ReconciliationProposalBlock(
                     onClick = { onSelectCandidate(proposalIndex, candidateIndex) },
                     enabled = !state.binding && !state.confirming,
                 )
-                Text(reconciliationCandidateText(candidate), style = MaterialTheme.typography.bodyMedium)
+                Text(reconciliationCandidateText(candidate, LocalUiPresentationProfile.current), style = MaterialTheme.typography.bodyMedium)
             }
             // F11: the audit belongs to the ANCHOR leg, so a sibling leg's candidate is judged
             // neutrally (a block reason is only rendered for the leg the audit actually read).
@@ -463,29 +500,27 @@ private fun ReconciliationConfirmBlock(
 ) {
     val pair = reconciliationSelectedPair(state) ?: return
     val (proposal, candidate: P408MatchCandidate) = pair
+    val presentationProfile = LocalUiPresentationProfile.current
     Spacer(Modifier.height(8.dp))
-    Text(
-        RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE + "：" + proposal.evidence.evidenceId,
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    val responsibility = P408EvidenceResponsibility.forDirectionOrNull(candidate.posting.direction)
-    Text(
-        RECONCILIATION_ELEMENT_RESPONSIBILITY + "：" + (responsibility?.let { duty -> reconciliationResponsibilityText(duty) } ?: "—（方向不可裁定）"),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        RECONCILIATION_ELEMENT_MATCH_BASIS + "：" + reconciliationMatchBasisText(candidate.basis.fields.toList()),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        RECONCILIATION_ELEMENT_HUMAN_DECISION + "：" + RECONCILIATION_HUMAN_DECISION_CONFIRM_MATCH,
-        style = MaterialTheme.typography.bodyMedium,
-        color = palette.onSurfaceVariant,
-    )
+    // D-369 C: the four elements stay visible under BOTH profiles. ANDROID shows the persisted
+    // evidence facts (source time + raw amount) in the 外部证据 line instead of the opaque id; the
+    // id itself is explicitly viewable behind 技术信息 below. LEGACY keeps its frozen id line.
+    val lines = reconciliationConfirmLines(proposal, candidate, presentationProfile)
+    lines.forEachIndexed { index, line ->
+        Text(
+            line,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (index == lines.lastIndex) palette.onSurfaceVariant else Color.Unspecified,
+        )
+    }
+    if (presentationProfile == UiPresentationProfile.ANDROID) {
+        // D-369 C: the evidence identifier is explicitly viewable behind 技术信息; the confirm
+        // responsibility, match basis and natural-day distance above stay visible.
+        TechnicalInfoSection(
+            rows = reconciliationConfirmTechnicalRows(proposal.evidence.evidenceId),
+            toggleKey = proposal.evidence.evidenceId,
+        )
+    }
     Spacer(Modifier.height(8.dp))
     Button(onClick = onConfirm, enabled = reconciliationConfirmEnabled(state)) {
         Text(if (state.confirming) "正在确认…" else "确认核对")

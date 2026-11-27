@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408MatchCandidate
 import com.unifiedledger.application.P408MatchDisposition
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P801AccountReconciliationQueueRow
@@ -14,6 +15,7 @@ import com.unifiedledger.application.P801ReconciledLegEvidenceLink
 import com.unifiedledger.application.P801ReconciledLegLinkHistoryEntry
 import com.unifiedledger.application.P801ReconciledLegStatusEntry
 import com.unifiedledger.application.P801ReconciliationCandidateEvidence
+import com.unifiedledger.application.occurredPresentationTime
 import com.unifiedledger.domain.CurrencyUnit
 
 /*
@@ -163,6 +165,23 @@ internal fun reconciliationResponsibilityText(responsibility: P408EvidenceRespon
 internal fun reconciliationRowDateText(row: P801AccountReconciliationQueueRow): String = row.occurredAt.toString().take(10)
 
 /**
+ * The date of one queue row under a presentation profile.
+ *
+ * D-369 C: the Android profile puts the row on the SAME `Asia/Shanghai` day boundary every other
+ * business surface uses, so a leg whose stored instant falls between UTC 16:00 and 23:59 (already
+ * the next Shanghai day) groups under the day the user sees elsewhere. The LEGACY profile keeps the
+ * raw UTC date it has always printed, so Desktop output is unchanged.
+ */
+internal fun reconciliationRowDateText(
+    row: P801AccountReconciliationQueueRow,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationRowDateText(row)
+        UiPresentationProfile.ANDROID -> occurredPresentationTime(row.occurredAt).localDate().toString()
+    }
+
+/**
  * One queue row's headline (spec section 2.3: 日期、备注或交易类型、该腿精确带符号金额与币种).
  * The amount is the leg's exact signed minor units through [formatMinorUnits] — never a net, never
  * a float.
@@ -172,6 +191,24 @@ internal fun reconciliationQueueRowText(row: P801AccountReconciliationQueueRow):
     val amount = formatMinorUnits(row.amountMinor, row.currency.precision) + " " + row.currency.code
     return "$head · $amount · ${reconciliationStatusText(row.status)}"
 }
+
+/**
+ * The queue row under a presentation profile. The Android profile names the Chinese business type
+ * when the row has no note and renders the `带符号金额 + 空格 + 币种代码` shape; nothing else about the
+ * row (status label, exact minor units, absence copy) changes, and LEGACY keeps the frozen output.
+ */
+internal fun reconciliationQueueRowText(
+    row: P801AccountReconciliationQueueRow,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationQueueRowText(row)
+        UiPresentationProfile.ANDROID -> {
+            val head = reconciliationRowDateText(row, profile) + " · " + (row.note ?: cBusinessKindText(row.transactionKind, profile))
+            val amount = cAmountText(row.amountMinor, row.currency, profile)
+            "$head · $amount · ${reconciliationStatusText(row.status)}"
+        }
+    }
 
 // ------------------------------------------------------------------ summary (spec section 2.3)
 
@@ -261,6 +298,32 @@ internal fun reconciliationCandidateText(candidate: com.unifiedledger.applicatio
 }
 
 /**
+ * One candidate line under a presentation profile.
+ *
+ * D-369 C: the Android profile takes the candidate's parsed posting instant and renders its
+ * `Asia/Shanghai` day — the same day boundary as the queue row — while keeping the exact amount,
+ * currency code and natural-day distance untouched. A posting whose stored text carries no
+ * parseable instant falls back to the stored text prefix (an honest echo of the persisted value,
+ * never an invented date). The evidence area's raw source text is a different field and stays
+ * verbatim under both profiles.
+ */
+internal fun reconciliationCandidateText(
+    candidate: com.unifiedledger.application.P408MatchCandidate,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationCandidateText(candidate)
+        UiPresentationProfile.ANDROID -> {
+            val posting = candidate.posting
+            val amount = cAmountText(posting.amountMinor, CurrencyUnit(posting.currencyCode, posting.currencyPrecision), profile)
+            val date =
+                posting.occurredAt.instant?.let { instant -> occurredPresentationTime(instant).localDate().toString() }
+                    ?: posting.occurredAt.rawText.take(10)
+            "$date · $amount · ${reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance)}"
+        }
+    }
+
+/**
  * One evidence row's line (spec section 2.4): which import row it is (来源时间) and its RAW amount
  * when the source carries one — an absent raw fact renders the typed dash, never a zero (D-089).
  */
@@ -275,6 +338,46 @@ internal fun reconciliationEvidenceText(evidence: P801ReconciliationCandidateEvi
 
 /** The proposal's evidence line (spec section 2.4: 每条各自给出处置). */
 internal fun reconciliationProposalEvidenceText(proposal: P801CandidateProposal): String = reconciliationEvidenceText(proposal.evidence)
+
+/**
+ * The confirm block's visible `外部证据` line under a profile.
+ *
+ * LEGACY keeps the frozen identifier line (`外部证据：<evidenceId>`) verbatim. ANDROID shows the
+ * persisted evidence FACTS instead — the stored source time text and the raw amount — so the user
+ * can judge the match without reading an opaque id; the id itself stays complete in 技术信息
+ * ([reconciliationConfirmTechnicalRows]). The facts are echoed verbatim: no display rule rewrites
+ * the source time or the raw amount (D-369 设计 §7.2).
+ */
+internal fun reconciliationConfirmEvidenceLine(
+    proposal: P801CandidateProposal,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> "$RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE：${proposal.evidence.evidenceId}"
+        UiPresentationProfile.ANDROID -> "$RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE：${reconciliationProposalEvidenceText(proposal)}"
+    }
+
+/**
+ * The confirm block's visible lines in the surface's order: the four elements of D-369 设计 §7.2
+ * (外部证据、证据职责、匹配依据、人工决定) plus the matcher's natural-day distance. The evidence
+ * line follows [reconciliationConfirmEvidenceLine] (facts on ANDROID, the raw id on LEGACY); the
+ * responsibility, match basis and decision stay visible under both profiles.
+ */
+internal fun reconciliationConfirmLines(
+    proposal: P801CandidateProposal,
+    candidate: P408MatchCandidate,
+    profile: UiPresentationProfile,
+): List<String> {
+    val responsibility = P408EvidenceResponsibility.forDirectionOrNull(candidate.posting.direction)
+    return listOf(
+        reconciliationConfirmEvidenceLine(proposal, profile),
+        "$RECONCILIATION_ELEMENT_RESPONSIBILITY：" +
+            (responsibility?.let { duty -> reconciliationResponsibilityText(duty) } ?: "—（方向不可裁定）"),
+        "$RECONCILIATION_ELEMENT_MATCH_BASIS：${reconciliationMatchBasisText(candidate.basis.fields.toList())}",
+        reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance),
+        "$RECONCILIATION_ELEMENT_HUMAN_DECISION：$RECONCILIATION_HUMAN_DECISION_CONFIRM_MATCH",
+    )
+}
 
 /** One bindable evidence row of the leg-anchored bind step (F1/F2): its line plus the REJECTED code. */
 internal fun reconciliationBindableEvidenceText(evidence: P801ReconciliationCandidateEvidence): String {
@@ -453,11 +556,62 @@ internal fun reconciliationAuditDecisionLines(link: P801ReconciledLegEvidenceLin
     )
 }
 
+/**
+ * The decision lines under a presentation profile.
+ *
+ * D-369 C: on ANDROID the evidence identifier leaves the normal rows and moves into 技术信息
+ * (explicitly viewable there), while the responsibility, the frozen match basis, the basis
+ * version/window and the natural-day distance stay visible; the decision time renders the stored
+ * audit instant as an `Asia/Shanghai` wall clock. LEGACY returns the frozen lines verbatim.
+ */
+internal fun reconciliationAuditDecisionLines(
+    link: P801ReconciledLegEvidenceLink,
+    profile: UiPresentationProfile,
+): List<String> {
+    // A link whose request carries no snapshot row has the same typed absence under both profiles.
+    val decision = link.decision ?: return listOf("$RECONCILIATION_ELEMENT_MATCH_BASIS：" + "—（无请求快照）")
+    return when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationAuditDecisionLines(link)
+        UiPresentationProfile.ANDROID ->
+            listOf(
+                reconciliationAuditResponsibilityText(link),
+                "$RECONCILIATION_ELEMENT_MATCH_BASIS：${reconciliationMatchBasisText(decision.matchBasis)}",
+                "匹配依据版本 v${decision.basisVersion} · 窗口 ${decision.windowDays} 天",
+                reconciliationNaturalDayDistanceText(decision.naturalDayDistance.toLong()),
+                "$RECONCILIATION_ELEMENT_HUMAN_DECISION：${decision.humanDecision} · ${cStoredAuditText(decision.decidedAt, profile)}",
+            )
+    }
+}
+
 /** The link's own state history (spec section 2.6: confirmed/posting_replaced/corrected 与序号). */
 internal fun reconciliationAuditLinkHistoryText(entry: P801ReconciledLegLinkHistoryEntry): String = "#${entry.sequence} ${entry.state} ${entry.reason} ${entry.occurredAt}"
 
+/**
+ * The link state history under a presentation profile: the stored audit instant renders as the
+ * `Asia/Shanghai` wall clock on ANDROID; the sequence, state and reason tokens stay verbatim, and
+ * LEGACY keeps the frozen line.
+ */
+internal fun reconciliationAuditLinkHistoryText(
+    entry: P801ReconciledLegLinkHistoryEntry,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationAuditLinkHistoryText(entry)
+        UiPresentationProfile.ANDROID -> "#${entry.sequence} ${entry.state} ${entry.reason} ${cStoredAuditText(entry.occurredAt, profile)}"
+    }
+
 /** The leg's reconciliation status history (spec section 2.6 状态历史 with sequence). */
 internal fun reconciliationAuditStatusHistoryText(entry: P801ReconciledLegStatusEntry): String = "#${entry.sequence} ${reconciliationStatusText(entry.status)} ${entry.occurredAt}"
+
+/** The status history under a presentation profile (same rule as the link history). */
+internal fun reconciliationAuditStatusHistoryText(
+    entry: P801ReconciledLegStatusEntry,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationAuditStatusHistoryText(entry)
+        UiPresentationProfile.ANDROID -> "#${entry.sequence} ${reconciliationStatusText(entry.status)} ${cStoredAuditText(entry.occurredAt, profile)}"
+    }
 
 /**
  * The audit's overall headline: the leg and its current reconciliation status (F5). A leg with NO
@@ -466,6 +620,85 @@ internal fun reconciliationAuditStatusHistoryText(entry: P801ReconciledLegStatus
  * ineligibility copy stays reserved for a leg the eligibility derivation actually excluded.
  */
 internal fun reconciliationAuditHeadlineText(audit: P801ReconciledLegAudit): String = "分录 ${audit.postingId.value} · " + (audit.reconciliation?.status?.label ?: RECONCILIATION_NO_RECONCILIATION_TEXT)
+
+/**
+ * The audit headline under a presentation profile.
+ *
+ * D-369 C: the ANDROID headline names the leg's reconciliation STATUS (or the typed 尚无对账记录
+ * absence) instead of using the internal posting id as a user-facing title; the posting id stays
+ * complete in 技术信息 below. LEGACY keeps the frozen headline verbatim.
+ */
+internal fun reconciliationAuditHeadlineText(
+    audit: P801ReconciledLegAudit,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationAuditHeadlineText(audit)
+        UiPresentationProfile.ANDROID ->
+            "对账状态：" + (audit.reconciliation?.status?.label ?: RECONCILIATION_NO_RECONCILIATION_TEXT)
+    }
+
+/**
+ * The audit's identifiers and persisted audit instants, kept complete behind 技术信息 on ANDROID.
+ * Each evidence link opens its own group header — 「链接 N（state）」 — followed by that link's
+ * evidence id, decision time and history, so a multi-link audit stays attributable; the leg's
+ * posting/transaction ids come first and the reconciliation status history closes the list. Nothing
+ * here is truncated, hashed or dropped, and no secret or new fact is introduced.
+ */
+internal fun reconciliationAuditTechnicalRows(audit: P801ReconciledLegAudit): List<TechnicalInfoRow> =
+    buildList {
+        add(TechnicalInfoRow("分录 ID", audit.postingId.value))
+        add(TechnicalInfoRow("交易 ID", audit.transactionId.value))
+        audit.evidence.forEachIndexed { index, link ->
+            add(TechnicalInfoRow("链接 ${index + 1}（${link.state}）", ""))
+            add(TechnicalInfoRow("证据 ID", link.evidenceId))
+            link.decision?.let { decision ->
+                add(TechnicalInfoRow("核对决定时间（原值）", decision.decidedAt))
+            }
+            link.history.forEach { entry ->
+                add(TechnicalInfoRow("#${entry.sequence} ${entry.state} 时间（原值）", entry.occurredAt))
+            }
+        }
+        audit.reconciliation?.history?.forEach { entry ->
+            add(TechnicalInfoRow("#${entry.sequence} 状态时间（原值）", entry.occurredAt))
+        }
+    }
+
+/**
+ * The confirm block's evidence identifier, kept behind 技术信息 on ANDROID. The responsibility, the
+ * match basis and the natural-day distance stay visible beside the confirm action (spec section
+ * 2.5), and the identifier remains explicitly viewable here — never silently dropped.
+ */
+internal fun reconciliationConfirmTechnicalRows(evidenceId: String): List<TechnicalInfoRow> = listOf(TechnicalInfoRow("证据 ID", evidenceId))
+
+/**
+ * The bind step's target-account line, profile-driven.
+ *
+ * LEGACY is the frozen expression verbatim: the queue's account line, else the raw account id, else
+ * the dash. ANDROID keeps the queue line first, then the user-chosen account's display name, and
+ * states explicitly that the name is not loaded when neither is available — a raw `accountId` is
+ * never presented as a user-facing account name. The id itself is not lost on ANDROID: the caller
+ * adds it to the technical area via [reconciliationTargetAccountTechnicalRows].
+ */
+internal fun reconciliationTargetAccountText(
+    targetLine: String?,
+    selectedChoiceName: String?,
+    accountIdValue: String? = null,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> targetLine ?: accountIdValue ?: "—"
+        UiPresentationProfile.ANDROID ->
+            targetLine?.takeIf { it.isNotBlank() }
+                ?: selectedChoiceName?.takeIf { it.isNotBlank() }
+                ?: "目标账户未加载（账户名不可用）"
+    }
+
+/**
+ * The ANDROID technical row carrying the bind target's raw account id. It is added whether or not
+ * the visible line could name the account, so the identity stays readable and is never deleted.
+ */
+internal fun reconciliationTargetAccountTechnicalRows(accountIdValue: String?): List<TechnicalInfoRow> = accountIdValue?.let { id -> listOf(TechnicalInfoRow("目标账户 ID", id)) }.orEmpty()
 
 /** The audit's empty status-history copy (a reconciliation row exists but carries no history). */
 internal fun reconciliationAuditEmptyHistoryText(): String = RECONCILIATION_NO_STATUS_HISTORY_TEXT

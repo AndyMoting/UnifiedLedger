@@ -724,6 +724,7 @@ private fun ImportReviewOverviewItem(
         is ImportReviewRenderItem.GroupDispositionItem -> {
             // A-VIS (J3): candidate identity and the 待处置/已标记/失败 outcome are unconditional —
             // only the comparison payload discloses.
+            val presentationProfile = LocalUiPresentationProfile.current
             val expanded = comparisonExpansion.isExpanded(item.state.item.duplicateCandidateId)
             // B6 group-card paging batch (D-280): the ordinal is assigned when the item's page
             // lands (whole-group 1-based, keyset prefix order) — the O(visible×n) indexOf scan
@@ -731,7 +732,7 @@ private fun ImportReviewOverviewItem(
             val itemOrdinal = item.state.ordinal
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(
-                    groupDispositionItemCandidateText(item.state),
+                    groupDispositionItemCandidateText(item.state, presentationProfile),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
@@ -749,15 +750,26 @@ private fun ImportReviewOverviewItem(
                                     expanded = expanded,
                                     candidateId = item.state.item.candidateId,
                                     itemOrdinal = itemOrdinal,
+                                    groupOrdinal = item.state.ordinal,
+                                    profile = presentationProfile,
                                 )
                         },
                 ) {
                     Text(groupDispositionItemComparisonToggleText(expanded))
                 }
                 Text(
-                    groupDispositionItemOutcomeText(item.state),
+                    groupDispositionItemOutcomeText(item.state, presentationProfile),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (presentationProfile == UiPresentationProfile.ANDROID) {
+                    // D-369 C: the subject and duplicate candidate ids AND the raw recorded
+                    // outcome (disposition name / diagnostic code) leave the normal rows and stay
+                    // complete behind 技术信息 (the shared disclosure control).
+                    TechnicalInfoSection(
+                        rows = groupDispositionItemTechnicalRows(item.state) + groupDispositionItemOutcomeTechnicalRows(item.state),
+                        toggleKey = item.state.item.duplicateCandidateId,
+                    )
+                }
             }
         }
         is ImportReviewRenderItem.GroupDispositionCardFooter -> {
@@ -822,6 +834,7 @@ private fun ImportCandidateRow(
     onUseForReconciliation: ((String) -> Unit)? = null,
 ) {
     val rowClass = classifyImportCandidate(row)
+    val presentationProfile = LocalUiPresentationProfile.current
     Column(
         modifier =
             Modifier
@@ -845,7 +858,7 @@ private fun ImportCandidateRow(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    importCandidateMetaText(row),
+                    importCandidateMetaText(row, presentationProfile),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (rowClass == ImportCandidateClass.INCOMPLETE_SOURCE_FACTS) {
@@ -921,6 +934,7 @@ internal fun P503ImportCandidateDetailScreen(
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
     ) {
+        val presentationProfile = LocalUiPresentationProfile.current
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("候选详情", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             OutlinedButton(onClick = onClose) { Text("返回") }
@@ -948,7 +962,7 @@ internal fun P503ImportCandidateDetailScreen(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(importCandidateAmountText(row), style = MaterialTheme.typography.bodyMedium)
-                Text(importCandidateMetaText(row), style = MaterialTheme.typography.bodySmall)
+                Text(importCandidateMetaText(row, presentationProfile), style = MaterialTheme.typography.bodySmall)
                 if (rowClass == ImportCandidateClass.INCOMPLETE_SOURCE_FACTS) {
                     Text(
                         importIncompleteSourceFactsExplanation(row),
