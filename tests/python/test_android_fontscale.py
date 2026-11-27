@@ -784,7 +784,13 @@ class P806Profile(unittest.TestCase):
         )
         report, daily_average, calendar, detail = screens
         self.assertEqual(
-            (TapStep("分析"), ScrollStep("净支出（含退款） 17.34 CNY")), report.steps
+            (
+                TapStep("分析"),
+                TapStep("更多分析"),
+                ScrollStep("报表期间"),
+                ScrollStep("净支出（含退款） 17.34 CNY"),
+            ),
+            report.steps,
         )
         self.assertIn("月：2026-11-01 至 2026-11-30（30 天）", report.required)
         self.assertIn("净支出（含退款） 17.34 CNY", report.required)

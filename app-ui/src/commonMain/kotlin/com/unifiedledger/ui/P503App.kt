@@ -480,7 +480,7 @@ private fun P503AppContent(
                                     landCatalogDisplayPair(
                                         cachedCatalogSnapshot,
                                         cachedAuthoritativeCatalog,
-                                        CatalogDisplayPair(outcome.value?.first, outcome.value?.second),
+                                        CatalogDisplayPair(outcome.value.first, outcome.value.second),
                                     )
                                 cachedCatalogSnapshot =
                                     catalogSnapshotLoadCoordinator.loadCompleted(

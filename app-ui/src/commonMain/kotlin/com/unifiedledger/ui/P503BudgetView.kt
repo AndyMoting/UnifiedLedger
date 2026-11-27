@@ -111,9 +111,13 @@ internal fun P503BudgetRegion(
             Spacer(Modifier.height(4.dp))
             // P2-1 fix round: the empty-month statement is a PRODUCTION row (the pure
             // budgetRegionRowsText is the single source), never a silently blank region.
+            // D-369 B: SHORT already states the unconfigured month in one sentence, so the
+            // production empty row would repeat it; LEGACY and every FULL state keep the row.
             if (view.view.observations.isEmpty()) {
-                budgetRegionRowsText(view, categoryName).forEach { rowText ->
-                    Text(rowText, style = MaterialTheme.typography.bodyMedium)
+                if (noticeMode != BudgetNoticeMode.SHORT) {
+                    budgetRegionRowsText(view, categoryName).forEach { rowText ->
+                        Text(rowText, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             } else {
                 P503BudgetObservationRows(view, categoryName, parentIdOf, onOpenBudgetConfig)

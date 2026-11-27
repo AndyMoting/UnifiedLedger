@@ -5,11 +5,14 @@ import unittest
 
 from android_fontscale.sampler import (
     DEFAULT_UI_MODE,
+    P806_REPORT_TITLE,
     PRESENTATION_EVIDENCE_PLAN,
     PRESENTATION_PROFILE_NAME,
     PRESENTATION_SCREENS,
     PROFILES,
     SampleError,
+    ScrollStep,
+    TapStep,
     UI_MODES,
     gate_profile_problems,
     gate_ui_mode_problems,
@@ -54,6 +57,28 @@ class PresentationProfileTests(unittest.TestCase):
             [screen.stem for screen in PROFILES["refund"].screens],
         )
         self.assertEqual("p806", PROFILES["p806"].name)
+
+    def test_android_analysis_expands_more_analysis_and_scrolls_the_report_region_on(self):
+        # D-369 B keeps the independent report behind 更多分析 on Android. Both Android report
+        # captures must expand that labelled section and then scroll the report header on screen
+        # (QR-A4: the report itself is visible, not merely present in the tree).
+        expected_lead = (TapStep("分析"), TapStep("更多分析"), ScrollStep(P806_REPORT_TITLE))
+
+        p806_report = next(screen for screen in PROFILES["p806"].screens if screen.stem == "report")
+        self.assertEqual(expected_lead, p806_report.steps[:3])
+        self.assertEqual(P806_REPORT_TITLE, p806_report.marker)
+        self.assertIsInstance(p806_report.steps[3], ScrollStep)
+
+        presentation = next(screen for screen in PRESENTATION_SCREENS if screen.stem == "presentation-analysis")
+        self.assertEqual(expected_lead, presentation.steps)
+        self.assertEqual(P806_REPORT_TITLE, presentation.marker)
+
+    def test_non_android_profiles_keep_the_default_analysis_steps(self):
+        # The presentation/profile path must not leak the extra toggle into a screen set that never
+        # had the Android subtraction (the LEGACY analysis page keeps the report inline).
+        empty_analysis = next(screen for screen in PROFILES["empty"].screens if screen.stem == "analysis")
+        self.assertEqual((TapStep("分析"),), empty_analysis.steps)
+        self.assertNotIn(TapStep("更多分析"), list(empty_analysis.steps))
 
     def test_the_eight_future_scenarios_are_named_in_one_configuration(self):
         self.assertEqual(

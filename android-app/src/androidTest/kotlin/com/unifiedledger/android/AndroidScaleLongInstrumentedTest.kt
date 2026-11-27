@@ -23,6 +23,7 @@ import com.unifiedledger.application.ImportIntakeRecordDisposition
 import com.unifiedledger.application.ImportPlatformKind
 import com.unifiedledger.application.ImportRequestId
 import com.unifiedledger.application.ImportRequestIdentity
+import com.unifiedledger.application.statisticsPresentationTime
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.ui.ImportFilePickResultChannel
@@ -31,6 +32,7 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.time.Instant
 
 /**
  * D-320: the jump accelerator's candidate index WITHIN the review list's first
@@ -1272,9 +1274,16 @@ class AndroidScaleLongInstrumentedTest {
         // and a content-level locator takes over on a miss: anchor on the row's own visible text
         // and ascend to its nearest clickable ancestor, the same shape that fallback uses.
         // D-341 (run 43850577023, 2026-11-16): open the row through the node the product actually
-        // makes clickable — the row root, located by the contentDescription the flow row carries
-        // (P503OverviewScreen.kt:300). Run 43850577023 captured that description verbatim in
-        // homeFlowLabels — `EXPENSE，统计时间 2026-01-15T00:00:00Z，…` — while the previous
+        // makes clickable — the row root, located by the Android home row's own visible values
+        // (P503OverviewScreen.kt / homeRowAndroidContentDescription). D-369 B replaces the legacy
+        // `EXPENSE，统计时间 <UTC>` sentence: the Android row prints the frozen Shanghai wall clock
+        // (`statisticsPresentationTime`) and its §4.7 title, which may be a note or a category
+        // display name rather than the business type. The shared flow row (`flowRowContentDescriptionFor`,
+        // used by search results and the report drilldown) does print `支出，统计时间 …`, but HOME
+        // inserts its title and category badges before the times, so that shape cannot anchor this
+        // row. The row's statistics text is therefore the stable locator (one transaction on this
+        // surface, so it is unique) while the content description's first segment is not fixed.
+        // Run 43850577023's previous
         // ascent-from-inner-text locator found no clickable ancestor and fell into clickNode's
         // coordinate fallback, which this environment refuses outright
         // (`coordinate tap injection refused`, AndroidScaleUi.kt:342; the same refusal took the
@@ -1282,9 +1291,11 @@ class AndroidScaleLongInstrumentedTest {
         // presence is already pinned above by the flow header and the day group, and a refused
         // synthetic tap says nothing about the product — it says this harness cannot inject
         // coordinates. The detail copy that follows is verified only when the screen opened.
+        val statisticsText = statisticsPresentationTime(Instant.parse("2026-01-15T08:00:00+08:00")).text()
+        check(ui.has(statisticsText, prefix = true)) { "the Android HOME row must print its Shanghai statistics text [$statisticsText]" }
         val transactionDetailOpened =
             try {
-                ui.click("EXPENSE，统计时间 2026-01-15T", prefix = true)
+                ui.click(statisticsText, prefix = true)
                 ui.await(60000) { ui.has("交易详情") }
                 true
             } catch (miss: IllegalStateException) {

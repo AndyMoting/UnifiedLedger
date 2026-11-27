@@ -39,8 +39,8 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionKind
-import kotlin.time.Instant
 import kotlinx.datetime.YearMonth
+import kotlin.time.Instant
 
 // P7-03.C/D pure presentation decisions (D-145; spec sections 4.3/6.4, R-Q06-4, R-Q07-3, C04).
 // The composables stay thin renderers; every load-bearing decision — which month-region state
@@ -453,7 +453,7 @@ internal fun flowRowLegacyHeaderText(row: LedgerEntryRow): String =
     "${row.kind} · 统计 ${row.statisticsAt}" + (row.note?.let { note -> " · $note" } ?: "")
 
 /**
- * D-369 B / C-SPEC-02: the shared flow row is used by HOME, the search result list and the report
+ * D-369 B / 规格 §7.1 共享流水行契约: the shared flow row is used by HOME, the search result list and the report
  * drilldown, so its profile decision lives here rather than in each caller.
  *
  * [UiPresentationProfile.ANDROID] renders the Chinese business name, the statistics time as the
@@ -816,12 +816,16 @@ internal data class AndroidAnalysisLayout(
 internal fun androidAnalysisLayout(
     profile: UiPresentationProfile,
     activity: MonthlyActivity?,
+    monthlyReloadRequired: Boolean = false,
 ): AndroidAnalysisLayout =
     if (androidTabPresentation(profile)) {
         AndroidAnalysisLayout(
             showsRawSummary = false,
             showsExpenseRanking = true,
-            showsIncomeRegion = activityHasIncome(activity),
+            // A null activity or a reload-required month is NOT "no income": the region must stay
+            // present and state the not-loaded copy (the host pairs this with the region's
+            // not-loaded flag). Only a loaded month can state that it has no ordinary income.
+            showsIncomeRegion = monthlyReloadRequired || activity == null || activityHasIncome(activity),
             keepsTrendInline = false,
             keepsReportInline = false,
             showsMoreAnalysis = true,
@@ -839,7 +843,11 @@ internal fun androidAnalysisLayout(
         )
     }
 
-/** Whether the month states any ordinary income at all (a real zero is not income). */
+/**
+ * Whether the loaded month states any ordinary income at all (a real zero is not income). Only a
+ * loaded activity can answer "no income"; `null` is the not-yet-loaded window and must not be read
+ * as a claim about the month's income.
+ */
 internal fun activityHasIncome(activity: MonthlyActivity?): Boolean {
     if (activity == null) return false
     if (activity.incomeCategories.isNotEmpty()) return true
@@ -868,8 +876,8 @@ internal data class CategoryShareExactRow(
 
 /**
  * One currency's horizontal ranking. [chartRows] is empty exactly when [failure] is non-null: the
- * page then renders [exactRows] and the explicit no-chart explanation instead of a zero-height bar
- * or an empty graphic. A single category is one row at `100.0%`.
+ * page then states the explicit no-chart explanation, while the exact table rendered below already
+ * carries every category and its signed amount. A single category is one row at `100.0%`.
  */
 internal data class AndroidCategoryShareSection(
     val currency: CurrencyUnit,
@@ -934,13 +942,7 @@ internal fun categoryShareRowText(
     currency: CurrencyUnit,
 ): String = "${row.name} ${formatMinorUnits(row.amountMinorUnits, currency.precision)} ${currency.code} ${row.percentText()}"
 
-/** One exact-table row: the signed amount stays visible, with no invented percentage. */
-internal fun categoryShareExactRowText(
-    row: CategoryShareExactRow,
-    currency: CurrencyUnit,
-): String = "${row.name} ${formatMinorUnits(row.amountMinorUnits, currency.precision)} ${currency.code}"
-
-/** The explicit explanation shown instead of a chart; the exact table stays above it. */
+/** The explicit explanation shown instead of a chart; the exact table below the ranking stays. */
 internal fun categoryShareNoChartText(failure: CategoryShareFailure): String =
     when (failure) {
         CategoryShareFailure.ZERO_DENOMINATOR -> "无法作图：分类金额合计为零。"

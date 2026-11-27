@@ -295,7 +295,8 @@ private fun P503CategoryPies(sectors: Map<CurrencyUnit, List<CategoryChartSector
  * category: current name, exact amount with its currency code, the fixed one-decimal share, and a
  * proportional bar. The arithmetic is A's [androidCategoryShareSections] (rational, no
  * floating point in any amount), so a single category is exactly `100.0%` on one row and a
- * refused chart never becomes a zero-height bar: it renders the exact table plus the reason.
+ * refused chart never becomes a zero-height bar: it renders the reason, while the exact table
+ * below ([P503CategoryRegion] without the pie) keeps every category and its exact amount.
  *
  * The bar's width is the only derived floating-point value here, and it is a display ratio of two
  * integers — never an amount. The exact category table and the level-1 → level-2 drilldown stay
@@ -374,14 +375,8 @@ internal fun P503CategoryShareRanking(
                 }
             }
         } else {
-            // No chart: the exact rows and the explicit reason, never a zero bar or a 0% reading.
-            section.exactRows.forEach { exact ->
-                Text(
-                    categoryShareExactRowText(exact, section.currency),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = palette.onSurfaceVariant,
-                )
-            }
+            // No chart: only the explicit reason. The exact table below already carries every
+            // category and amount, so repeating those rows here would state the same values twice.
             section.failure?.let { reason ->
                 Text(categoryShareNoChartText(reason), style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
             }

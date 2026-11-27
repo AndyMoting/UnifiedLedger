@@ -6,6 +6,7 @@ import com.unifiedledger.application.CatalogAuthority
 import com.unifiedledger.application.CatalogAuthorityReader
 import com.unifiedledger.application.CatalogConsumerSession
 import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CategoryShareFailure
 import com.unifiedledger.application.CategoryTreeView
 import com.unifiedledger.application.ConfirmedExpenseReceipt
 import com.unifiedledger.application.ConfirmedIncomeReceipt
@@ -307,6 +308,23 @@ class P503AndroidTabPresentationTest {
     }
 
     @Test
+    fun theIncomeRegionStatesNotLoadedInsteadOfNoIncomeWhileTheMonthIsAbsent() {
+        // A not-loaded month (no payload) is not the loaded "no income" claim: the region stays and
+        // says so. Only a loaded Success with no income hides it.
+        assertTrue(androidAnalysisLayout(UiPresentationProfile.ANDROID, null).showsIncomeRegion)
+        assertFalse(androidAnalysisLayout(UiPresentationProfile.ANDROID, monthlyActivity(income = 0L, expense = 1_234L)).showsIncomeRegion)
+        assertTrue(
+            androidAnalysisLayout(
+                UiPresentationProfile.ANDROID,
+                monthlyActivity(income = 0L, expense = 1_234L),
+                monthlyReloadRequired = true,
+            ).showsIncomeRegion,
+        )
+        // No activity can ever answer "no income" — the helper's claim is loaded-month only.
+        assertFalse(activityHasIncome(null))
+    }
+
+    @Test
     fun theTrendAndTheIndependentReportMoveBehindMoreAnalysisOnlyOnAndroid() {
         val activity = monthlyActivity(income = 0L, expense = 1L)
         val android = androidAnalysisLayout(UiPresentationProfile.ANDROID, activity)
@@ -365,9 +383,14 @@ class P503AndroidTabPresentationTest {
 
     @Test
     fun categoriesWithNoPositiveContributionNeverEnterTheChart() {
+        // The real refund-only shape: no positive expense and a refund, so the category's net is
+        // negative without inventing a negative posting on the positive side.
         val section =
             androidCategoryShareSections(
-                listOf(categoryTotal("cat-a", "餐饮", 1_000L), categoryTotal("cat-b", "退款", -500L)),
+                listOf(
+                    categoryTotal("cat-a", "餐饮", 1_000L),
+                    categoryTotal("cat-b", "退款", positiveMinorUnits = 0L, refundMinorUnits = -500L),
+                ),
             ).single()
 
         // The negative net is NOT filtered out: A's helper refuses the chart (a filtered list would
@@ -843,12 +866,13 @@ class P503AndroidTabPresentationTest {
     private fun categoryTotal(
         id: String,
         name: String,
-        netMinorUnits: Long,
+        positiveMinorUnits: Long,
+        refundMinorUnits: Long = 0L,
     ): MonthlyCategoryTotal =
         MonthlyCategoryTotal(
             categoryId = CategoryId(id),
             categoryName = name,
-            totals = listOf(MonthlyCategoryCurrencyTotal(cny, positiveMinorUnits = netMinorUnits, refundMinorUnits = 0L)),
+            totals = listOf(MonthlyCategoryCurrencyTotal(cny, positiveMinorUnits = positiveMinorUnits, refundMinorUnits = refundMinorUnits)),
             children = emptyList(),
         )
 

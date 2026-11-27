@@ -1624,7 +1624,7 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
     ),
     Screen(
         "presentation-analysis",
-        (TapStep("分析"),),
+        (TapStep("分析"), TapStep("更多分析"), ScrollStep(P806_REPORT_TITLE)),
         P806_REPORT_TITLE,
         absent=(SEEDED_HOME_COUNT,),
     ),
@@ -1876,11 +1876,12 @@ def p806_screens(facts: P806SeedFacts) -> tuple[Screen, ...]:
     return (
         Screen(
             "report",
-            # The analysis page stacks the budget region above the report region, so the capture
-            # scrolls the exact net-expense line into view before the frame is recorded (a scroll
-            # that stopped at the section title could photograph an empty fold and still pass a
-            # tree-only check).
-            (TapStep("分析"), ScrollStep(facts.net_expense_text())),
+            # The Android analysis page keeps the independent report behind 更多分析 (D-369 B,
+            # spec section 7.1), so the step expands that labelled section before the report is
+            # captured; the report header is then scrolled on screen (QR-A4) and the exact
+            # net-expense line follows, so the frame cannot photograph an empty fold and still pass
+            # a tree-only check.
+            (TapStep("分析"), TapStep("更多分析"), ScrollStep(P806_REPORT_TITLE), ScrollStep(facts.net_expense_text())),
             P806_REPORT_TITLE,
             absent=("账本为空", P806_REPORT_LAST_SUCCESS_CAPTION),
             required=report_required,

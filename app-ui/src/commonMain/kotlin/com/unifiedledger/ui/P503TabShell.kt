@@ -515,11 +515,12 @@ fun P503AnalysisScreen(
     val summary = remember(state, summarizeActivity) { summarizeActivity.summarizeAggregate(state) }
     // D-369 B (spec section 7.1): the Android analysis page leads with the month summary, the
     // category ranking and the budget. The raw per-kind enumeration and the per-currency
-    // income/expense stack leave the top (LEGACY keeps them), an income section with no income is
-    // not rendered at all, and the trend plus the independent report move behind 更多分析 — the
-    // existing regions and their query/period semantics are unchanged, only their position.
+    // income/expense stack leave the top (LEGACY keeps them), a LOADED month with no income does
+    // not render the income section (an absent month keeps it and states the not-loaded copy), and
+    // the trend plus the independent report move behind 更多分析 — the existing regions and their
+    // query/period semantics are unchanged, only their position.
     val profile = LocalUiPresentationProfile.current
-    val layout = androidAnalysisLayout(profile, monthlyActivity)
+    val layout = androidAnalysisLayout(profile, monthlyActivity, monthlyReloadRequired)
     var moreAnalysisOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState),
@@ -599,7 +600,10 @@ fun P503AnalysisScreen(
                     categories = monthlyActivity?.incomeCategories ?: emptyList(),
                     withPie = false,
                     uncategorized = monthlyActivity?.uncategorizedIncomeTotals ?: emptyList(),
-                    reloadRequired = monthlyReloadRequired,
+                    // D-369 B: Android keeps the income region present while the month is absent
+                    // (no payload yet, or a reload-required recovery) and states the not-loaded
+                    // copy there. LEGACY keeps the pre-B behaviour exactly.
+                    reloadRequired = monthlyReloadRequired || (androidTabPresentation(profile) && monthlyActivity == null),
                 )
             }
             // P7-07 07.D: the additive budget region rides between the category regions and the

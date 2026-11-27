@@ -331,11 +331,11 @@ internal fun LedgerEntryFlowRow(
     // as before); the drilldown passes [p806MinorUnitsText], which is exact at Long.MIN_VALUE.
     amountText: (Long, Int) -> String = ::formatMinorUnits,
 ) {
-    // D-369 B / C-SPEC-02: this row is shared by HOME, the search result list and the report
-    // drilldown. Reading the profile HERE gives every caller the right copy without touching those
-    // surfaces: LEGACY keeps the pre-B text byte-for-byte, ANDROID shows the Chinese business name
-    // and the local statistics time with each posting's own account, exact signed amount and
-    // currency code (the caller's amountText still formats the numbers).
+    // D-369 B / 规格 §7.1 共享流水行契约: this row is shared by HOME, the search result list and
+    // the report drilldown. Reading the profile HERE gives every caller the right copy without
+    // touching those surfaces: LEGACY keeps the pre-B text byte-for-byte, ANDROID shows the Chinese
+    // business name and the local statistics time with each posting's own account, exact signed
+    // amount and currency code (the caller's amountText still formats the numbers).
     val profile = LocalUiPresentationProfile.current
     Column(
         modifier =
