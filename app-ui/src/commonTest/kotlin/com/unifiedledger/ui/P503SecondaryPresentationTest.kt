@@ -410,11 +410,68 @@ class P503SecondaryPresentationTest {
     }
 
     @Test
-    fun targetAccountShowsTheQueueLineThenTheChosenNameThenAnExplicitAbsence() {
-        assertEquals("现金账户", reconciliationTargetAccountText("现金账户", "忽略"))
-        assertEquals("信用卡", reconciliationTargetAccountText(null, "信用卡"))
-        assertEquals("目标账户未加载（账户名不可用）", reconciliationTargetAccountText(null, null))
-        assertEquals("目标账户未加载（账户名不可用）", reconciliationTargetAccountText("  ", " "))
+    fun targetAccountDispatchesByProfileAndKeepsTheRawIdInTheTechnicalArea() {
+        // LEGACY is the frozen expression verbatim: queue line, else raw account id, else the dash.
+        assertEquals("现金账户", reconciliationTargetAccountText("现金账户", "忽略", "account-9"))
+        assertEquals("account-9", reconciliationTargetAccountText(null, "信用卡", "account-9"))
+        assertEquals("—", reconciliationTargetAccountText(null, null, null))
+
+        // ANDROID prefers a readable name and states the absence explicitly instead of a raw id.
+        assertEquals("现金账户", reconciliationTargetAccountText("现金账户", "忽略", "account-9", UiPresentationProfile.ANDROID))
+        assertEquals("信用卡", reconciliationTargetAccountText(null, "信用卡", "account-9", UiPresentationProfile.ANDROID))
+        assertEquals(
+            "目标账户未加载（账户名不可用）",
+            reconciliationTargetAccountText(null, null, "account-9", UiPresentationProfile.ANDROID),
+        )
+        assertEquals(
+            "目标账户未加载（账户名不可用）",
+            reconciliationTargetAccountText("  ", " ", "account-9", UiPresentationProfile.ANDROID),
+        )
+
+        // The id itself is never deleted on ANDROID: it is a technical row, present whether or not
+        // the visible line could name the account.
+        assertEquals(listOf(TechnicalInfoRow("目标账户 ID", "account-9")), reconciliationTargetAccountTechnicalRows("account-9"))
+        assertTrue(reconciliationTargetAccountTechnicalRows(null).isEmpty())
+    }
+
+    @Test
+    fun auditTechnicalRowsGroupEachLinkSoMultiLinkAuditsStayAttributable() {
+        val single = audit()
+        val secondLink =
+            single.evidence.single().copy(
+                linkId = "link-2",
+                evidenceId = "evidence-b2",
+                state = "active",
+                history =
+                    listOf(
+                        P801ReconciledLegLinkHistoryEntry(
+                            sequence = 2L,
+                            state = "active",
+                            reason = "confirmed",
+                            occurredAt = "2026-11-27T18:00:00Z",
+                        ),
+                    ),
+            )
+        val twoLinks = single.copy(evidence = listOf(single.evidence.single(), secondLink))
+
+        val rows = reconciliationAuditTechnicalRows(twoLinks)
+        assertEquals("链接 1（active）", rows[2].label)
+        assertEquals("证据 ID", rows[3].label)
+        assertEquals("evidence-9", rows[3].value)
+        val secondHeader = rows.indexOfFirst { row -> row.label == "链接 2（active）" }
+        assertTrue(secondHeader > rows.indexOfFirst { row -> row.value == "evidence-9" })
+        assertEquals("证据 ID", rows[secondHeader + 1].label)
+        assertEquals("evidence-b2", rows[secondHeader + 1].value)
+
+        val expanded = cTechnicalInfoDisclosure(rows, expanded = true)
+        val text = expanded.visibleText()
+        // Each link's values sit inside its own group: header, then that link's evidence id.
+        assertTrue(text.indexOf("链接 1（active）") < text.indexOf("evidence-9"))
+        assertTrue(text.indexOf("evidence-9") < text.indexOf("链接 2（active）"))
+        assertTrue(text.indexOf("链接 2（active）") < text.indexOf("evidence-b2"))
+        // A header row renders as the bare group label, not as an empty `label：` value.
+        assertTrue(text.contains("链接 1（active）\n"), text)
+        assertFalse(text.contains("链接 1（active）："), text)
     }
 
     // ---- fixtures ---------------------------------------------------------------------

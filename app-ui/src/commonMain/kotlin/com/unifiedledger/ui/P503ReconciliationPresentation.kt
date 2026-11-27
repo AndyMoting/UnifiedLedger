@@ -598,16 +598,18 @@ internal fun reconciliationAuditHeadlineText(
     }
 
 /**
- * The audit's identifiers and persisted audit instants, kept complete behind 技术信息 on ANDROID:
- * the leg's posting id, every link's evidence id, the decision time as stored and each history
- * entry's stored instant. Nothing here is truncated, hashed or dropped; the visible rows carry the
- * readable copy instead.
+ * The audit's identifiers and persisted audit instants, kept complete behind 技术信息 on ANDROID.
+ * Each evidence link opens its own group header — 「链接 N（state）」 — followed by that link's
+ * evidence id, decision time and history, so a multi-link audit stays attributable; the leg's
+ * posting/transaction ids come first and the reconciliation status history closes the list. Nothing
+ * here is truncated, hashed or dropped, and no secret or new fact is introduced.
  */
 internal fun reconciliationAuditTechnicalRows(audit: P801ReconciledLegAudit): List<TechnicalInfoRow> =
     buildList {
         add(TechnicalInfoRow("分录 ID", audit.postingId.value))
         add(TechnicalInfoRow("交易 ID", audit.transactionId.value))
-        audit.evidence.forEach { link ->
+        audit.evidence.forEachIndexed { index, link ->
+            add(TechnicalInfoRow("链接 ${index + 1}（${link.state}）", ""))
             add(TechnicalInfoRow("证据 ID", link.evidenceId))
             link.decision?.let { decision ->
                 add(TechnicalInfoRow("核对决定时间（原值）", decision.decidedAt))
@@ -630,18 +632,34 @@ internal fun reconciliationConfirmTechnicalRows(evidenceId: String): List<Techni
     listOf(TechnicalInfoRow("证据 ID", evidenceId))
 
 /**
- * The bind step's target-account line. The queue's own account line stays first (the exact account
- * the queue was opened for); failing that, the user-chosen account's display name is used. Only when
- * BOTH are unavailable does the line state that explicitly — a raw `accountId` is never presented as
- * a user-facing account name.
+ * The bind step's target-account line, profile-driven.
+ *
+ * LEGACY is the frozen expression verbatim: the queue's account line, else the raw account id, else
+ * the dash. ANDROID keeps the queue line first, then the user-chosen account's display name, and
+ * states explicitly that the name is not loaded when neither is available — a raw `accountId` is
+ * never presented as a user-facing account name. The id itself is not lost on ANDROID: the caller
+ * adds it to the technical area via [reconciliationTargetAccountTechnicalRows].
  */
 internal fun reconciliationTargetAccountText(
     targetLine: String?,
     selectedChoiceName: String?,
+    accountIdValue: String? = null,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
 ): String =
-    targetLine?.takeIf { it.isNotBlank() }
-        ?: selectedChoiceName?.takeIf { it.isNotBlank() }
-        ?: "目标账户未加载（账户名不可用）"
+    when (profile) {
+        UiPresentationProfile.LEGACY -> targetLine ?: accountIdValue ?: "—"
+        UiPresentationProfile.ANDROID ->
+            targetLine?.takeIf { it.isNotBlank() }
+                ?: selectedChoiceName?.takeIf { it.isNotBlank() }
+                ?: "目标账户未加载（账户名不可用）"
+    }
+
+/**
+ * The ANDROID technical row carrying the bind target's raw account id. It is added whether or not
+ * the visible line could name the account, so the identity stays readable and is never deleted.
+ */
+internal fun reconciliationTargetAccountTechnicalRows(accountIdValue: String?): List<TechnicalInfoRow> =
+    accountIdValue?.let { id -> listOf(TechnicalInfoRow("目标账户 ID", id)) }.orEmpty()
 
 /** The audit's empty status-history copy (a reconciliation row exists but carries no history). */
 internal fun reconciliationAuditEmptyHistoryText(): String = RECONCILIATION_NO_STATUS_HISTORY_TEXT

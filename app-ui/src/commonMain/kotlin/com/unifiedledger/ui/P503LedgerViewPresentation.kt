@@ -1029,10 +1029,10 @@ internal fun cBusinessKindText(kind: TransactionKind, profile: UiPresentationPro
     }
 
 /**
- * One BUSINESS instant as text, bound to its own role. The role is a required parameter, so a
- * caller cannot quietly present a statistics instant as if it were the occurred one: the Android
- * branch constructs [PresentationTime] with the role the caller named, and [PresentationTime]'s own
- * `init` rejects a swapped pair. LEGACY keeps the raw instant text it always rendered.
+ * One BUSINESS instant as text, bound to a role the CALLER must name. A single instant carries no
+ * check of its own: naming the role is the caller's obligation, and the pair-level check (occurred
+ * must be OCCURRED, statistics must be STATISTICS) lives in [PresentationTimes]'s `init` for callers
+ * that present both values together. LEGACY keeps the raw instant text it always rendered.
  */
 internal fun cBusinessTimeText(
     instant: Instant,
@@ -1063,7 +1063,6 @@ internal fun cReadInstantText(
         UiPresentationProfile.LEGACY -> instant.toString()
         UiPresentationProfile.ANDROID -> occurredPresentationTime(instant).text()
     }
-
 
 /**
  * The occurred/statistics pair as one line, each value labelled with its own role. The two roles
@@ -1117,13 +1116,20 @@ internal data class TechnicalInfoDisclosure(
     /** The rows the expanded area prints; empty while collapsed. */
     val visibleRows: List<TechnicalInfoRow> get() = if (expanded) rows else emptyList()
 
-    fun visibleText(): String = if (expanded) rows.joinToString("\n") { row -> "${row.label}：${row.value}" } else ""
+    fun visibleText(): String =
+        if (expanded) {
+            rows.joinToString("\n") { row -> if (row.value.isBlank()) row.label else "${row.label}：${row.value}" }
+        } else {
+            ""
+        }
 
     fun spokenText(): String =
         when {
             rows.isEmpty() -> "$C_TECHNICAL_INFO_HEADER：无"
             !expanded -> "$C_TECHNICAL_INFO_HEADER，已收起，共 ${rows.size} 项，$C_TECHNICAL_INFO_EXPAND_LABEL"
-            else -> "$C_TECHNICAL_INFO_HEADER，共 ${rows.size} 项：" + rows.joinToString("；") { row -> "${row.label} ${row.value}" }
+            else ->
+                "$C_TECHNICAL_INFO_HEADER，共 ${rows.size} 项：" +
+                    rows.joinToString("；") { row -> if (row.value.isBlank()) row.label else "${row.label} ${row.value}" }
         }
 }
 

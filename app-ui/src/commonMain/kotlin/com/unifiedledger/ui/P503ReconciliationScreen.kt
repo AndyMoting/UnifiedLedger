@@ -366,14 +366,29 @@ private fun ReconciliationBindSection(
         // Entry A (F1): the target is the leg's own account and is never a user choice (spec
         // section 2.4); the carried account line is the exact account the queue was opened for.
         val targetLine = (state.returnTo as? ReconciliationBackTarget.Queue)?.state?.accountLine
-        // D-369 C: the queue's own account line wins; otherwise the chosen account's display name.
-        // A raw accountId is never shown as an account name — with neither available the line says
-        // the name is not loaded instead.
+        // D-369 C: LEGACY keeps the frozen expression verbatim (queue line, else raw account id,
+        // else the dash); ANDROID shows the queue line first, then the chosen account's display
+        // name, and states explicitly that the name is unavailable rather than printing a raw id.
+        val presentationProfile = LocalUiPresentationProfile.current
         val selectedChoiceName = state.bindAccounts.firstOrNull { choice -> choice.accountId == state.accountId }?.name
         Text(
-            "目标账户：" + reconciliationTargetAccountText(targetLine, selectedChoiceName),
+            "目标账户：" +
+                reconciliationTargetAccountText(
+                    targetLine = targetLine,
+                    selectedChoiceName = selectedChoiceName,
+                    accountIdValue = state.accountId?.value,
+                    profile = presentationProfile,
+                ),
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (presentationProfile == UiPresentationProfile.ANDROID) {
+            // The raw target account id stays readable behind 技术信息 whether or not the visible
+            // line could name the account — the identity is never deleted.
+            val targetTechRows = reconciliationTargetAccountTechnicalRows(state.accountId?.value)
+            if (targetTechRows.isNotEmpty()) {
+                TechnicalInfoSection(rows = targetTechRows, toggleKey = state.accountId)
+            }
+        }
         when (val bindable = state.bindableEvidence) {
             null ->
                 Text(
