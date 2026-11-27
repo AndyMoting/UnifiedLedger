@@ -205,6 +205,23 @@ A 批的四项必过检查（`Kotlin tests`、`Android compile`、`Python tests`
 - 保留 `D-301` 的三 Tab 与导入入口；`D-122`/`D-146` 的四 Tab 契约继续处于被取代状态。
 - 不改变账务读写、schema 或导入语义。
 
+#### 7.1.1 B 落地记录
+
+B 在 `LEGACY` profile 之外只改显示与布局，落地落点如下（本小节只记录实现位置，不新增批准内容）：
+
+- 纯决策集中在 `app-ui` 的 `P503LedgerViewPresentation.kt`：`androidTabPresentation`、`homeShowsAccountBalancesTail`、`flowFooterForProfile`（Android 去掉「已到末页」，加载/失败/重试保留）、`homeRowAndroidPresentation(For)`（消费 §4.7 的 `projectHomeRow`，Android 下无论目录是否到达都走该投影，缺失时显示明确未加载/读取失败，不回退枚举或裸 UTC 行）、`homeBadgeText`/`homeRemainingBadgesText`/`homeBadgeTintSlot`（§4.6 的稳定 `CategoryId` 槽位映射到现有 `categoryTints`）、`accountsCatalogManagementRouteActive`/`accountsShowsManagementSections`/`catalogManagementScreenTitle`、`androidAnalysisLayout`、`androidCategoryShareSections`（§4.8 有理数占比）、`currentRowAndroidHeader`/`currentRowAndroidAmountLine`（月度未加载时回退行的中文业务类型＋上海墙钟＋精确金额）、`calendarDayShowsAmounts`/`calendarVisibleCurrencyRows`/`calendarDayCountText`、`catalogDisplayPairComplete`/`landCatalogDisplayPair`、`moreAnalysisOpenLabel`；预算的短/长口径切换在 `P503BudgetPresentation.kt`。
+- 目录权威：`P503LedgerFacade.currentAuthoritativeCatalog()` 返回当前 session 的目录（`session.authority.catalog`，无 session 时才回退注入目录），在既有读取封装内与 `catalogSnapshot()` 配对调用：后台首屏装载走 leased `snapshot` 读取，管理命令成功与手动/标签商家刷新走既有的同步 `probe` 封装。`P503App` 缓存 `CatalogSnapshotView` 与其所属 `LedgerCatalog` 一对，由同一个纯决策 `landCatalogDisplayPair` 落地；三处 host 落点共用该决策，任一半缺失时两半都保留上次成功配对（不一半新一半旧，也不只更新 snapshot 半）。组合期只读缓存，不在 compose 里读 facade 或数据库。本批不新增 `catalogVersion` 一致性语义：仍以既有同一次读取内的目录与 generation 判定为范围，配对只保证显示缓存不在两次命令刷新之间混合半对。
+- 首页（`P503OverviewScreen.kt`）：Android profile 下每行按备注→单分类→中文业务类型取主标题，`#分类` 角标按 posting 原顺序最多三枚并显示「其余 N 个」，真实资产/负债腿逐腿一行、不合并、不折算；首屏去掉重复的账户余额尾。正常路径与保留读失败页传同一对缓存。首页 Android 行的 TalkBack 保留发生时间与统计时间两个值（批准的精确朗读），不合并、不省略。
+- 共享流水行（`P503OverviewScreen.kt` 的 `LedgerEntryFlowRow`）：它同时服务首页、搜索结果与报表下钻。B 在该行按 profile 切换文案：`LEGACY` 保持旧枚举与裸 UTC 文案，`ANDROID` 用中文业务名 + 上海统计时间 + 非空备注；posting 行仍使用调用方传入的精确金额 formatter（报表下钻的 `Long.MIN_VALUE` 口径不变）。因此搜索结果与报表下钻的既有设备文案期望由 B 一并同步；详情页与 C 批二级页面不在该行范围内。
+- 账户（`P503CatalogManagementScreen.kt`）：Android 首屏 = 按币种净资产 + 借贷占位 + 资产/负债真实账户与账户流水入口 + 单一「账户与分类管理」入口；管理面（新增/改名/停用/置顶/分类/标签/商家）搬到二级路由，沿用同一 `P503CatalogManagementScreen`、同一目录版本与同一命令语义。
+- 分析（`P503TabShell.kt`）：Android 默认月摘要 + 横向分类排行 + 预算；移除顶部原始枚举与币种堆叠；无收入时不渲染收入分类区；趋势与独立期间报表移入「更多分析」，查询与期间语义不变。`LEGACY` 保持原样：原始堆叠保留、支出区仍是带饼图的 `P503CategoryRegion(withPie = true)`、趋势与报表原处内联，因此 `showsExpenseRanking` 只在 Android 为真。
+- 横向占比（`P503LedgerView.kt`）：每行分类名 + 精确金额 + 一位小数占比 + 水平条；单分类恰为 `100.0%`。零金额分类不进入图表输入（否则会画一条无意义的 `0.0%` 条），但仍以精确金额留在精确表中；负 net 不预先滤掉，原样交给 §4.8 的 helper，由它返回 `NEGATIVE_AMOUNT` 的 `NoChart` 结果。`NoChart` 在排行区只显示原因，完整精确表与下钻由下方统一分类明细区提供。
+- 日历（`P503CalendarScreen.kt`）：Android 无交易日只显示日期；有交易日显示非零收支与笔数。真实零、读取失败与旧数据/重试仍是各自的面。
+- 预算（`P503BudgetView.kt`）：仅当读取**成功**且当月没有已配置范围时，Android 用短说明 + 设置入口，长口径说明进「口径说明」信息区；未加载与两类读取失败保持完整状态，`LEGACY` 也保持完整说明。
+- 导航状态（`P503AppState.kt`/`P503UiEvent.kt`/`P503Reducer.kt`）：`OverviewEmpty.catalogManagementSurface` 与 `OpenCatalogManagement`/`CloseCatalogManagement` 是加性字段与事件；`Back` 先关路由再走 ACCOUNTS→HOME 规则，底部 Tab 点击也离开路由；其余状态由集中守卫吸收，不产生 ISE。「更多分析」展开是视图偏好（`remember`，非账本状态），折叠不改变任何查询或期间游标。
+
+未在本批验证：任何 PNG、语义树或 TalkBack 实跑（E 批）；`profile=presentation` 的屏幕集合与 marker 未因 B 增加。
+
 ### 7.2 C：二级页面
 
 - 详情、搜索、账户流水、报表与日历消费同一投影；发生/统计时间分列。

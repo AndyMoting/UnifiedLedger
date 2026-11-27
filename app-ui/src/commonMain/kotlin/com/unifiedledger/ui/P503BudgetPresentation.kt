@@ -33,6 +33,32 @@ internal fun budgetRegionHeadline(view: BudgetMonthViewResult?): String =
     }
 
 /**
+ * D-369 B (spec section 7.1): an Android month whose read SUCCEEDED with no configured scope leads
+ * with the short note and the settings entry; the long independent-observation explanation moves
+ * into an information area the user opens. A configured month, a typed read failure and a
+ * not-yet-loaded read keep the full statement visible, and the LEGACY profile always does: there
+ * the explanation is what makes the state readable, and "not loaded" is not "unconfigured".
+ */
+internal enum class BudgetNoticeMode {
+    SHORT,
+    FULL,
+}
+
+/** The Android short note of an unconfigured budget (the settings entry follows it). */
+internal const val BUDGET_UNCONFIGURED_SHORT_TEXT: String = "还没有设置预算。"
+
+/**
+ * Only a SUCCESSFUL read that states no configured scope is 未配置. `null` is the not-loaded window
+ * and the two failure families are failures — none of the three claims the month has no budget.
+ */
+internal fun budgetIsUnconfigured(view: BudgetMonthViewResult?): Boolean = view is BudgetMonthViewResult.Success && view.view.observations.isEmpty()
+
+internal fun budgetNoticeMode(
+    profile: UiPresentationProfile,
+    view: BudgetMonthViewResult?,
+): BudgetNoticeMode = if (profile == UiPresentationProfile.ANDROID && budgetIsUnconfigured(view)) BudgetNoticeMode.SHORT else BudgetNoticeMode.FULL
+
+/**
  * The exact row texts of one landed month view, presentation-ordered (TOTAL first — the view
  * already orders it so — then the configured category scopes). A month with no configured
  * scope reads as one explicit empty statement, never as a zero row.

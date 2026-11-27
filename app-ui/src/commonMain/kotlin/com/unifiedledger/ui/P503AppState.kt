@@ -222,6 +222,20 @@ sealed interface P503AppState {
          * carry this overview preserve the slot untouched (a read-only return starts no read).
          */
         val reportRegion: P806ReportRegionState? = null,
+        /**
+         * D-369 B (spec section 7.1): the ACCOUNTS tab's 账户与分类管理 secondary route — the same
+         * state-internal pattern as [importSurface], declared last so no positional construction
+         * site changes meaning. The Android first screen keeps the per-currency net worth, the
+         * lending placeholders and the real asset/liability accounts with their account-flow
+         * entries; the management sections (add/rename/disable/pin/category/tag/merchant) move
+         * behind this route. [P503UiEvent.OpenCatalogManagement] sets it;
+         * `CloseCatalogManagement`, `Back` and a bottom-bar tab tap clear it. Every other overview
+         * field — tab cursor, month, payloads, pinned set, origin scroll — is preserved, and the
+         * route changes no command semantics: the management surface keeps its forms and its
+         * catalog version. Additive with a `false` default, so every pre-B construction and copy
+         * site keeps compiling and the LEGACY profile renders exactly the pre-B surface.
+         */
+        val catalogManagementSurface: Boolean = false,
     ) : P503AppState
 
     data class Editing(

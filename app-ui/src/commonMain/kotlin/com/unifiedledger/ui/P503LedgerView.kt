@@ -1,7 +1,9 @@
 package com.unifiedledger.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
@@ -288,9 +291,110 @@ private fun P503CategoryPies(sectors: Map<CurrencyUnit, List<CategoryChartSector
 }
 
 /**
+ * D-369 B (spec section 7.1): the expense categories as a HORIZONTAL ranking. One row per
+ * category: current name, exact amount with its currency code, the fixed one-decimal share, and a
+ * proportional bar. The arithmetic is A's [androidCategoryShareSections] (rational, no
+ * floating point in any amount), so a single category is exactly `100.0%` on one row and a
+ * refused chart never becomes a zero-height bar: it renders the reason, while the exact table
+ * below ([P503CategoryRegion] without the pie) keeps every category and its exact amount.
+ *
+ * The bar's width is the only derived floating-point value here, and it is a display ratio of two
+ * integers — never an amount. The exact category table and the level-1 → level-2 drilldown stay
+ * reachable below the ranking ([P503CategoryRegion] without the pie).
+ */
+@Composable
+internal fun P503CategoryShareRanking(
+    title: String,
+    categories: List<MonthlyCategoryTotal>,
+    uncategorized: List<MonthlyCategoryCurrencyTotal> = emptyList(),
+    reloadRequired: Boolean = false,
+) {
+    val notLoadedText = categoryRegionPlaceholderText(reloadRequired)
+    if (notLoadedText != null) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(notLoadedText, style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    if (categories.isEmpty() && uncategorized.isEmpty()) return
+    val palette = LocalP8Palette.current
+    val sections = remember(categories) { androidCategoryShareSections(categories) }
+    Text(title, style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(4.dp))
+    sections.forEach { section ->
+        if (section.rendersBars) {
+            section.chartRows.forEach { row ->
+                val rowText = categoryShareRowText(row, section.currency)
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            // C04: the whole row announces the same string it displays.
+                            .semantics(mergeDescendants = true) { contentDescription = rowText },
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            row.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = palette.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            formatMinorUnits(row.amountMinorUnits, section.currency.precision) + " " + section.currency.code,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                        Text(
+                            row.percentText(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.onSurface,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(3.dp))
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .background(palette.divider, RoundedCornerShape(3.dp)),
+                    ) {
+                        Box(
+                            modifier =
+                                Modifier
+                                    // Display ratio of two exact integers (tenths of a percent over 1000).
+                                    .fillMaxWidth(row.tenthsOfPercent.coerceIn(0L, 1_000L) / 1_000f)
+                                    .height(6.dp)
+                                    .background(palette.accent, RoundedCornerShape(3.dp)),
+                        )
+                    }
+                }
+            }
+        } else {
+            // No chart: only the explicit reason. The exact table below already carries every
+            // category and amount, so repeating those rows here would state the same values twice.
+            section.failure?.let { reason ->
+                Text(categoryShareNoChartText(reason), style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    P503CategoryRegion(
+        title = "分类明细",
+        categories = categories,
+        withPie = false,
+        uncategorized = uncategorized,
+        reloadRequired = reloadRequired,
+    )
+}
+
+/**
  * The twelve-month trend table (R-Q07-1): one exact line per month, old to new, with explicit
  * zero values for empty months and 该月无交易 for a ledger without any activity currency.
- *
  * [interactionsEnabled] is `false` only on the retained read-failure surface, where
  * AnalysisMonthShift is absorbed (F1). The arrows additionally follow the shared
  * [monthStepEdges] domain decision (G3), so they are disabled exactly where a shift would be

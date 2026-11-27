@@ -434,6 +434,24 @@ class P503LedgerFacade(
     val currentCatalogVersion: Long?
         get() = session?.authority?.catalogVersion
 
+    /**
+     * D-369 B: the catalog the CURRENT session holds, for a display projection that must agree with
+     * the [catalogSnapshot] read beside it.
+     *
+     * This is not a replacement for the construction-time [catalog]: it prefers the session's
+     * authoritative catalog (which `refreshCatalog()` rebuilds, so a rename or a new account shows
+     * up without a restart) and falls back to the injected catalog only when no session exists
+     * (legacy constructions and startup tests).
+     *
+     * Call it ONLY paired with [catalogSnapshot] inside an existing read wrapper: the leased
+     * background snapshot read (`leased { }`), or the synchronous `probe { }` wrapper the catalog
+     * command success and manual/pin refresh paths already use. Land the pair together — the main
+     * thread must never query the session or the database, and a screen must never read this
+     * during composition. A failed catalog read there is a failed PAIR: keep the previous
+     * successful snapshot+catalog pair instead of mixing a fresh snapshot with a stale catalog.
+     */
+    fun currentAuthoritativeCatalog(): LedgerCatalog = session?.authority?.catalog ?: catalog
+
     /** P7-04.C: the ledger-scoped import review list projection (plain nullable, no session following). */
     val queryImportReviewRows: QueryImportReviewRows?
         get() = fallbackQueryImportReviewRows

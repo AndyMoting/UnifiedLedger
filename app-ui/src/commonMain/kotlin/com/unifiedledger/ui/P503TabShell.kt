@@ -29,8 +29,12 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -509,12 +513,22 @@ fun P503AnalysisScreen(
     // DEF-B (D-268): the Analysis tab summarizes the exact SQL aggregates carried by [state];
     // the bounded `state.transactions` projection is never summarized as if it were the ledger.
     val summary = remember(state, summarizeActivity) { summarizeActivity.summarizeAggregate(state) }
+    // D-369 B (spec section 7.1): the Android analysis page leads with the month summary, the
+    // category ranking and the budget. The raw per-kind enumeration and the per-currency
+    // income/expense stack leave the top (LEGACY keeps them), a LOADED month with no income does
+    // not render the income section (an absent month keeps it and states the not-loaded copy), and
+    // the trend plus the independent report move behind 更多分析 — the existing regions and their
+    // query/period semantics are unchanged, only their position.
+    val profile = LocalUiPresentationProfile.current
+    val layout = androidAnalysisLayout(profile, monthlyActivity, monthlyReloadRequired)
+    var moreAnalysisOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState),
     ) {
         if (summary.totalTransactionCount == 0) {
             Text("账本为空，还没有任何交易。", style = MaterialTheme.typography.bodyLarge)
-        } else {
+        }
+        if (layout.showsRawSummary && summary.totalTransactionCount != 0) {
             Text("交易总笔数：${summary.totalTransactionCount}", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             Text("按交易类型", style = MaterialTheme.typography.bodyMedium)
@@ -558,38 +572,82 @@ fun P503AnalysisScreen(
                 Text(disclosure, style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(8.dp))
-            P503CategoryRegion(
-                title = "支出分类",
-                categories = monthlyActivity?.expenseCategories ?: emptyList(),
-                withPie = true,
-                uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
-                reloadRequired = monthlyReloadRequired,
-            )
-            Spacer(Modifier.height(8.dp))
-            P503CategoryRegion(
-                title = "收入分类",
-                categories = monthlyActivity?.incomeCategories ?: emptyList(),
-                withPie = false,
-                uncategorized = monthlyActivity?.uncategorizedIncomeTotals ?: emptyList(),
-                reloadRequired = monthlyReloadRequired,
-            )
+            if (layout.showsExpenseRanking) {
+                // D-369 B: Android ranks the expense categories as horizontal proportion rows
+                // (name + exact amount + share + bar); the exact table and the drilldown stay
+                // reachable inside the same region.
+                P503CategoryShareRanking(
+                    title = "支出分类",
+                    categories = monthlyActivity?.expenseCategories ?: emptyList(),
+                    uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
+                    reloadRequired = monthlyReloadRequired,
+                )
+            } else {
+                // The LEGACY profile keeps the pre-B expense region byte-for-byte: the pie chart
+                // (R-Q07-3) above the same exact table and drilldown.
+                P503CategoryRegion(
+                    title = "支出分类",
+                    categories = monthlyActivity?.expenseCategories ?: emptyList(),
+                    withPie = true,
+                    uncategorized = monthlyActivity?.uncategorizedExpenseTotals ?: emptyList(),
+                    reloadRequired = monthlyReloadRequired,
+                )
+            }
+            if (layout.showsIncomeRegion) {
+                Spacer(Modifier.height(8.dp))
+                P503CategoryRegion(
+                    title = "收入分类",
+                    categories = monthlyActivity?.incomeCategories ?: emptyList(),
+                    withPie = false,
+                    uncategorized = monthlyActivity?.uncategorizedIncomeTotals ?: emptyList(),
+                    // D-369 B: Android keeps the income region present while the month is absent
+                    // (no payload yet, or a reload-required recovery) and states the not-loaded
+                    // copy there. LEGACY keeps the pre-B behaviour exactly.
+                    reloadRequired = monthlyReloadRequired || (androidTabPresentation(profile) && monthlyActivity == null),
+                )
+            }
             // P7-07 07.D: the additive budget region rides between the category regions and the
             // trend; it owns its own state copy (loaded/failure/unconfigured) independently of
             // the monthly cycle's state.
             budgetRegion?.invoke()
-            Spacer(Modifier.height(8.dp))
-            P503MonthlyTrendRegion(
-                trend = trend,
-                onAnalysisMonthShift = onAnalysisMonthShift,
-                interactionsEnabled = interactionsEnabled,
-                reloadRequired = monthlyReloadRequired,
-                selectedMonth = selectedMonth,
-                resolvedCurrentMonth = resolvedCurrentMonth,
-                selectableMonths = selectableMonths,
-            )
+            if (layout.keepsTrendInline) {
+                Spacer(Modifier.height(8.dp))
+                P503MonthlyTrendRegion(
+                    trend = trend,
+                    onAnalysisMonthShift = onAnalysisMonthShift,
+                    interactionsEnabled = interactionsEnabled,
+                    reloadRequired = monthlyReloadRequired,
+                    selectedMonth = selectedMonth,
+                    resolvedCurrentMonth = resolvedCurrentMonth,
+                    selectableMonths = selectableMonths,
+                )
+            }
         }
         // P8-06 batch b: the independent report region renders whether or not the monthly region
         // does (it is not the month card), and only when the composition wired it.
-        reportRegion?.invoke()
+        if (layout.keepsReportInline) reportRegion?.invoke()
+        // D-369 B: 更多分析 carries the trend and the independent report on Android. The entry is
+        // a labelled toggle (TalkBack reads 展开/收起), and both regions keep their own state and
+        // their own cursors — opening the section starts no read.
+        if (layout.showsMoreAnalysis && (trend != null || reportRegion != null)) {
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { moreAnalysisOpen = toggledMoreAnalysis(moreAnalysisOpen) }) {
+                Text(moreAnalysisOpenLabel(moreAnalysisOpen))
+            }
+            if (moreAnalysisOpen) {
+                P503MonthlyTrendRegion(
+                    trend = trend,
+                    onAnalysisMonthShift = onAnalysisMonthShift,
+                    interactionsEnabled = interactionsEnabled,
+                    reloadRequired = monthlyReloadRequired,
+                    selectedMonth = selectedMonth,
+                    resolvedCurrentMonth = resolvedCurrentMonth,
+                    selectableMonths = selectableMonths,
+                )
+                reportRegion?.invoke()
+            }
+        }
     }
 }

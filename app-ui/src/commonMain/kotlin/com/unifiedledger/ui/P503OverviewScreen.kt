@@ -1,7 +1,9 @@
 package com.unifiedledger.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,24 +13,31 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.unifiedledger.application.CatalogSnapshotView
 import com.unifiedledger.application.CurrentVersionRow
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionId
+import com.unifiedledger.ui.theme.LocalP8Palette
 import kotlinx.datetime.YearMonth
 
 /**
@@ -90,7 +99,16 @@ fun P503OverviewScreen(
     // P8-00 b3: registers this screen's live LazyListState with the host (the sampler's source).
     // Null keeps every pre-b3 call site compiling (the host samples nothing).
     onRegisterListState: ((androidx.compose.foundation.lazy.LazyListState) -> Unit)? = null,
+    // D-369 B (spec section 7.1): the authoritative catalog projection and the domain catalog the
+    // Android row consumes through A's pure `projectHomeRow`. Both default to null, so every pre-B
+    // call site keeps the legacy row byte-for-byte; a host that passes them gets the Android face
+    // (note/single-category/business-type title, three badges plus the remaining count, one exact
+    // line per real asset/liability leg). The domain catalog is the fallback name/kind authority —
+    // without it the row states 未加载 instead of inventing amounts.
+    catalogSnapshot: CatalogSnapshotView? = null,
+    ledgerCatalog: LedgerCatalog? = null,
 ) {
+    val profile = LocalUiPresentationProfile.current
     // P8-00 b3 (V-5 返回保滚动位): the list state is HOISTED to the screen so the sampled
     // position and the restored one refer to the same state object. The restore fires once per
     // arriving position and immediately consumes it (the one-shot consume — a later unrelated
@@ -203,24 +221,47 @@ fun P503OverviewScreen(
                 }
                 if (collapsedDays[group.date] != true) {
                     items(group.rows, key = { it.transactionId.value }) { row ->
-                        LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled, onSampleScroll)
+                        // D-369 B: the Android profile renders EVERY row through A's projection —
+                        // with no catalog loaded it shows the projection's honest 未加载/读取失败
+                        // state, never the legacy enum/UTC line. Only the LEGACY profile keeps the
+                        // pre-B row (the helper decides on the profile alone).
+                        val androidRow = homeRowAndroidPresentationFor(profile, row, catalogSnapshot, ledgerCatalog)
+                        if (androidRow != null) {
+                            LedgerEntryFlowRowAndroid(
+                                androidRow = androidRow,
+                                transactionId = row.transactionId,
+                                onSelectTransaction = onSelectTransaction,
+                                interactionsEnabled = interactionsEnabled,
+                                onSampleScroll = onSampleScroll,
+                            )
+                        } else {
+                            LedgerEntryFlowRow(row, state.accountNames, onSelectTransaction, interactionsEnabled, onSampleScroll)
+                        }
                         HorizontalDivider()
                     }
                 }
             }
             item(key = "flow-footer") {
-                FlowFooter(flow, onLoadMore, onRetryLoadMore)
-                OverviewBalances(state)
+                FlowFooter(flow, onLoadMore, onRetryLoadMore, profile)
+                // D-369 B: the ACCOUNTS tab owns the balances; the Android first screen does not
+                // repeat them under the flow list (LEGACY keeps the tail).
+                if (homeShowsAccountBalancesTail(profile)) OverviewBalances(state)
             }
         } else {
             item {
                 Text("当前交易（最近 ${state.transactions.size} 笔，共 ${state.transactionTotal} 笔）", style = MaterialTheme.typography.titleMedium)
             }
             items(state.transactions, key = { it.transactionId.value }) { row ->
-                CurrentTransactionRow(row, state.accountNames)
+                if (androidTabPresentation(profile)) {
+                    CurrentTransactionRowAndroid(row, state.accountNames)
+                } else {
+                    CurrentTransactionRow(row, state.accountNames)
+                }
             }
-            item {
-                OverviewBalances(state)
+            if (homeShowsAccountBalancesTail(profile)) {
+                item {
+                    OverviewBalances(state)
+                }
             }
         }
     }
@@ -252,8 +293,10 @@ private fun FlowFooter(
     view: FlowRowsView,
     onLoadMore: () -> Unit,
     onRetryLoadMore: () -> Unit,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
 ) {
-    when (flowFooterState(view)) {
+    when (flowFooterForProfile(view, profile)) {
+        null -> Unit
         FlowFooterState.LOADING -> Text("正在加载更多…", style = MaterialTheme.typography.bodySmall)
         FlowFooterState.RETRY -> TextButton(onClick = onRetryLoadMore) { Text("加载失败，点击重试") }
         FlowFooterState.FETCH_MORE -> {
@@ -288,6 +331,12 @@ internal fun LedgerEntryFlowRow(
     // as before); the drilldown passes [p806MinorUnitsText], which is exact at Long.MIN_VALUE.
     amountText: (Long, Int) -> String = ::formatMinorUnits,
 ) {
+    // D-369 B / 规格 §7.1 共享流水行契约: this row is shared by HOME, the search result list and
+    // the report drilldown. Reading the profile HERE gives every caller the right copy without
+    // touching those surfaces: LEGACY keeps the pre-B text byte-for-byte, ANDROID shows the Chinese
+    // business name and the local statistics time with each posting's own account, exact signed
+    // amount and currency code (the caller's amountText still formats the numbers).
+    val profile = LocalUiPresentationProfile.current
     Column(
         modifier =
             Modifier
@@ -301,11 +350,11 @@ internal fun LedgerEntryFlowRow(
                 // C04 (spec 6.4): the flow row announces as one node carrying the effective
                 // kind, the statistics time and every exact posting value with sign, account
                 // name and currency code — the ordered list's values stay TalkBack-reachable.
-                .semantics { contentDescription = flowRowContentDescription(row, accountNames, amountText) }
+                .semantics { contentDescription = flowRowContentDescriptionFor(profile, row, accountNames, amountText) }
                 .padding(vertical = 4.dp),
     ) {
         Text(
-            "${row.kind} · 统计 ${row.statisticsAt}" + (row.note?.let { note -> " · $note" } ?: ""),
+            flowRowHeaderText(profile, row),
             style = MaterialTheme.typography.bodyMedium,
         )
         row.postings.forEach { posting ->
@@ -321,6 +370,134 @@ internal fun LedgerEntryFlowRow(
                 ),
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+    }
+}
+
+/**
+ * D-369 B (spec section 7.1): one HOME flow row as the Android profile renders it. The visible
+ * texts and the TalkBack sentence come from the same [HomeRowAndroidPresentation], so the announced
+ * and the displayed values cannot diverge:
+ *
+ * - the main title follows §4.7 (note → single resolved category → Chinese business type);
+ * - each category badge is `#` + its path-aware display name, capped at three with 「其余 N 个」;
+ * - every real asset/liability leg is its own exact `account ±amount CODE` line — a transfer or a
+ *   mixed payment is never folded into one net figure and currencies never combine;
+ * - the statistics time is the day-group key and stays visible; the full posting detail (including
+ *   the hidden counterparty legs) remains on the detail page, which this row still opens.
+ *
+ * The badge colour is A's stable `CategoryId` slot over `P8Palette.categoryTints` for recognition
+ * only: the badge text carries the category fact, so colour is never the only signal.
+ */
+@Composable
+internal fun LedgerEntryFlowRowAndroid(
+    androidRow: HomeRowAndroidPresentation,
+    transactionId: TransactionId,
+    onSelectTransaction: (TransactionId) -> Unit,
+    interactionsEnabled: Boolean,
+    onSampleScroll: (() -> ListScrollPosition?)? = null,
+) {
+    val palette = LocalP8Palette.current
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(enabled = interactionsEnabled, onClickLabel = "查看交易详情") {
+                    onSampleScroll?.invoke()
+                    onSelectTransaction(transactionId)
+                }.semantics { contentDescription = homeRowAndroidContentDescription(androidRow) }
+                .padding(vertical = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                androidRow.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = palette.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                androidRow.statisticsText,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.onSurfaceVariant,
+            )
+        }
+        if (androidRow.categoryBadges.isNotEmpty() || androidRow.remainingBadgesText != null || androidRow.hasUnclassified) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                androidRow.categoryBadges.forEach { badge ->
+                    val tint = palette.categoryTints[homeBadgeTintSlot(badge.categoryId, palette.categoryTints.size)]
+                    Surface(color = tint, shape = RoundedCornerShape(percent = 50)) {
+                        Text(
+                            homeBadgeText(badge),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.categoryGlyph,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+                androidRow.remainingBadgesText?.let { remaining ->
+                    Text(remaining, style = MaterialTheme.typography.labelSmall, color = palette.onSurfaceVariant)
+                }
+                if (androidRow.hasUnclassified) {
+                    Text("未分类", style = MaterialTheme.typography.labelSmall, color = palette.onSurfaceVariant)
+                }
+            }
+        }
+        if (androidRow.amountLines.isNotEmpty()) {
+            androidRow.amountLines.forEach { line ->
+                Text(
+                    "${line.accountName} ${line.amount.text}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.onSurface,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        } else {
+            androidRow.amountAbsenceText?.let { absence ->
+                Text(absence, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentTransactionRowAndroid(
+    row: CurrentVersionRow,
+    accountNames: Map<AccountId, String>,
+) {
+    val header = currentRowAndroidHeader(row.kind, row.occurredAt)
+    val amountLines =
+        row.postings.map { posting ->
+            currentRowAndroidAmountLine(
+                accountNames[posting.accountId] ?: posting.accountId.value,
+                posting.amount.minorUnits,
+                posting.amount.currency,
+            )
+        }
+    val palette = LocalP8Palette.current
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                // D-369 B: the same values the row shows are the announced sentence; no enum
+                // constant, no bare UTC instant, and no currency-less number.
+                .semantics { contentDescription = currentRowAndroidContentDescription(header, amountLines) },
+    ) {
+        Text(header, style = MaterialTheme.typography.bodyMedium, color = palette.onSurface)
+        amountLines.forEach { line ->
+            Text(line, style = MaterialTheme.typography.bodySmall, color = palette.onSurface)
         }
     }
 }

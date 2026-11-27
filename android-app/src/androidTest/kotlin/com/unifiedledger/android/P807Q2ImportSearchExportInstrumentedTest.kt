@@ -12,6 +12,8 @@ import com.unifiedledger.application.TransactionDetailLeg
 import com.unifiedledger.application.export.readable.READABLE_EXPORT_HEADERS
 import com.unifiedledger.application.export.readable.readableExportAmountText
 import com.unifiedledger.application.import.wechat.BoundedXlsxReader
+import com.unifiedledger.application.statisticsPresentationTime
+import com.unifiedledger.application.transactionKindBusinessName
 import com.unifiedledger.domain.TransactionKind
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -328,13 +330,13 @@ class P807Q2ImportSearchExportInstrumentedTest {
         // unbounded wait.
         ui.submitSearch()
         val resultRow =
-            ui.findAppNode { node -> ui.textOf(node).startsWith("${detail.kind} · 统计 ") }
+            ui.findAppNode { node -> ui.textOf(node).startsWith("${transactionKindBusinessName(detail.kind)} · 统计 ") }
         assertNotNull("${P807Q2Flow1Facts.PREFIX} the single search result row must render", resultRow)
         assertEquals(
             "${P807Q2Flow1Facts.PREFIX} the result row must carry the confirmed transaction's statistics time and note",
-            // The row's frozen copy (P503OverviewScreen.kt:308) is kind · 统计 · note, and the note is
-            // nullable ONLY at the domain's edge: the confirmed self-entry row carries the frozen
-            // empty string, which still renders its " · " separator after the statistics time.
+            // The shared flow row's ANDROID copy (flowRowHeaderText): Chinese business name · 统计 ·
+            // 上海墙钟 · note. A note that is blank is not rendered, so the confirmed self-entry
+            // row's frozen empty-string note adds no " · " separator.
             searchRowText(detail),
             ui.textOf(resultRow!!),
         )
@@ -503,11 +505,14 @@ class P807Q2ImportSearchExportInstrumentedTest {
     private fun candidateAmountText(minorUnits: Long): String = readableExportAmountText(minorUnits, CATALOG_MANAGED_CURRENCY.precision) + " " + CATALOG_MANAGED_CURRENCY.code
 
     /**
-     * The product's own result-row copy for [detail] (`P503OverviewScreen.kt:308`): kind · 统计 ·
-     * note, where a null note contributes nothing and the ledger's frozen empty-string note still
-     * renders its separator.
+     * The product's own result-row copy for [detail] (`flowRowHeaderText`, the shared search row
+     * under the Android profile): Chinese business name · 统计 · 上海本地墙钟 · a non-blank note.
      */
-    private fun searchRowText(detail: TransactionDetail): String = "${detail.kind} · 统计 ${detail.statisticsAt}" + (detail.note?.let { note -> " · $note" } ?: "")
+    private fun searchRowText(detail: TransactionDetail): String {
+        val time = statisticsPresentationTime(detail.statisticsAt).text()
+        val note = detail.note?.takeIf { it.isNotBlank() }
+        return transactionKindBusinessName(detail.kind) + " · 统计 " + time + (note?.let { " · $it" } ?: "")
+    }
 
     /** `transactionDetailHeadlineAmount` for a two-leg EXPENSE (the exact signed amount headline). */
     private fun transactionHeadline(detail: TransactionDetail): String {

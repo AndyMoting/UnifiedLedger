@@ -116,6 +116,10 @@ class P503ReducerImpl(
         if (reconciliationEventAbsorbed(effective, event)) return effective
         if (refundEntryEventAbsorbed(effective, event)) return effective
         if (listScrollRestoredEventAbsorbed(effective, event)) return effective
+        // D-369 B (spec section 7.1): the ACCOUNTS 账户与分类管理 route family — the same central
+        // guard shape as the families above. Its only designed effect is the two OverviewEmpty
+        // transitions below; every other state absorbs both intents, so no dispatch can become an ISE.
+        if (catalogManagementEventAbsorbed(effective, event)) return effective
         externalNavigationTransition(effective, event)?.let { return it }
         val reduced =
             when (effective) {
@@ -861,6 +865,20 @@ class P503ReducerImpl(
             state !is P503AppState.Calendar
 
     /**
+     * D-369 B (spec section 7.1): the 账户与分类管理 route family is state-preserving outside the
+     * overview — [P503UiEvent.OpenCatalogManagement] and [P503UiEvent.CloseCatalogManagement] have
+     * their one effect on [P503AppState.OverviewEmpty] (the `reduceOverviewEmpty` transitions) and
+     * are absorbed on every other surface here, so a late dispatch can never reach `unhandled`
+     * (the backup-export family's central-guard shape).
+     */
+    private fun catalogManagementEventAbsorbed(
+        state: P503AppState,
+        event: P503UiEvent,
+    ): Boolean =
+        (event is P503UiEvent.OpenCatalogManagement || event is P503UiEvent.CloseCatalogManagement) &&
+            state !is P503AppState.OverviewEmpty
+
+    /**
      * P7-09 09.0 (spec sections 2/3; D-225 Q19): the inbound-navigation family's ONE transition
      * point. Returns the reduced state when [event] belongs to this family, `null` when it does
      * not (the caller then dispatches to the ordinary per-state reducer).
@@ -1479,12 +1497,23 @@ class P503ReducerImpl(
                     catalogDialog = CatalogDialog.None,
                     catalogNotice = null,
                     importSurface = false,
+                    // D-369 B: a bottom-bar tap also leaves the ACCOUNTS management route, so the
+                    // chosen tab is the render target (the import-surface rule).
+                    catalogManagementSurface = false,
                 )
             // P8-00 shell (D-301; spec section 1.2): the drawer's 导入账单 entry (and the shortcut's
             // OpenImportTab route) opens the state-internal import surface. The tab cursor is
             // untouched, so the bottom bar keeps showing the origin tab and a later tap returns to
             // it; the projection load stays the host's state-driven effect (zero formal write).
             P503UiEvent.OpenImportSurface -> state.copy(importSurface = true)
+            // D-369 B (spec section 7.1): the ACCOUNTS first screen's 「账户与分类管理」 entry opens
+            // the management route. The tab cursor, the month, every payload and the origin scroll
+            // position are untouched, and the management surface keeps its own forms/commands — the
+            // route is a presentation carrier, not a new command path.
+            P503UiEvent.OpenCatalogManagement -> state.copy(catalogManagementSurface = true)
+            // D-369 B: the route's 返回 returns to the ACCOUNTS first screen (`Back` below does the
+            // same, so the system gesture and the button agree).
+            P503UiEvent.CloseCatalogManagement -> state.copy(catalogManagementSurface = false)
             // P8-04 i1 (D-11): the 「获取导入模板」 entry's request intent. The host launches the
             // SAF save + template write (不切态 — the StartImportFilePick mechanism: the reducer
             // state is unchanged, the coordinator/testable host action owns the effect); the typed
@@ -2027,6 +2056,9 @@ class P503ReducerImpl(
             P503UiEvent.Back ->
                 when {
                     state.catalogDialog != CatalogDialog.None -> state.copy(catalogDialog = CatalogDialog.None)
+                    // D-369 B: the management route closes before the tab rule, so Back on the route
+                    // returns to the ACCOUNTS first screen instead of leaving for HOME.
+                    state.catalogManagementSurface -> state.copy(catalogManagementSurface = false)
                     state.importSurface -> state.copy(importSurface = false)
                     state.selectedTab == P503Tab.ACCOUNTS -> state.copy(selectedTab = P503Tab.HOME)
                     else -> unhandled(state, event)
