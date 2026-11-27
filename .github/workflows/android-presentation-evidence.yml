@@ -15,6 +15,13 @@
 # longer describe one ledger. The workflow therefore builds the seed once, before the emulator
 # session, and every combination pushes that same file.
 #
+# TIME BUDGET (E1-F5). Each combination keeps the single-dispatch profile's existing 45-minute
+# capture budget; the sweep's four combinations plus one build therefore need roughly
+# 4x45 + build, so the job allows 240 minutes and the emulator step 210. The seeded number is
+# re-measured rather than assumed: every combination writes `sweep_duration_seconds` into its own
+# host.json (a read-only diagnostic the gate never reads), so the E2 registry can state the
+# measured cost and shrink these bounds only on that evidence.
+#
 # WHAT IT DOES NOT PROVE
 # ----------------------
 # The gate proves only what is mechanically decidable (font scale applied, ui_mode read back, every
@@ -53,7 +60,7 @@ jobs:
   presentation-sweep:
     name: Presentation sweep (2x2)
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       TZ: Asia/Shanghai
       LANG: zh_CN.UTF-8
@@ -109,7 +116,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Capture the four combinations in one AVD session
-        timeout-minutes: 165
+        timeout-minutes: 210
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         uses: reactivecircus/android-emulator-runner@v2

@@ -1,9 +1,14 @@
 """D-369 E1 presentation rig configuration proofs (no device, no emulator, no Gradle)."""
 from __future__ import annotations
 
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from android_fontscale.sampler import (
+    BACK,
     DEFAULT_UI_MODE,
     P8_00_ASSET_TARGET,
     P806_REPORT_TITLE,
@@ -15,17 +20,22 @@ from android_fontscale.sampler import (
     PRESENTATION_HOME_COUNT,
     PRESENTATION_MANAGEMENT_ABSENT,
     PRESENTATION_MANAGEMENT_MARKER,
+    PRESENTATION_MANAGEMENT_TITLE,
+    PRESENTATION_MULTI_CATEGORY_NOTE,
     PRESENTATION_MULTI_CATEGORY_REMAINING,
     PRESENTATION_MULTI_CURRENCY_MARKER,
+    PRESENTATION_MULTI_CURRENCY_NOTE,
     PRESENTATION_PROFILE_NAME,
     PRESENTATION_RANKING_MARKER,
     PRESENTATION_RANKING_TEXT,
     PRESENTATION_SCENARIO_STEMS,
     PRESENTATION_SCREENS,
     PROFILES,
-    Screen,
+    SEEDED_ACCOUNT_NAME,
+    Sampler,
     SampleError,
     ScrollStep,
+    Screen,
     TapStep,
     UI_MODES,
     gate_evidence_plan_problems,
@@ -43,8 +53,8 @@ PRESENTATION_STEMS = [
     "presentation-search-results",
     "presentation-ordinary-expense",
     "presentation-detail",
-    "presentation-multi-currency",
     "presentation-multiple-categories",
+    "presentation-multi-currency",
     "presentation-account-flow",
     "presentation-reconciliation",
     "presentation-asset",
@@ -103,6 +113,36 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertEqual(PRESENTATION_RANKING_MARKER, presentation.marker)
         self.assertEqual((PRESENTATION_RANKING_TEXT,), presentation.required)
 
+    def test_home_rows_are_filmed_in_their_statistics_order_and_taps_pre_scroll(self):
+        # The HOME flow is statistics_at DESC: the multi-category row (last month 10:00) sits ABOVE
+        # the USD row (09:00). ScrollStep only moves forward, so the screens must be captured in
+        # that same order; reversing them leaves the multi-category row above the restored viewport.
+        by_stem = {screen.stem: screen for screen in PRESENTATION_SCREENS}
+        stems = [screen.stem for screen in PRESENTATION_SCREENS]
+        self.assertLess(
+            stems.index("presentation-multiple-categories"),
+            stems.index("presentation-multi-currency"),
+        )
+        self.assertEqual(
+            (BACK, ScrollStep(PRESENTATION_MULTI_CATEGORY_NOTE)),
+            by_stem["presentation-multiple-categories"].steps,
+        )
+        self.assertEqual(
+            (
+                ScrollStep(PRESENTATION_MULTI_CURRENCY_NOTE),
+                TapStep(PRESENTATION_MULTI_CURRENCY_NOTE, contains=True),
+            ),
+            by_stem["presentation-multi-currency"].steps,
+        )
+        # TapStep only reads find_center and never checks reachability: the composed account row and
+        # the composed management entry both need a forward ScrollStep before their tap.
+        account_steps = by_stem["presentation-account-flow"].steps
+        account_tap = account_steps.index(TapStep(SEEDED_ACCOUNT_NAME, contains=True))
+        self.assertIn(ScrollStep(SEEDED_ACCOUNT_NAME), account_steps[:account_tap])
+        management_steps = by_stem["presentation-catalog-management"].steps
+        management_tap = management_steps.index(TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True))
+        self.assertIn(ScrollStep(PRESENTATION_MANAGEMENT_TITLE), management_steps[:management_tap])
+
     def test_non_android_profiles_keep_the_default_analysis_steps(self):
         # The presentation/profile path must not leak the extra toggle into a screen set that never
         # had the Android subtraction (the LEGACY analysis page keeps the report inline).
@@ -110,7 +150,7 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertEqual((TapStep("分析"),), empty_analysis.steps)
         self.assertNotIn(TapStep("更多分析"), list(empty_analysis.steps))
 
-    def test_the_eight_future_scenarios_are_named_in_one_configuration(self):
+    def test_the_eight_plan_scenarios_are_named_in_one_configuration(self):
         self.assertEqual(
             (
                 "ordinary-expense",
@@ -305,6 +345,43 @@ class VisibleAbsentTests(unittest.TestCase):
         self.assertTrue(
             any("required string" in problem for problem in screen_problems(missing_title, screen))
         )
+
+
+class TraceAttemptTests(unittest.TestCase):
+    """D4's trace limb: every failure is a recorded reason, never an escaping exception."""
+
+    @staticmethod
+    def _sampler(evidence: Path) -> Sampler:
+        return Sampler(adb_serial=None, evidence=evidence, font_scale=1.3, avd_name="ul-presentation")
+
+    def test_a_hung_adb_timeout_is_recorded_not_raised(self):
+        # subprocess.TimeoutExpired is not a SampleError, so the old version escaped main()'s
+        # handler and aborted the whole combination; D4 forbids that.
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._sampler(Path(tmp))
+            with mock.patch.object(Sampler, "adb", side_effect=subprocess.TimeoutExpired("adb", 30)):
+                status, reason = sampler.attempt_trace()
+            self.assertEqual("", status)
+            self.assertIn("TimeoutExpired", reason)
+            self.assertFalse((Path(tmp) / "trace.txt").exists())
+
+    def test_a_real_trace_is_kept_as_the_raw_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._sampler(Path(tmp))
+            with mock.patch.object(Sampler, "adb", return_value="# tracer: gfx view\nTRACE:\n"):
+                status, reason = sampler.attempt_trace()
+            self.assertEqual(("available", ""), (status, reason))
+            self.assertEqual("# tracer: gfx view\nTRACE:\n", (Path(tmp) / "trace.txt").read_text(encoding="utf-8"))
+
+    def test_an_empty_or_erroring_trace_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._sampler(Path(tmp))
+            with mock.patch.object(Sampler, "adb", return_value=""):
+                self.assertEqual("", sampler.attempt_trace()[0])
+            with mock.patch.object(Sampler, "adb", return_value="error opening /sys/kernel/tracing: Permission denied\n"):
+                status, reason = sampler.attempt_trace()
+            self.assertEqual("", status)
+            self.assertIn("Permission denied", reason)
 
 
 if __name__ == "__main__":

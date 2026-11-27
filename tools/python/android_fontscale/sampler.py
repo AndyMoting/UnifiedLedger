@@ -1677,12 +1677,16 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 
 # D-369 E1 presentation profile: the presentation surfaces over the dedicated P369 seed, captured
 # in either ui_mode and either font_scale by the E-batch sweep. Each stem names the surface it
-# photographs; the navigation is monotonic — the home list is only ever scrolled DOWN (a ScrollStep
-# swipes forward and never back), so the four home-row screens run from the top row downward and
-# every later screen leaves HOME through a bottom tab. From there the system Back from the account
-# flow returns to the ACCOUNTS tab (P503Reducer.kt:2335 returns the preserved overview, whose
-# selectedTab is ACCOUNTS), and Back from the management route closes only the route
-# (P503Reducer.kt:2056-2064), which is what the asset/management steps rely on.
+# photographs. The HOME flow is ordered `statistics_at DESC`, and the four home-row screens follow
+# exactly that order so every `ScrollStep` moves FORWARD (a ScrollStep swipes forward and never
+# back): slot 1 the 8.88 expense (now), slot 2 the transfer (now - 1 day), slot 3 the multi-category
+# expense (last month 15th 10:00), slot 4 the USD expense (last month 15th 09:00). 10:00 sorts ABOVE
+# 09:00, so the multi-category screen MUST precede the multi-currency one; reversing them would leave
+# the multi-category row above the restored viewport and unreachable. After the four home rows every
+# screen leaves HOME through a bottom tab. The system Back from the account flow returns to the
+# ACCOUNTS tab (P503Reducer.kt:2335 returns the preserved overview, whose selectedTab is ACCOUNTS),
+# and Back from the management route closes only the route (P503Reducer.kt:2056-2064), which is what
+# the asset/management steps rely on.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -1722,26 +1726,26 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
     ),
     Screen(
-        "presentation-multi-currency",
-        (BACK, ScrollStep(PRESENTATION_MULTI_CURRENCY_NOTE), TapStep(PRESENTATION_MULTI_CURRENCY_NOTE, contains=True)),
-        PRESENTATION_MULTI_CURRENCY_MARKER,
-        absent=(PRESENTATION_HOME_COUNT,),
-        required=(PRESENTATION_MULTI_CURRENCY_AMOUNT,),
-        speech=(SpeechCheck(PRESENTATION_MULTI_CURRENCY_NOTE, (PRESENTATION_MULTI_CURRENCY_NOTE,)),),
-    ),
-    Screen(
         "presentation-multiple-categories",
         (BACK, ScrollStep(PRESENTATION_MULTI_CATEGORY_NOTE)),
         PRESENTATION_MULTI_CATEGORY_REMAINING,
-        absent=(PRESENTATION_MULTI_CURRENCY_MARKER,),
+        absent=(SEEDED_DETAIL_MARKER,),
         required=(PRESENTATION_MULTI_CATEGORY_NOTE, PRESENTATION_MULTI_CATEGORY_BADGE),
         speech=(SpeechCheck(PRESENTATION_MULTI_CATEGORY_REMAINING, (PRESENTATION_MULTI_CATEGORY_REMAINING,)),),
     ),
     Screen(
-        "presentation-account-flow",
-        (TapStep("账户"), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
-        ACCOUNT_FLOW_HEADER,
+        "presentation-multi-currency",
+        (ScrollStep(PRESENTATION_MULTI_CURRENCY_NOTE), TapStep(PRESENTATION_MULTI_CURRENCY_NOTE, contains=True)),
+        PRESENTATION_MULTI_CURRENCY_MARKER,
         absent=(PRESENTATION_MULTI_CATEGORY_REMAINING,),
+        required=(PRESENTATION_MULTI_CURRENCY_AMOUNT,),
+        speech=(SpeechCheck(PRESENTATION_MULTI_CURRENCY_NOTE, (PRESENTATION_MULTI_CURRENCY_NOTE,)),),
+    ),
+    Screen(
+        "presentation-account-flow",
+        (BACK, TapStep("账户"), ScrollStep(SEEDED_ACCOUNT_NAME), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
+        ACCOUNT_FLOW_HEADER,
+        absent=(PRESENTATION_MULTI_CURRENCY_MARKER,),
         required=PRESENTATION_ACCOUNT_FLOW_REQUIRED,
         speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
     ),
@@ -1763,7 +1767,7 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
     ),
     Screen(
         "presentation-catalog-management",
-        (TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True), ScrollStep(PRESENTATION_MANAGEMENT_MARKER)),
+        (ScrollStep(PRESENTATION_MANAGEMENT_TITLE), TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True)),
         PRESENTATION_MANAGEMENT_MARKER,
         absent=(PRESENTATION_MANAGEMENT_ABSENT,),
         required=PRESENTATION_MANAGEMENT_REQUIRED,
@@ -2350,24 +2354,29 @@ class Sampler:
     def attempt_trace(self) -> tuple[str, str]:
         """D4: the per-combination best-effort atrace; `(status, unavailable_reason)`.
 
-        `atrace -t 5 gfx view sched freq` is attempted once per run. A managed AVD can refuse it
-        (tracing permissions, a read-only tracefs, or a build without the categories), so a failure
-        is recorded — never raised and never a gate input: the E2 registry states what was actually
-        obtained. The raw output is kept as `trace.txt` so the recorded status can be re-read.
+        `atrace -t 5 gfx view sched freq` is attempted once per presentation combination. A managed
+        AVD can refuse it (tracing permissions, a read-only tracefs, or a build without the
+        categories), and `adb(..., timeout=30)` raises `subprocess.TimeoutExpired` rather than the
+        rig's own error on a hung device. EVERY failure mode is therefore converted into
+        `trace_unavailable`: D4 forbids a trace failure from reaching the verdict or aborting the
+        run. The raw output is kept as `trace.txt` only when the attempt produced one.
         """
-        output = self.adb(
-            "shell", "atrace", "-t", "5", "gfx", "view", "sched", "freq", timeout=30, best_effort=True
-        )
-        stripped = output.strip()
-        if not stripped:
-            return "", "atrace produced no output (the device refused the trace or the categories are unavailable)"
-        (self.evidence / "trace.txt").write_text(output, encoding="utf-8")
-        error_lines = [
-            line for line in stripped.splitlines() if line.strip().lower().startswith(("error", "cannot", "unable"))
-        ]
-        if error_lines:
-            return "", error_lines[0].strip()[:200]
-        return "available", ""
+        try:
+            output = self.adb(
+                "shell", "atrace", "-t", "5", "gfx", "view", "sched", "freq", timeout=30, best_effort=True
+            )
+            stripped = output.strip()
+            if not stripped:
+                return "", "atrace produced no output (the device refused the trace or the categories are unavailable)"
+            (self.evidence / "trace.txt").write_text(output, encoding="utf-8")
+            error_lines = [
+                line for line in stripped.splitlines() if line.strip().lower().startswith(("error", "cannot", "unable"))
+            ]
+            if error_lines:
+                return "", error_lines[0].strip()[:200]
+            return "available", ""
+        except Exception as error:  # noqa: BLE001 - D4: a trace failure must never abort the run
+            return "", f"{type(error).__name__}: {error}"[:200]
 
     def prepare_talkback_device(self) -> dict[str, str]:
         """Put the run-owned AVD into a known accessibility state and return the prior one.
@@ -3580,6 +3589,10 @@ def run(args: argparse.Namespace) -> int:
     target_screenshots = records_talkback_evidence(profile)
     evidence = Path(args.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
+    # D4 read-only diagnostic: the presentation sweep records how long one combination actually
+    # took (sampler.py's `sweep_duration_seconds`), so the E2 registry can state measured time
+    # instead of assuming the per-combination budget.
+    run_started = time.monotonic()
     sampler = Sampler(
         adb_serial=args.serial or None,
         evidence=evidence,
@@ -3683,9 +3696,13 @@ def run(args: argparse.Namespace) -> int:
             SETTING_A11Y_CLICK,
         ):
             sampler.adb("shell", "settings", "delete", "global", key, best_effort=True)
-    # D4: one best-effort trace attempt per combination. It never changes the verdict; it only
-    # records whether this run could leave the E2 registry's R9 with a trace or with a reason.
-    trace_status, trace_unavailable = sampler.attempt_trace()
+    # D4: one best-effort trace attempt per PRESENTATION combination only (D4 says 每组合 of the
+    # sweep; the other profiles keep their existing device-call contract). It never changes the
+    # verdict; it only records whether this run could leave the E2 registry's R9 with a trace or a
+    # reason.
+    trace_status, trace_unavailable = "", ""
+    if profile.name == PRESENTATION_PROFILE_NAME:
+        trace_status, trace_unavailable = sampler.attempt_trace()
 
     def apk_record(path: str) -> dict[str, str]:
         return {"path": str(path), "sha256": sha256_file(Path(path))}
@@ -3704,10 +3721,14 @@ def run(args: argparse.Namespace) -> int:
     }
     if talkback:
         host["artifacts"]["test_apk"] = apk_record(args.test_apk)
-    if trace_unavailable:
-        host["trace_unavailable"] = trace_unavailable
-    else:
-        host["trace"] = trace_status
+    if profile.name == PRESENTATION_PROFILE_NAME:
+        if trace_unavailable:
+            host["trace_unavailable"] = trace_unavailable
+        else:
+            host["trace"] = trace_status
+        # D4 read-only diagnostic (the gate never reads it): the measured wall time of this one
+        # combination, so E2 can state what the 2x2 sweep actually costs.
+        host["sweep_duration_seconds"] = round(time.monotonic() - run_started, 1)
     if profile.seeded and facts is None:
         # The seed contract this evidence was produced against (the ledger id must be the app's
         # PRODUCT_LEDGER_ID; a mismatch would have failed the launch marker above). The digest is

@@ -56,6 +56,7 @@ import com.unifiedledger.domain.createAssetPaidOrdinaryExpense
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.YearMonth
 import kotlinx.datetime.minus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
@@ -65,6 +66,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -453,6 +455,21 @@ class P369PresentationSeedWriterTest {
                 setOf(P408ReconciliationStatus.PENDING),
                 windowQueue.rows.map { row -> row.status }.toSet(),
             )
+            // The transfer screen's own queue (presentation-reconciliation's 未核对 1 条 marker):
+            // 对账样本账户 holds exactly the 12.34 transfer leg, nothing else.
+            val reconQueue =
+                assertIs<P801AccountReconciliationPageResult.Success>(
+                    reconciliation.loadAccountReconciliationPage(
+                        ledgerId,
+                        AccountId(RECON_ACCOUNT_ID),
+                        after = null,
+                        pageSize = 10,
+                    ),
+                ).page
+            assertEquals(1, reconQueue.rows.size)
+            assertEquals(TRANSFER_MINOR, reconQueue.rows.single().amountMinor)
+            assertEquals(TRANSFER_NOTE, reconQueue.rows.single().note)
+            assertEquals(P408ReconciliationStatus.PENDING, reconQueue.rows.single().status)
 
             // (6) The current month's calendar carries exactly one active day: the 8.88 expense's
             // local statistics day. The transfers are not ordinary contributions, so the 12.34
@@ -474,6 +491,34 @@ class P369PresentationSeedWriterTest {
                 ORDINARY_EXPENSE.occurredAt.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date,
                 activeDays.single().date,
             )
+            // The empty-day screen walks TWO calendar months back (`‹` twice): last month must hold
+            // the two ordinary rows (both on the 15th), and the month before it must be fully empty.
+            fun calendarFor(month: YearMonth): P806CalendarSnapshot =
+                assertIs<P806SnapshotResult.Success<P806CalendarSnapshot>>(
+                    readAdapter.readCalendarSnapshot(
+                        P806CalendarRequest(
+                            ledgerId = ledgerId,
+                            catalog = catalog,
+                            month = month,
+                            expectedCatalogVersion = authority.catalogVersion,
+                        ),
+                    ),
+                ).snapshot
+            val previousMonth = YearMonth(PREVIOUS_MONTH_15.year, PREVIOUS_MONTH_15.month)
+            val previousCalendar = calendarFor(previousMonth)
+            val previousActiveDays = previousCalendar.days.filter { day -> day.transactionCount > 0 }
+            assertEquals(1, previousActiveDays.size)
+            assertEquals(2, previousActiveDays.single().transactionCount)
+            assertEquals(PREVIOUS_MONTH_15, previousActiveDays.single().date)
+            val lastDayOfMonthBeforePrevious =
+                MonthlyBuckets
+                    .monthStart(previousMonth)
+                    .toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE)
+                    .date
+                    .minus(1, DateTimeUnit.DAY)
+            val monthBeforePrevious =
+                YearMonth(lastDayOfMonthBeforePrevious.year, lastDayOfMonthBeforePrevious.month)
+            assertTrue(calendarFor(monthBeforePrevious).days.all { day -> day.transactionCount == 0 })
 
             // (7) The multi-category detail is readable: five legs and four DISTINCT categories. The
             // duplicate 早餐 name means names alone are not a category identity, so the distinctness
