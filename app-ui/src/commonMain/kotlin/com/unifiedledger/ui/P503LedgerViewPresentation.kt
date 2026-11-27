@@ -841,10 +841,11 @@ internal data class AndroidCategoryShareSection(
 /**
  * The horizontal ranking per currency, over A's [projectCategoryShares].
  *
- * Every exact row goes to the helper unchanged — a negative net is NOT filtered out, so a
- * refund-heavy category makes the helper answer [CategoryShareProjection.NoChart] with
- * [CategoryShareFailure.NEGATIVE_AMOUNT] instead of being dropped and letting the remaining
- * categories claim a misleading 100%. The negative (and zero) values stay visible in [exactRows].
+ * Only zero amounts leave the chart input (a zero category would otherwise draw a 0.0% bar that
+ * says nothing); a zero category stays visible in [exactRows]. A negative net is NOT filtered out —
+ * it reaches the helper, which answers [CategoryShareProjection.NoChart] with
+ * [CategoryShareFailure.NEGATIVE_AMOUNT] instead of letting the remaining categories claim a
+ * misleading 100%. [exactRows] always keeps every category with its exact signed amount.
  * Currencies are never mixed or converted.
  */
 internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>): List<AndroidCategoryShareSection> {
@@ -860,7 +861,10 @@ internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>
         }
     }
     return exactByCurrency.map { (currency, exactRows) ->
-        val inputs = exactRows.map { row -> CategoryShareInput(row.categoryId, row.name, row.amountMinorUnits) }
+        val inputs =
+            exactRows
+                .filter { row -> row.amountMinorUnits != 0L }
+                .map { row -> CategoryShareInput(row.categoryId, row.name, row.amountMinorUnits) }
         val projection = projectCategoryShares(inputs)
         when (projection) {
             is CategoryShareProjection.Chart ->
@@ -873,8 +877,8 @@ internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>
                 )
             is CategoryShareProjection.NoChart ->
                 AndroidCategoryShareSection(currency, emptyList(), exactRows, projection.reason, 0L)
-            // The exact table is non-empty by construction above, so NoCategories is unreachable;
-            // it is reported as the explicit zero-denominator refusal rather than a blank graphic.
+            // Every input was zero (the empty case A reports as NoCategories): the exact table still
+            // renders, and the explicit zero-denominator refusal replaces a blank graphic.
             CategoryShareProjection.NoCategories ->
                 AndroidCategoryShareSection(currency, emptyList(), exactRows, CategoryShareFailure.ZERO_DENOMINATOR, 0L)
         }

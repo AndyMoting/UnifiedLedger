@@ -5631,8 +5631,6 @@ private fun P503AppContent(
                                             // composition, and the LEGACY profile ignores them.
                                             catalogSnapshot = cachedCatalogSnapshot,
                                             ledgerCatalog = cachedAuthoritativeCatalog,
-                                            catalogSnapshot = current.catalogSnapshot,
-                                            ledgerCatalog = ledger.catalog,
                                             onSelectMonth = ::selectMonth,
                                             // P8-06 batch 4 (D-362 1): 收支日历 renders the entry only
                                             // when the graph wires its read AND the initial month
@@ -7035,10 +7033,11 @@ private fun P503RetainedOverviewFailureScreen(
                     onSelectMonth = {},
                     interactionsEnabled = false,
                     // D-369 B: the retained read-failure page renders the same Android row, so it
-                    // takes the same cached pair (a null pair is the honest 未加载 state, never the
-                    // legacy enum/UTC line).
-                    catalogSnapshot = cachedCatalogSnapshot,
-                    ledgerCatalog = cachedAuthoritativeCatalog,
+                    // takes this function's own pair parameters (handed down by P503App's cached
+                    // display pair; a null pair is the honest 未加载 state, never the legacy
+                    // enum/UTC line).
+                    catalogSnapshot = catalogSnapshot,
+                    ledgerCatalog = ledgerCatalog,
                 )
             P503Tab.ANALYSIS ->
                 P503AnalysisScreen(

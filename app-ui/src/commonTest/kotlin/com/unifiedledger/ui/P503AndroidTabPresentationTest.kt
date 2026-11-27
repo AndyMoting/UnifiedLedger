@@ -356,6 +356,22 @@ class P503AndroidTabPresentationTest {
     }
 
     @Test
+    fun aZeroCategoryStaysInTheExactTableWithoutDrawingAZeroBar() {
+        val section =
+            androidCategoryShareSections(
+                listOf(categoryTotal("cat-a", "餐饮", 1_000L), categoryTotal("cat-b", "交通", 0L)),
+            ).single()
+
+        // The positive category is the single chart row at 100.0%; the zero category never becomes a
+        // 0.0% bar (it would state nothing) but stays visible with its exact amount.
+        assertEquals(listOf("餐饮"), section.chartRows.map { it.name })
+        assertEquals("100.0%", section.chartRows.single().percentText())
+        assertEquals(listOf("餐饮", "交通"), section.exactRows.map { it.name })
+        assertEquals(listOf(1_000L, 0L), section.exactRows.map { it.amountMinorUnits })
+        assertNull(section.failure)
+    }
+
+    @Test
     fun aZeroOrOverflowingTotalRefusesTheChartWithItsOwnReason() {
         val zero = androidCategoryShareSections(listOf(categoryTotal("cat-a", "餐饮", 0L))).single()
         assertEquals(CategoryShareFailure.ZERO_DENOMINATOR, zero.failure)
