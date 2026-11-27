@@ -70,6 +70,8 @@ from android_fontscale.sampler import (
     Screen,
     SpeechCheck,
     TALKBACK_COMMAND_ATTEMPTS,
+    TALKBACK_FOCUS_RETRY_BUDGET,
+    TALKBACK_SILENT_RETRY_BUDGET,
     TapStep,
     UI_MODES,
     gate_evidence_plan_problems,
@@ -784,7 +786,7 @@ class TraceAttemptTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------------------------------
-# D-369 E2f: TalkBack fragment provenance and the TTS-readiness retry (run 46074246784, candidate
+# D-369 E2f: TalkBack fragment provenance and the per-transient reissue (run 46074246784, candidate
 # cc76a0c9). Every log row below is VERBATIM from that run's sweep4 artifacts; only the probe's
 # node-dump rows (the `pass …/node text=…` block between focus-result and the end stage) are elided,
 # and the elision cannot create or remove an utterance.
@@ -986,40 +988,94 @@ class TalkbackFragmentProvenance(unittest.TestCase):
         )
 
 
-class TalkbackReadinessEngineTests(unittest.TestCase):
-    """D-369 E2f: "spoke once" is not readiness while the last speech event was dropped."""
+class TalkbackReadinessHasSpoken(unittest.TestCase):
+    """D-369 E2f: readiness is "TalkBack has spoken at all"; a dropped LAST row does not revoke it.
 
-    def test_a_dropped_utterance_after_the_last_fragment_blocks_readiness(self) -> None:
-        log = _artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY)
-        self.assertEqual((False, ["TalkBack on"]), talkback_readiness(log))
-        # A later genuine fragment restores readiness: the engine is speaking again.
+    Five of run 46074246784's readiness windows end their speech with a dropped utterance while the
+    artifact header already says `# readiness: ready`. Requiring the last speech event to be a
+    spoken fragment would stall each of them at the 90 s bound and red five green screens before any
+    command was driven. The dropped utterance is the command window's own fact and is judged on that
+    window's final fragments, so readiness stays "any real fragment".
+    """
+
+    # (artifact reference, the header's recorded fragments, the dropped row that ends the window).
+    # The dropped rows are VERBATIM at the cited line; the fragment rows are rebuilt with `_spoken`
+    # from each artifact's own `# fragment:` values, because the truncated `# log tail:` no longer
+    # carries the earlier spoken rows.
+    DROPPED_LAST = (
+        (
+            "dark-1.0/talkback-readiness-presentation-reconciliation.txt:48",
+            ("TalkBack on", "TalkBack off"),
+            'E/talkback: SpeechControllerImpl(28258): TTS is not ready. Attempted to speak before '
+            'TTS was initialized. Item: {utteranceId:"", fragments:[{text:账户对账, '
+            "earcons:[2132017175], haptics:[2130903141], speechParams:Bundle[{pitch=1.0}]"
+            "nonSpeechParams:Bundle[{}]fragmentStartIndex:0}], uninterruptible:false, "
+            "isGloballyUninterruptible:false, mCanIgnoreInterrupts:false, "
+            "flushGlobalTtsQueue:false, flags:2148, creationTime:1795820079462}",
+        ),
+        (
+            "dark-1.3/talkback-readiness-presentation-catalog-categories-lower.txt:54",
+            ("TalkBack off",),
+            "E/talkback: SpeechControllerImpl( 3464): TTS is not ready. Attempted to speak before "
+            'TTS was initialized. Item: {utteranceId:"", fragments:[{text:追加二级, '
+            "earcons:[2132017155], haptics:[2130903137], speechParams:Bundle[{pitch=1.0}]"
+            "nonSpeechParams:Bundle[{}]fragmentStartIndex:0}, {text:Button, earcons:[], haptics:[], "
+            "speechParams:Bundle[{}]nonSpeechParams:Bundle[{}]fragmentStartIndex:0}], "
+            "uninterruptible:false, isGloballyUninterruptible:false, mCanIgnoreInterrupts:false, "
+            "flushGlobalTtsQueue:false, flags:2148, creationTime:1795821301487}",
+        ),
+        (
+            "dark-1.3/talkback-readiness-presentation-catalog-categories-upper.txt:51",
+            ("TalkBack on", "TalkBack off"),
+            "E/talkback: SpeechControllerImpl( 3464): TTS is not ready. Attempted to speak before "
+            'TTS was initialized. Item: {utteranceId:"", fragments:[{text:跨日界样本账户（资产）, '
+            "earcons:[2132017155], haptics:[2130903141], speechParams:Bundle[{pitch=1.0}]"
+            "nonSpeechParams:Bundle[{}]fragmentStartIndex:0}], uninterruptible:false, "
+            "isGloballyUninterruptible:false, mCanIgnoreInterrupts:false, "
+            "flushGlobalTtsQueue:false, flags:2148, creationTime:1795821225938}",
+        ),
+        (
+            "light-1.3/talkback-readiness-presentation-asset.txt:66",
+            ("TalkBack on", "TalkBack off"),
+            "E/talkback: SpeechControllerImpl(15700): TTS is not ready. Attempted to speak before "
+            'TTS was initialized. Item: {utteranceId:"", fragments:[{text:账户, '
+            "earcons:[2132017155], haptics:[2130903141], speechParams:Bundle[{pitch=1.0}]"
+            "nonSpeechParams:Bundle[{}]fragmentStartIndex:0}], uninterruptible:false, "
+            "isGloballyUninterruptible:false, mCanIgnoreInterrupts:false, "
+            "flushGlobalTtsQueue:false, flags:2148, creationTime:1795819080232}",
+        ),
+        (
+            "light-1.3/talkback-readiness-presentation-catalog-management.txt:14",
+            ("TalkBack on", "TalkBack off"),
+            "E/talkback: SpeechControllerImpl(15700): TTS is not ready. Attempted to speak before "
+            'TTS was initialized. Item: {utteranceId:"", fragments:[{text:账户与分类管理, '
+            "earcons:[2132017155], haptics:[2130903141], speechParams:Bundle[{pitch=1.0}]"
+            "nonSpeechParams:Bundle[{}]fragmentStartIndex:0}], uninterruptible:false, "
+            "isGloballyUninterruptible:false, mCanIgnoreInterrupts:false, "
+            "flushGlobalTtsQueue:false, flags:2148, creationTime:1795819307924}",
+        ),
+    )
+
+    def test_a_plain_spoken_window_is_ready(self) -> None:
+        # The locale-independent limb itself is unchanged: one real fragment is readiness, whatever
+        # language the startup announcement is spoken in.
         self.assertEqual(
-            (True, ["TalkBack on", "日用品"]),
-            talkback_readiness(_artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY, _SPEAKING_DAILY)),
+            (True, ["TalkBack on"]), talkback_readiness(_artifact(_SPEAKING_STARTUP))
         )
-        # With no dropped row the original limb is unchanged (no locale literal is required).
-        self.assertEqual((True, ["TalkBack on"]), talkback_readiness(_artifact(_SPEAKING_STARTUP)))
 
-    def test_the_readiness_gate_fails_closed_while_the_engine_dropped_the_last_utterance(self) -> None:
-        # The generate side of the same rule: the first command is never driven while the engine's
-        # last answer was "not ready", and the artifact names which limb decided.
-        with tempfile.TemporaryDirectory() as tmp:
-            evidence = Path(tmp)
-            sampler = self._sampler(
-                evidence, [_artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY)]
-            )
-            with mock.patch("android_fontscale.sampler.TALKBACK_READY_TIMEOUT_S", 0.01), mock.patch(
-                "android_fontscale.sampler.TALKBACK_READY_POLL_INTERVAL_S", 0.0
-            ):
-                with self.assertRaises(SampleError) as raised:
-                    sampler.wait_talkback_ready("middle")
-            artifact = (evidence / "talkback-readiness-middle.txt").read_text(encoding="utf-8")
-        message = str(raised.exception)
-        self.assertIn("dropped utterance", message)
-        self.assertIn("TTS is not ready", message)
-        self.assertEqual("# readiness: timeout", artifact.splitlines()[0])
-        self.assertIn("# fragment: TalkBack on", artifact)
-        self.assertIn("# last speech event: dropped utterance", artifact)
+    def test_a_dropped_utterance_after_a_spoken_fragment_is_still_ready(self) -> None:
+        for where, fragments, dropped in self.DROPPED_LAST:
+            spoken_rows = [_spoken(fragment) for fragment in fragments]
+            log = _artifact(*spoken_rows, dropped)
+            self.assertEqual((True, list(fragments)), talkback_readiness(log), where)
+            # The dropped row really is the LAST speech event of the window, so the case the old
+            # rule reded is the case under test.
+            self.assertIn("TTS is not ready", dropped, where)
+            self.assertGreater(log.rindex(dropped), log.rindex(spoken_rows[-1]), where)
+
+    def test_a_window_that_never_spoke_is_not_ready(self) -> None:
+        for where, _fragments, dropped in self.DROPPED_LAST:
+            self.assertEqual((False, []), talkback_readiness(_artifact(dropped)), where)
 
     def _sampler(self, evidence: Path, logs: list[str]) -> Sampler:
         class _EngineWaitSampler(Sampler):
@@ -1028,45 +1084,36 @@ class TalkbackReadinessEngineTests(unittest.TestCase):
                     adb_serial=None, evidence=path, font_scale=1.3, avd_name="ul-presentation"
                 )
                 self.texts = list(texts)
-                self.reads = 0
 
             def logcat_tail(self, line_count: int = 4000) -> str:
-                self.reads += 1
                 return self.texts.pop(0) if len(self.texts) > 1 else self.texts[0]
 
         return _EngineWaitSampler(evidence, logs)
 
-    def test_the_retry_wait_is_bounded_and_never_raises_on_a_still_dropped_engine(self) -> None:
+    def test_the_readiness_gate_accepts_a_dropped_last_row_without_waiting(self) -> None:
+        # The generate side of the same rule: the first command is driven immediately, and the
+        # artifact records `ready` instead of stalling to the 90 s bound.
+        where, fragments, dropped = self.DROPPED_LAST[0]
         with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
             sampler = self._sampler(
-                Path(tmp), [_artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY)]
+                evidence, [_artifact(*(_spoken(fragment) for fragment in fragments), dropped)]
             )
-            with mock.patch("android_fontscale.sampler.TALKBACK_RETRY_READY_TIMEOUT_S", 0.01), mock.patch(
-                "android_fontscale.sampler.TALKBACK_RETRY_READY_POLL_INTERVAL_S", 0.0
+            with mock.patch("android_fontscale.sampler.TALKBACK_READY_TIMEOUT_S", 0.01), mock.patch(
+                "android_fontscale.sampler.TALKBACK_READY_POLL_INTERVAL_S", 0.0
             ):
-                record = sampler.wait_talkback_utterance_ready()
-        self.assertFalse(record["ready"])
-        self.assertGreaterEqual(record["polls"], 1)
-        # The check's own window still decides; the wait only says "not yet".
-        self.assertEqual(1, record["fragments"])
-
-    def test_the_retry_wait_returns_as_soon_as_a_fragment_is_spoken(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            sampler = self._sampler(
-                Path(tmp),
-                [
-                    _artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY),
-                    _artifact(_SPEAKING_STARTUP, _TTS_NOT_READY_DAILY, _SPEAKING_DAILY),
-                ],
-            )
-            with mock.patch("android_fontscale.sampler.TALKBACK_RETRY_READY_POLL_INTERVAL_S", 0.0):
-                record = sampler.wait_talkback_utterance_ready()
-        self.assertTrue(record["ready"])
-        self.assertEqual(2, record["polls"])
+                record = sampler.wait_talkback_ready("reconciliation")
+            artifact = (evidence / "talkback-readiness-reconciliation.txt").read_text(encoding="utf-8")
+        self.assertEqual("ready", record["status"], where)
+        self.assertEqual(len(fragments), record["fragments"], where)
+        self.assertEqual("# readiness: ready", artifact.splitlines()[0])
+        for fragment in fragments:
+            self.assertIn(f"# fragment: {fragment}", artifact)
+        self.assertNotIn("dropped utterance", artifact)
 
 
 class TalkbackSilentWindowRetry(unittest.TestCase):
-    """D-369 E2f: a window with no utterance is re-issued once, and the bound stays two commands."""
+    """D-369 E2f: each transient owns one reissue, and the total budget stays bounded at three."""
 
     TARGET = "日用品"
 
@@ -1077,7 +1124,6 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             )
             self.windows = list(windows)
             self.focus_ids: list[int] = []
-            self.ready_calls = 0
 
         def enable_talkback(self, stem: str) -> dict[str, object]:
             return {
@@ -1089,7 +1135,9 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             }
 
         def wait_talkback_ready(self, stem: str) -> dict[str, object]:
-            return {"status": "ready", "waited_s": 1.0, "polls": 1, "fragments": 1}
+            # Two polls is the real "only finished starting inside this pass" transient the middle
+            # screen's first command hit (light-1.0: `# ready: waited=1.1s polls=2 fragments=1`).
+            return {"status": "ready", "waited_s": 1.1, "polls": 2, "fragments": 1}
 
         def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
             return {"clears": 0, "quiet_reads": 2, "quiet_after_round": 2, "rounds": 2}
@@ -1103,10 +1151,6 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             window["id"] = command_id
             window["target"] = target
             return window
-
-        def wait_talkback_utterance_ready(self) -> dict[str, object]:
-            self.ready_calls += 1
-            return {"ready": True, "waited_s": 0.1, "polls": 1, "fragments": 1}
 
         def disable_talkback_accessibility(self) -> None:
             pass
@@ -1122,7 +1166,7 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             speech=(SpeechCheck(self.TARGET, (self.TARGET,)),),
         )
 
-    def _drive(self, windows: list[dict[str, object]]) -> tuple[dict[str, object], list[int], str, int]:
+    def _drive(self, windows: list[dict[str, object]]) -> tuple[dict[str, object], list[int], str]:
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp)
             sampler = self._RetrySampler(evidence, windows)
@@ -1130,43 +1174,86 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             artifact = (evidence / "talkback-presentation-catalog-categories-middle.txt").read_text(
                 encoding="utf-8"
             )
-        return record, sampler.focus_ids, artifact, sampler.ready_calls
+        return record, sampler.focus_ids, artifact
 
-    def test_a_silent_window_is_reissued_after_the_readiness_wait(self) -> None:
-        # Exact cards from run 46074246784: light-1.0's silent accepted window, then the green one.
+    def test_the_refusal_then_silent_shape_gets_its_own_reissue(self) -> None:
+        # E2F-01, the exact middle shape of run 46074246784: cmd 16 refused ("TalkBack only finished
+        # starting inside this pass") -> cmd 17 accepted but silent -> the silent transient must
+        # still own a reissue, so cmd 18 speaks and the screen succeeds.
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET, accepted=False),
+            _probe_window(command_id=2, target=self.TARGET),
+            _probe_window(command_id=3, target=self.TARGET, fragments=(self.TARGET,)),
+        ]
+        record, focus_ids, artifact = self._drive(windows)
+        self.assertEqual([1, 2, 3], focus_ids)
+        self.assertEqual(TALKBACK_COMMAND_ATTEMPTS, 3)
+        self.assertEqual(1, TALKBACK_FOCUS_RETRY_BUDGET)
+        self.assertEqual(1, TALKBACK_SILENT_RETRY_BUDGET)
+        self.assertEqual(1, artifact.count("# retry=1"))
+        self.assertEqual(1, artifact.count("# retry=2"))
+        self.assertIn("# retry=1 previous-command: 1 reason: TalkBack only finished starting", artifact)
+        self.assertIn("# retry=2 previous-command: 2", artifact)
+        self.assertIn("produced no utterance", artifact)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(3, record["checks"][0]["command_id"])
+        # The verdict is re-derived from the window that decided, never from the first attempt.
+        self.assertEqual(
+            "success", talkback_check_verdict(artifact, 3, self.TARGET, (self.TARGET,))[0]
+        )
+
+    def test_the_total_budget_bounds_the_two_transients(self) -> None:
+        # Refused -> silent -> silent exhausts both budgets at three commands, and the FINAL window
+        # is silent, so the check stays red even though an earlier window carried speech.
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET, accepted=False, fragments=(self.TARGET,)),
+            _probe_window(command_id=2, target=self.TARGET),
+            _probe_window(command_id=3, target=self.TARGET),
+        ]
+        record, focus_ids, artifact = self._drive(windows)
+        self.assertEqual(TALKBACK_COMMAND_ATTEMPTS, len(focus_ids))
+        self.assertEqual([1, 2, 3], focus_ids)
+        self.assertEqual("fragments-missing", record["status"])
+        self.assertEqual(3, record["checks"][0]["command_id"])
+        self.assertEqual(2, artifact.count("# retry="))
+        # The earlier window DID carry an utterance; it is not allowed to turn the final silence
+        # green. This is the "never loosen fragments-missing" pin.
+        self.assertEqual(
+            [self.TARGET],
+            talkback_check_verdict(artifact, 1, self.TARGET, (self.TARGET,))[1],
+        )
+        self.assertEqual(
+            "fragments-missing", talkback_check_verdict(artifact, 3, self.TARGET, (self.TARGET,))[0]
+        )
+
+    def test_a_silent_window_is_reissued_once(self) -> None:
         windows = [
             _probe_window(command_id=1, target=self.TARGET),
             _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
         ]
-        record, focus_ids, artifact, ready_calls = self._drive(windows)
+        record, focus_ids, artifact = self._drive(windows)
         self.assertEqual([1, 2], focus_ids)
-        self.assertEqual(1, ready_calls)
         self.assertIn("# retry=1 previous-command: 1", artifact)
         self.assertIn("produced no utterance", artifact)
-        self.assertIn("# retry-ready: ready=true", artifact)
         self.assertEqual("success", record["status"])
         self.assertEqual(2, record["checks"][0]["command_id"])
-        # The verdict is re-derived from the window that decided, never from the first attempt.
-        self.assertEqual(
-            "success", talkback_check_verdict(artifact, 2, self.TARGET, (self.TARGET,))[0]
-        )
 
-    def test_two_silent_windows_fail_at_the_bound_without_a_third_command(self) -> None:
+    def test_two_silent_windows_fail_at_the_silent_budget(self) -> None:
         windows = [
             _probe_window(command_id=1, target=self.TARGET),
             _probe_window(command_id=2, target=self.TARGET),
         ]
-        record, focus_ids, artifact, ready_calls = self._drive(windows)
-        self.assertEqual(TALKBACK_COMMAND_ATTEMPTS, len(focus_ids))
+        record, focus_ids, artifact = self._drive(windows)
+        self.assertEqual(1 + TALKBACK_SILENT_RETRY_BUDGET, len(focus_ids))
         self.assertEqual([1, 2], focus_ids)
-        self.assertEqual(1, ready_calls)
         self.assertEqual("fragments-missing", record["status"])
         self.assertEqual(2, record["checks"][0]["command_id"])
         self.assertEqual(1, artifact.count("# retry="))
-        self.assertIn("# retry=1 previous-command: 1", artifact)
 
-    def test_a_window_that_never_began_is_reissued_the_same_way(self) -> None:
-        # light-1.0's home command is this shape: no probe rows at all, so the window cannot begin.
+    def test_a_window_that_never_began_is_not_reissued(self) -> None:
+        # E2F-06: light-1.0's home command never began a probe window, which is a deterministic
+        # failure (the probe never saw the command), not the TTS transient. Re-running it only
+        # spends a 75 s poll, so it is reported red immediately.
         windows = [
             _probe_window(
                 command_id=1,
@@ -1176,16 +1263,15 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             ),
             _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
         ]
-        record, focus_ids, artifact, _ready_calls = self._drive(windows)
-        self.assertEqual([1, 2], focus_ids)
-        self.assertIn("never completed", artifact)
-        self.assertEqual("success", record["status"])
-
-    def test_a_spoken_window_is_not_retried_and_never_waits(self) -> None:
-        windows = [_probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,))]
-        record, focus_ids, artifact, ready_calls = self._drive(windows)
+        record, focus_ids, artifact = self._drive(windows)
         self.assertEqual([1], focus_ids)
-        self.assertEqual(0, ready_calls)
+        self.assertNotIn("# retry=", artifact)
+        self.assertEqual("not-obtained", record["status"])
+
+    def test_a_spoken_window_is_not_retried(self) -> None:
+        windows = [_probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,))]
+        record, focus_ids, artifact = self._drive(windows)
+        self.assertEqual([1], focus_ids)
         self.assertNotIn("# retry=", artifact)
         self.assertEqual("success", record["status"])
 
@@ -1219,9 +1305,9 @@ class TalkbackSilentRetryReason(unittest.TestCase):
             "",
             talkback_silent_retry_reason(self._window(problem="command id=1 began more than one window")),
         )
-        # A window that never completed is the race the retry exists for.
-        self.assertIn(
-            "never completed",
+        # E2F-06: a window that never began/finished is deterministic, not the TTS transient.
+        self.assertEqual(
+            "",
             talkback_silent_retry_reason(
                 self._window(completed=False, problem="command id=1 never began a speech window")
             ),
