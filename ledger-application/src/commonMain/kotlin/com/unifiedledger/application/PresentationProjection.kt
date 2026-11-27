@@ -67,6 +67,24 @@ enum class PresentationTimeRole(
 }
 
 /**
+ * The `Asia/Shanghai` local wall-clock text of one instant (`2026-11-27T10:47`), never a bare UTC
+ * instant.
+ *
+ * This is a pure formatter, not a business role: it constructs no OCCURRED/STATISTICS role. A read
+ * instant or a stored audit instant therefore renders the same frozen reporting zone without
+ * claiming to be an occurred or statistics time. Business times keep going through
+ * [PresentationTime], whose [PresentationTime.text] delegates here.
+ */
+fun presentationWallClockText(instant: Instant): String {
+    val local = instant.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE)
+    val month = local.monthNumber.toString().padStart(2, '0')
+    val day = local.dayOfMonth.toString().padStart(2, '0')
+    val hour = local.hour.toString().padStart(2, '0')
+    val minute = local.minute.toString().padStart(2, '0')
+    return "${local.year}-$month-${day}T$hour:$minute"
+}
+
+/**
  * One business instant bound to its role. Every conversion uses the frozen reporting zone
  * ([MonthlyBuckets.REPORT_TIME_ZONE]); there is no per-call zone parameter, so a screen cannot
  * quietly pick a different day boundary.
@@ -80,14 +98,7 @@ data class PresentationTime(
     fun localDate(): LocalDate = localDateTime().date
 
     /** The local wall-clock text (`2026-11-27T10:47`), never a bare UTC instant. */
-    fun text(): String {
-        val local = localDateTime()
-        val month = local.monthNumber.toString().padStart(2, '0')
-        val day = local.dayOfMonth.toString().padStart(2, '0')
-        val hour = local.hour.toString().padStart(2, '0')
-        val minute = local.minute.toString().padStart(2, '0')
-        return "${local.year}-$month-${day}T$hour:$minute"
-    }
+    fun text(): String = presentationWallClockText(instant)
 }
 
 fun occurredPresentationTime(instant: Instant): PresentationTime = PresentationTime(instant, PresentationTimeRole.OCCURRED)

@@ -21,12 +21,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408MatchCandidate
 import com.unifiedledger.application.P408MatchDisposition
 import com.unifiedledger.application.P801AccountReconciliationQueueRow
@@ -499,30 +499,17 @@ private fun ReconciliationConfirmBlock(
     val (proposal, candidate: P408MatchCandidate) = pair
     val presentationProfile = LocalUiPresentationProfile.current
     Spacer(Modifier.height(8.dp))
-    if (presentationProfile == UiPresentationProfile.LEGACY) {
+    // D-369 C: the four elements stay visible under BOTH profiles. ANDROID shows the persisted
+    // evidence facts (source time + raw amount) in the 外部证据 line instead of the opaque id; the
+    // id itself is explicitly viewable behind 技术信息 below. LEGACY keeps its frozen id line.
+    val lines = reconciliationConfirmLines(proposal, candidate, presentationProfile)
+    lines.forEachIndexed { index, line ->
         Text(
-            RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE + "：" + proposal.evidence.evidenceId,
+            line,
             style = MaterialTheme.typography.bodyMedium,
+            color = if (index == lines.lastIndex) palette.onSurfaceVariant else Color.Unspecified,
         )
     }
-    val responsibility = P408EvidenceResponsibility.forDirectionOrNull(candidate.posting.direction)
-    Text(
-        RECONCILIATION_ELEMENT_RESPONSIBILITY + "：" + (responsibility?.let { duty -> reconciliationResponsibilityText(duty) } ?: "—（方向不可裁定）"),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        RECONCILIATION_ELEMENT_MATCH_BASIS + "：" + reconciliationMatchBasisText(candidate.basis.fields.toList()),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        RECONCILIATION_ELEMENT_HUMAN_DECISION + "：" + RECONCILIATION_HUMAN_DECISION_CONFIRM_MATCH,
-        style = MaterialTheme.typography.bodyMedium,
-        color = palette.onSurfaceVariant,
-    )
     if (presentationProfile == UiPresentationProfile.ANDROID) {
         // D-369 C: the evidence identifier is explicitly viewable behind 技术信息; the confirm
         // responsibility, match basis and natural-day distance above stay visible.

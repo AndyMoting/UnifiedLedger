@@ -109,6 +109,20 @@ class PPresentationProjectionTest {
         assertEquals(statistics, times.statistics.instant)
     }
 
+    @Test
+    fun theNeutralWallClockFormatterCrossesTheUtcDayBoundaryWithoutConstructingARole() {
+        // 16:00Z is already 00:00 the next Asia/Shanghai day.
+        assertEquals("2026-11-28T00:00", presentationWallClockText(Instant.parse("2026-11-27T16:00:00Z")))
+        // 15:59Z is still 23:59 on the same Shanghai day.
+        assertEquals("2026-11-27T23:59", presentationWallClockText(Instant.parse("2026-11-27T15:59:00Z")))
+        // The neutral formatter and the role-bound display agree; the business roles themselves are
+        // unchanged by the neutral helper.
+        val instant = Instant.parse("2026-11-09T16:30:00Z")
+        assertEquals(presentationWallClockText(instant), occurredPresentationTime(instant).text())
+        assertEquals(PresentationTimeRole.OCCURRED, occurredPresentationTime(instant).role)
+        assertEquals(PresentationTimeRole.STATISTICS, statisticsPresentationTime(instant).role)
+    }
+
     // -----------------------------------------------------------------------------------------
     // Summary labels and absent states
     // -----------------------------------------------------------------------------------------

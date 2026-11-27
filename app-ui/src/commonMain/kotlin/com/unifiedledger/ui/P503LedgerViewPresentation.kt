@@ -39,6 +39,7 @@ import com.unifiedledger.application.presentationAmountText
 import com.unifiedledger.application.presentationCategoryTintSlot
 import com.unifiedledger.application.presentationTimes
 import com.unifiedledger.application.presentationValueText
+import com.unifiedledger.application.presentationWallClockText
 import com.unifiedledger.application.projectCategoryShares
 import com.unifiedledger.application.projectHomeRow
 import com.unifiedledger.application.statisticsPresentationTime
@@ -1053,7 +1054,9 @@ internal fun cBusinessTimeText(
 /**
  * A READ instant (when a payload was read), which is neither a business occurred nor statistics
  * time. It carries no business role by construction — the surrounding label says 读取时点 — and the
- * Android branch still renders the frozen `Asia/Shanghai` wall clock. LEGACY keeps the raw value.
+ * Android branch renders the frozen `Asia/Shanghai` wall clock through the neutral
+ * [presentationWallClockText] formatter, so no OCCURRED role is constructed for a read value.
+ * LEGACY keeps the raw value.
  */
 internal fun cReadInstantText(
     instant: Instant,
@@ -1061,7 +1064,7 @@ internal fun cReadInstantText(
 ): String =
     when (profile) {
         UiPresentationProfile.LEGACY -> instant.toString()
-        UiPresentationProfile.ANDROID -> occurredPresentationTime(instant).text()
+        UiPresentationProfile.ANDROID -> presentationWallClockText(instant)
     }
 
 /**
@@ -1189,7 +1192,15 @@ internal fun cTransactionVersionTechnicalRows(version: TransactionVersion): List
 /**
  * One annotation-history line: the revision, the audit instant (Shanghai on Android) and that
  * revision's tags/merchant stay visible; the version the operation saw and the stored request id
- * move to 技术信息.
+ * move to 技术信息. The user line never prints the raw stored instant on ANDROID, but the original
+ * `createdAt` text is preserved verbatim in [cTransactionAnnotationTechnicalRows] — the stored fact
+ * is folded, never rewritten or dropped.
+ *
+ * An unresolved `merchantId` or tag id is the D-224 user-association fact the audit stored (the
+ * identity the annotation actually referenced), not a diagnostic code: it keeps its original value
+ * rather than being hidden or changed. When the tag resolver has a current name, that current name
+ * is shown; the original association id remains in the stored revision (audit storage), so nothing
+ * has to be added to or deleted from the reference to display it.
  */
 internal fun cTransactionAnnotationUserLine(
     entry: TransactionAnnotationHistoryEntry,
@@ -1218,18 +1229,23 @@ internal fun cTransactionAnnotationUserLine(
     return "$revisionText$sawVersion$request · 标签：$tags · 商家：$merchant"
 }
 
-/** The annotation revision's internal identities, kept complete behind 技术信息. */
+/**
+ * The annotation revision's internal identities and its stored audit instant, kept complete behind
+ * 技术信息. 「注释时间（原值）」 is the full original `entry.createdAt` text from the D-224 contract:
+ * the user line may show the Shanghai friendly time, this row keeps the stored value verbatim.
+ */
 internal fun cTransactionAnnotationTechnicalRows(entry: TransactionAnnotationHistoryEntry): List<TechnicalInfoRow> =
     listOf(
+        TechnicalInfoRow("注释时间（原值）", entry.createdAt),
         TechnicalInfoRow("所见版本 ID", entry.observedTransactionVersionId.value),
         TechnicalInfoRow("请求 ID", entry.requestId),
     )
 
 /**
  * A stored audit instant TEXT as display text. The audit role is its own: this function never
- * claims the occurred/statistics business roles — it only renders the same frozen reporting zone's
- * wall clock (the projection helper is the zone/formatter, the role label stays the caller's
- * business label). A value that is not a parseable instant is shown verbatim — the stored fact is
+ * claims the occurred/statistics business roles — it renders the frozen reporting zone's wall clock
+ * through the neutral [presentationWallClockText] formatter, so no OCCURRED role is constructed for
+ * an audit value. A value that is not a parseable instant is shown verbatim — the stored fact is
  * never replaced by a guess, and an unparseable value is not silently dropped either.
  */
 internal fun cStoredAuditText(raw: String, profile: UiPresentationProfile): String =
@@ -1237,7 +1253,7 @@ internal fun cStoredAuditText(raw: String, profile: UiPresentationProfile): Stri
         UiPresentationProfile.LEGACY -> raw
         UiPresentationProfile.ANDROID ->
             runCatching { Instant.parse(raw.trim()) }.getOrNull()?.let { instant ->
-                occurredPresentationTime(instant).text()
+                presentationWallClockText(instant)
             } ?: raw
     }
 

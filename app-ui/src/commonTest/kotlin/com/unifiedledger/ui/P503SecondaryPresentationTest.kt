@@ -1,14 +1,18 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CreationEntry
+import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408MatchBasis
 import com.unifiedledger.application.P408MatchCandidate
+import com.unifiedledger.application.P408MatchDisposition
+import com.unifiedledger.application.P408MatchResult
 import com.unifiedledger.application.P408PostingFacts
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P408TemporalComponents
 import com.unifiedledger.application.P408TemporalEvidence
 import com.unifiedledger.application.P801AccountReconciliationQueueRow
+import com.unifiedledger.application.P801CandidateProposal
 import com.unifiedledger.application.P801ReconciledEvidenceSource
 import com.unifiedledger.application.P801ReconciledLegAudit
 import com.unifiedledger.application.P801ReconciledLegDecision
@@ -16,7 +20,16 @@ import com.unifiedledger.application.P801ReconciledLegEvidenceLink
 import com.unifiedledger.application.P801ReconciledLegLinkHistoryEntry
 import com.unifiedledger.application.P801ReconciledLegReconciliation
 import com.unifiedledger.application.P801ReconciledLegStatusEntry
+import com.unifiedledger.application.P801ReconciliationCandidateEvidence
+import com.unifiedledger.application.P806AccountPostingRow
+import com.unifiedledger.application.P806CalendarView
+import com.unifiedledger.application.P806CurrencyView
+import com.unifiedledger.application.P806PeriodKind
+import com.unifiedledger.application.P806ReportView
+import com.unifiedledger.application.P806ResolvedPeriod
 import com.unifiedledger.application.P806SnapshotFailure
+import com.unifiedledger.application.P806TransactionPage
+import com.unifiedledger.application.P806Window
 import com.unifiedledger.application.PresentationTimeRole
 import com.unifiedledger.application.TransactionAnnotationHistoryEntry
 import com.unifiedledger.application.TransactionDetail
@@ -36,11 +49,15 @@ import com.unifiedledger.domain.TransactionKind
 import com.unifiedledger.domain.TransactionTimes
 import com.unifiedledger.domain.TransactionVersion
 import com.unifiedledger.domain.TransactionVersionId
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.Month
+import kotlinx.datetime.YearMonth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+
 /**
  * D-369 C: the secondary-surface presentation contracts.
  *
@@ -208,10 +225,19 @@ class P503SecondaryPresentationTest {
         assertTrue(android.contains("标签：无"), android)
         assertTrue(android.contains("商家：无"), android)
 
+        // D-224: the ORIGINAL stored createdAt text stays complete in 技术信息 even though the
+        // visible line shows the friendly Shanghai wall clock. The original value is never removed.
+        val technical = cTransactionAnnotationTechnicalRows(entry).map { row -> row.label to row.value }
         assertEquals(
-            listOf("所见版本 ID" to "version-7", "请求 ID" to "request-9"),
-            cTransactionAnnotationTechnicalRows(entry).map { row -> row.label to row.value },
+            listOf(
+                "注释时间（原值）" to "2026-11-27T17:05:00Z",
+                "所见版本 ID" to "version-7",
+                "请求 ID" to "request-9",
+            ),
+            technical,
         )
+        val expanded = cTechnicalInfoDisclosure(cTransactionAnnotationTechnicalRows(entry), expanded = true)
+        assertTrue(expanded.visibleText().contains("2026-11-27T17:05:00Z"), expanded.visibleText())
     }
 
     @Test
@@ -410,6 +436,32 @@ class P503SecondaryPresentationTest {
     }
 
     @Test
+    fun confirmShowsTheEvidenceFactsAndFoldsOnlyTheId() {
+        val proposal = proposal()
+        val candidate = candidate("2026-11-27T16:30:00Z")
+
+        // LEGACY keeps the frozen identifier line verbatim.
+        assertEquals("外部证据：evidence-9", reconciliationConfirmEvidenceLine(proposal, UiPresentationProfile.LEGACY))
+
+        // ANDROID shows the persisted facts (source time text + raw amount) and never the opaque id.
+        val androidLines = reconciliationConfirmLines(proposal, candidate, UiPresentationProfile.ANDROID)
+        assertEquals(5, androidLines.size)
+        assertEquals("外部证据：来源时间 2026-11-27T20:00:00+08:00 · -100.00 CNY", androidLines[0])
+        assertTrue(androidLines[1].startsWith("证据职责：real_account_posting"), androidLines[1])
+        assertTrue(androidLines[2].startsWith("匹配依据：amount · currency · direction · account · occurred_at_window"), androidLines[2])
+        assertTrue(androidLines[3].contains("自然日距离 2 天"), androidLines[3])
+        assertTrue(androidLines[4].startsWith("人工决定：confirm_match"), androidLines[4])
+        assertTrue(androidLines.none { line -> line.contains("evidence-9") }, androidLines.toString())
+
+        // The id stays complete in 技术信息: hidden while collapsed, readable when expanded.
+        val rows = reconciliationConfirmTechnicalRows(proposal.evidence.evidenceId)
+        val collapsed = cTechnicalInfoDisclosure(rows, expanded = false)
+        assertFalse(collapsed.spokenText().contains("evidence-9"), collapsed.spokenText())
+        val expanded = cTechnicalInfoDisclosure(rows, expanded = true)
+        assertTrue(expanded.visibleText().contains("evidence-9"), expanded.visibleText())
+    }
+
+    @Test
     fun targetAccountDispatchesByProfileAndKeepsTheRawIdInTheTechnicalArea() {
         // LEGACY is the frozen expression verbatim: queue line, else raw account id, else the dash.
         assertEquals("现金账户", reconciliationTargetAccountText("现金账户", "忽略", "account-9"))
@@ -472,6 +524,78 @@ class P503SecondaryPresentationTest {
         // A header row renders as the bare group label, not as an empty `label：` value.
         assertTrue(text.contains("链接 1（active）\n"), text)
         assertFalse(text.contains("链接 1（active）："), text)
+    }
+
+    // ---- consumer branches of the secondary surfaces ----
+
+    @Test
+    fun accountFlowRowBranchesByProfileWithTheShanghaiDayAndTheExactLeg() {
+        val row = flowRow()
+        assertEquals("资金发生日期 2026-11-28 · ACCOUNT_TRANSFER", accountFlowRowHeadlineText(row, UiPresentationProfile.LEGACY))
+        assertEquals("资金发生日期 2026-11-28 · 转账", accountFlowRowHeadlineText(row, UiPresentationProfile.ANDROID))
+        assertEquals(
+            "ACCOUNT_TRANSFER，资金发生日期 2026-11-28；现金账户 -12.34 CNY",
+            accountFlowRowContentDescription(row, "现金账户", UiPresentationProfile.LEGACY),
+        )
+        assertEquals(
+            "转账，资金发生日期 2026-11-28；现金账户 -12.34 CNY",
+            accountFlowRowContentDescription(row, "现金账户", UiPresentationProfile.ANDROID),
+        )
+    }
+
+    @Test
+    fun calendarOldContextRendersTheReadInstantPerProfile() {
+        val state = calendarState()
+        val legacy = p806CalendarOldContextText(state, UiPresentationProfile.LEGACY) ?: error("a retained payload must be labelled")
+        assertTrue(legacy.contains("2026年12月"), legacy)
+        assertTrue(legacy.contains("读取时点 2026-11-27T17:05:00Z"), legacy)
+
+        val android = p806CalendarOldContextText(state, UiPresentationProfile.ANDROID) ?: error("a retained payload must be labelled")
+        assertTrue(android.contains("2026年12月"), android)
+        assertTrue(android.contains("读取时点 2026-11-28T01:05"), android)
+        assertFalse(android.contains("17:05:00Z"), android)
+    }
+
+    @Test
+    fun reportLastSuccessReadInstantIsPerProfile() {
+        val state = reportState()
+        assertEquals(
+            "最近成功（期间 月：2026-11-01 至 2026-11-30；币种轴 CNY；读取时点 2026-11-27T17:05:00Z）",
+            p806ReportLastSuccessContextText(state, UiPresentationProfile.LEGACY),
+        )
+        assertEquals(
+            "最近成功（期间 月：2026-11-01 至 2026-11-30；币种轴 CNY；读取时点 2026-11-28T01:05）",
+            p806ReportLastSuccessContextText(state, UiPresentationProfile.ANDROID),
+        )
+    }
+
+    @Test
+    fun restorePreviewKeepsAllSevenFieldsAndTheShanghaiReadInstant() {
+        val android = restorePreviewLines(restoreSummary(), UiPresentationProfile.ANDROID)
+        assertEquals(7, android.size)
+        assertEquals("容器格式：版本 1（2048 字节）", android[0])
+        assertEquals("账本结构版本：1 → 31", android[1])
+        assertEquals("账本身份：ledger-a（目标：ledger-local-test）", android[2])
+        assertEquals("工件摘要：${"ab".repeat(32)}", android[3])
+        assertEquals("校验：完整性 通过、外键 通过、领域 通过", android[4])
+        assertEquals("将替换为：3 个账户、12 个分类、45 笔交易", android[5])
+        assertEquals("预检时间：2023-11-15T06:13", android[6])
+
+        val legacy = restorePreviewLines(restoreSummary(), UiPresentationProfile.LEGACY)
+        assertEquals("预检时间：2023-11-14T22:13:20Z", legacy[6])
+    }
+
+    @Test
+    fun reconciliationQueueRowBranchesByProfile() {
+        val row = queueRow("2026-11-27T17:05:00Z")
+        assertEquals(
+            "2026-11-27 · ACCOUNT_TRANSFER · -100.00 CNY · 待对账",
+            reconciliationQueueRowText(row, UiPresentationProfile.LEGACY),
+        )
+        assertEquals(
+            "2026-11-28 · 转账 · -100.00 CNY · 待对账",
+            reconciliationQueueRowText(row, UiPresentationProfile.ANDROID),
+        )
     }
 
     // ---- fixtures ---------------------------------------------------------------------
@@ -611,4 +735,99 @@ class P503SecondaryPresentationTest {
             requestId = "request-9",
             createdAt = "2026-11-27T17:05:00Z",
         )
+
+    private fun flowRow(): P806AccountPostingRow =
+        P806AccountPostingRow(
+            postingId = PostingId("posting-flow-1"),
+            transactionId = TransactionId("tx-flow-1"),
+            occurredAt = Instant.parse("2026-11-27T17:05:00Z"),
+            note = null,
+            kind = TransactionKind.ACCOUNT_TRANSFER,
+            amount = Money.ofMinor(-1_234L, cny),
+        )
+
+    private fun calendarState(): P503AppState.Calendar =
+        P503AppState.Calendar(
+            overview = P503AppState.OverviewEmpty(LedgerCurrentState(ledgerId, emptyList(), emptyList())),
+            month = YearMonth(2026, Month.NOVEMBER),
+            loaded = P806CalendarView(ledgerId, YearMonth(2026, Month.DECEMBER), listOf(cny), emptyList()),
+            failure = P806SnapshotFailure.Unavailable,
+            landedAsOf = Instant.parse("2026-11-27T17:05:00Z"),
+        )
+
+    private fun reportState(): P806ReportRegionState =
+        P806ReportRegionState(
+            landed = reportView(),
+            landedKind = P806PeriodKind.MONTH,
+            landedAsOf = Instant.parse("2026-11-27T17:05:00Z"),
+        )
+
+    private fun reportView(): P806ReportView =
+        P806ReportView(
+            ledgerId = ledgerId,
+            period = P806ResolvedPeriod(P806Window(1L, 2L), LocalDate(2026, 11, 1), LocalDate(2026, 11, 30), 30),
+            currencies = listOf(P806CurrencyView(cny, 0L, 0L, 0L, 0L, 0L, null, 0)),
+            expenseCategories = emptyList(),
+            incomeCategories = emptyList(),
+            uncategorizedExpenseTotals = emptyList(),
+            uncategorizedIncomeTotals = emptyList(),
+            transactionCount = 0,
+            futureTransactionCount = 0,
+            detailPage = P806TransactionPage(emptyList(), null),
+            detailCount = 0,
+        )
+
+    private fun restoreSummary(): RestorePreflightSummary =
+        RestorePreflightSummary(
+            containerFormatVersion = 1,
+            containerSize = 2048L,
+            sourceSchemaVersion = 1L,
+            migratedSchemaVersion = 31L,
+            sourceLedgerId = "ledger-a",
+            targetLedgerId = "ledger-local-test",
+            authenticatedArtifactSha256Hex = "ab".repeat(32),
+            integrityOk = true,
+            foreignKeyOk = true,
+            domainOk = true,
+            ledgerIdentityCount = 1,
+            formalTableCount = 8,
+            postingImbalanceCount = 0,
+            accountsCount = 3L,
+            categoriesCount = 12L,
+            transactionsCount = 45L,
+            preflightEpochMillis = 1_700_000_000_000L,
+        )
+
+    private fun proposal(): P801CandidateProposal {
+        val evidence =
+            P801ReconciliationCandidateEvidence(
+                evidenceId = "evidence-9",
+                sourceId = "source-1",
+                candidateId = "candidate-1",
+                contentHash = "hash",
+                rawAmountMinor = -10_000L,
+                rawCurrencyCode = "CNY",
+                rawCurrencyPrecision = 2,
+                rawDirectionToken = "out",
+                occurredAt =
+                    P408TemporalEvidence(
+                        rawText = "2026-11-27T20:00:00+08:00",
+                        kind = "offset_datetime",
+                        offsetPresent = true,
+                        components = P408TemporalComponents(2026, 11, 27, 20, 0, 0),
+                        instant = Instant.parse("2026-11-27T12:00:00Z"),
+                    ),
+                projection = null,
+                hasActiveEvidenceLink = false,
+            )
+        return P801CandidateProposal(
+            evidence = evidence,
+            match =
+                P408MatchResult(
+                    evidenceId = evidence.evidenceId,
+                    disposition = P408MatchDisposition.PROPOSED_MATCH,
+                    candidates = listOf(candidate("2026-11-27T16:30:00Z")),
+                ),
+        )
+    }
 }

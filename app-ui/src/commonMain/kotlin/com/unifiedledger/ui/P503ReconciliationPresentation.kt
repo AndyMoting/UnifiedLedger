@@ -1,6 +1,7 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.P408EvidenceResponsibility
+import com.unifiedledger.application.P408MatchCandidate
 import com.unifiedledger.application.P408MatchDisposition
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P801AccountReconciliationQueueRow
@@ -337,6 +338,46 @@ internal fun reconciliationEvidenceText(evidence: P801ReconciliationCandidateEvi
 
 /** The proposal's evidence line (spec section 2.4: 每条各自给出处置). */
 internal fun reconciliationProposalEvidenceText(proposal: P801CandidateProposal): String = reconciliationEvidenceText(proposal.evidence)
+
+/**
+ * The confirm block's visible `外部证据` line under a profile.
+ *
+ * LEGACY keeps the frozen identifier line (`外部证据：<evidenceId>`) verbatim. ANDROID shows the
+ * persisted evidence FACTS instead — the stored source time text and the raw amount — so the user
+ * can judge the match without reading an opaque id; the id itself stays complete in 技术信息
+ * ([reconciliationConfirmTechnicalRows]). The facts are echoed verbatim: no display rule rewrites
+ * the source time or the raw amount (spec section 2.5).
+ */
+internal fun reconciliationConfirmEvidenceLine(
+    proposal: P801CandidateProposal,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> "$RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE：${proposal.evidence.evidenceId}"
+        UiPresentationProfile.ANDROID -> "$RECONCILIATION_ELEMENT_EXTERNAL_EVIDENCE：${reconciliationProposalEvidenceText(proposal)}"
+    }
+
+/**
+ * The confirm block's visible lines in the surface's order: the four elements of spec section 2.5
+ * (外部证据、证据职责、匹配依据、人工决定) plus the matcher's natural-day distance. The evidence
+ * line follows [reconciliationConfirmEvidenceLine] (facts on ANDROID, the raw id on LEGACY); the
+ * responsibility, match basis and decision stay visible under both profiles.
+ */
+internal fun reconciliationConfirmLines(
+    proposal: P801CandidateProposal,
+    candidate: P408MatchCandidate,
+    profile: UiPresentationProfile,
+): List<String> {
+    val responsibility = P408EvidenceResponsibility.forDirectionOrNull(candidate.posting.direction)
+    return listOf(
+        reconciliationConfirmEvidenceLine(proposal, profile),
+        "$RECONCILIATION_ELEMENT_RESPONSIBILITY：" +
+            (responsibility?.let { duty -> reconciliationResponsibilityText(duty) } ?: "—（方向不可裁定）"),
+        "$RECONCILIATION_ELEMENT_MATCH_BASIS：${reconciliationMatchBasisText(candidate.basis.fields.toList())}",
+        reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance),
+        "$RECONCILIATION_ELEMENT_HUMAN_DECISION：$RECONCILIATION_HUMAN_DECISION_CONFIRM_MATCH",
+    )
+}
 
 /** One bindable evidence row of the leg-anchored bind step (F1/F2): its line plus the REJECTED code. */
 internal fun reconciliationBindableEvidenceText(evidence: P801ReconciliationCandidateEvidence): String {

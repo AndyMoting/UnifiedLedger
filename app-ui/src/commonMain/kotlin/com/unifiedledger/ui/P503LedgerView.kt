@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -567,6 +568,10 @@ internal fun P503TransactionDetailScreen(
                 // instant), 所见版本, 谁请求 (the stored annotation request id; the aggregate records
                 // no actor field and none is invented), and that revision's tags/merchant. Never an
                 // entry on the financial-version timeline and never an edit affordance.
+                // D-369 C: LEGACY keeps this list of facts verbatim. On ANDROID the user line keeps
+                // the revision, the Shanghai audit clock and the tags/merchant, while the seen-version
+                // id, the request id and the ORIGINAL stored `createdAt` text fold into 技术信息 — the
+                // stored facts are moved out of the normal rows, never truncated or deleted.
                 if (annotationHistory != null) {
                     Text("标签与商家历史", style = MaterialTheme.typography.titleMedium)
                     if (annotationHistory.isEmpty()) {
@@ -879,7 +884,8 @@ internal fun transactionAnnotationHistoryLine(
  *
  * The toggle node merges its descendants and carries that one description, and the expanded body is
  * stripped of its own semantics, so TalkBack announces each value exactly once (C-SPEC-08) while the
- * visible text still reads the full original values.
+ * visible text still reads the full original values. The toggle row keeps at least a 48 dp touch
+ * height; long values are never truncated to fit it.
  */
 @Composable
 internal fun TechnicalInfoSection(
@@ -894,6 +900,7 @@ internal fun TechnicalInfoSection(
             modifier =
                 Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .clickable(onClickLabel = disclosure.toggleLabel) { expanded = !expanded }
                     .semantics(mergeDescendants = true) { contentDescription = disclosure.spokenText() }
                     .padding(vertical = 4.dp),
