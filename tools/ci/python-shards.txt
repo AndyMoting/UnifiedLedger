@@ -60,3 +60,4 @@
 2	tests.python.test_scale_readings_report
 2	tests.python.test_android_p807_q2
 2	tests.python.test_android_p802_v8
+1	tests.python.test_android_presentation_sweep
