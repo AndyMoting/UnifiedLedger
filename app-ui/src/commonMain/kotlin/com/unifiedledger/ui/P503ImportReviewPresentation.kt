@@ -1099,10 +1099,17 @@ internal fun groupDispositionItemComparisonToggleDescription(
             UiPresentationProfile.LEGACY -> "候选 ${candidateId.value}"
             UiPresentationProfile.ANDROID -> candidateOrdinalLabel(groupOrdinal)
         }
+    // The separator is part of the copy per profile: after the Latin id LEGACY needs the frozen
+    // space before 的, while the ANDROID subject already ends in the Chinese noun 项 and takes none.
+    val separator =
+        when (profile) {
+            UiPresentationProfile.LEGACY -> " "
+            UiPresentationProfile.ANDROID -> ""
+        }
     return if (expanded) {
-        "收起$subject 的第 $itemOrdinal 条比较信息"
+        "收起$subject$separator的第 $itemOrdinal 条比较信息"
     } else {
-        "展开$subject 的第 $itemOrdinal 条比较信息"
+        "展开$subject$separator的第 $itemOrdinal 条比较信息"
     }
 }
 

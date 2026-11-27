@@ -269,3 +269,9 @@ D 批落地（2026-11-27）：
 5. `profile=presentation` 的新导航与 marker 未在设备上实跑；A 只登记配置与计划，不产生或引用任何设备证据。
 6. 多币种占比的图表分母按单一币种；跨币种排序与合并仍不在范围内。
 7. A 批登记 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍按 `associateBy` last-wins 的差异（A 的投影按稳定 id 文本 first-wins，四处生产文件不在 A 修改）。C 批已用共享 `categoryByPostingAccountFirstWins` 统一这四处，差异消除；该 fold 即 `D-369` 第 3 条批准的对齐，只影响异常的重复映射，且 Android 与 Desktop 两端一致取最小 `CategoryId`，其余 Desktop 的 LEGACY 输出不变。无遗留的旧差异条目。
+8. C 导入面其余正常面内部值登记为残余，不在 C 继续扩面（`D-369` 边界）：下列位置仍按既有形态显示，改成语义化文案需要产品批准的中文词表，C 不现场发明词汇；其中没有技术信息折叠容器的行，需要先加容器才能把原值移出正常面。本项只登记，不并入任何 PASS。
+   - intake 逐项/整批失败与重复审核 notice 的 `诊断码`/`原因码`（`P503ImportReviewPresentation.kt:451,452,472,505,509`）：诊断码到解释文案需要产品词表，这些面当前没有技术信息容器。
+   - `importPossibleExistingSourceText` 的裸 ISO 发生时间与方向/状态 token（`P503ImportReviewPresentation.kt:705-709`）：方向/状态的中文词表取决于来源候选 kind（该函数未接收该上下文）且未获产品批准，该行也没有技术信息容器。
+   - 批量结果未知项的 `核对候选 <uuid>`（`P503ImportReview.kt:823`）：候选 UUID 到业务标签需要产品词表，该结果行没有技术信息容器。
+   - 重复审核卡的 `类型：<kind token>` 与 `最新状态：<ENUM>`（`P503ImportReview.kt:1256/1257`）：两种 duplicate candidate kind 与状态的中文标签均未获产品批准，该卡没有技术信息容器。
+   - `已处置：<enum>（理由 token：<token>）`（`P503ImportReview.kt:1293`）：处置枚举与理由 token 的中文释义未获产品批准，该行需要先加技术信息容器。

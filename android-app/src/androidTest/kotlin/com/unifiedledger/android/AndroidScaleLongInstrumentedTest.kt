@@ -384,7 +384,7 @@ class AndroidScaleLongInstrumentedTest {
 
     /**
      * D-331 deliverable 2 — the group-mark OUTCOME-visibility probe (run 43642845302: the
-     * 确认整组标记 click succeeded, then the `已标记：CONFIRMED_DUPLICATE` await timed out at its
+     * 确认整组标记 click succeeded, then the `已标记：重复已确认——阻断` await timed out at its
      * default 120s with the failure forensics' viewport parked inside the card's member-row
      * region and targetHit=false). The open question the probe answers: do the 50,000 per-item
      * outcomes render FIRST-ITEM-IMMEDIATELY (a viewport problem) or in a WHOLE-LIST CADENCE (a
@@ -1155,17 +1155,17 @@ class AndroidScaleLongInstrumentedTest {
             // while the card is collapsed: in the expanded form the entry row is gone (the
             // collapse row leads instead), so the presence probe below is also the already-
             // expanded skip. The expanded list is needed only for the probe's viewport sampling;
-            // the await predicate itself (已标记：CONFIRMED_DUPLICATE) is one character untouched,
-            // and the probe's sampling logic is untouched too. The entry row may sit above the
-            // parked footer viewport, so the seek walks back up to it first — the same
-            // seek/click shape this file already uses.
+            // the await predicate itself carries the Android outcome copy
+            // (已标记：重复已确认——阻断), and the probe's sampling logic is untouched. The entry
+            // row may sit above the parked footer viewport, so the seek walks back up to it first
+            // — the same seek/click shape this file already uses.
             if (ui.has("查看全部 ", prefix = true)) {
                 ui.seek("查看全部 ", forward = false)
                 ui.click("查看全部 ", prefix = true)
             }
             // D-217 round 17 (evidence30): 确认整组标记 submits per-item and
             // the card itself renders each relation's outcome
-            // (已标记：CONFIRMED_DUPLICATE, presentation-frozen copy). The
+            // (已标记：重复已确认——阻断, the Android presentation copy). The
             // group flow never produces a batch summary — batchResult is set
             // only by the batch submission reducers — so the old
             // 最近批量结果 await waited on a text no group marking can
@@ -1183,11 +1183,11 @@ class AndroidScaleLongInstrumentedTest {
             // keys, ULStartup round trace); the wait ceiling rises to 600s to
             // MEASURE the real outcome latency — inside group_disposition's
             // 5,400s stage budget, every other await keeps its default. The
-            // predicate is the exact pre-probe one, one character untouched.
+            // predicate keeps the probe's shape and now carries the Android copy.
             val groupMarkProbe = GroupMarkOutcomeProbe(ui, evidence)
             try {
                 ui.await(timeout = 600_000, onPoll = groupMarkProbe::onPoll) {
-                    ui.has("已标记：CONFIRMED_DUPLICATE")
+                    ui.has("已标记：重复已确认——阻断")
                 }
                 groupMarkProbe.end("outcome-hit")
             } catch (failure: Throwable) {
