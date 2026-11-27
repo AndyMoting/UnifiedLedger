@@ -206,17 +206,31 @@ class P503AndroidTabPresentationTest {
 
     @Test
     fun theHomeTalkbackSentenceCarriesTitleBadgesAndEveryExactAmount() {
+        // A real expense has both legs: the real ASSET leg carries the amount, and the hidden
+        // EXPENSE counterparty leg (acct-expense) carries the catalog association. The fixture must
+        // not map the real asset account as a category.
         val presentation =
             homeRowAndroidPresentation(
-                row(TransactionKind.EXPENSE, "午饭", listOf(posting("p1", "acct-asset", -1_234L))),
+                row(
+                    TransactionKind.EXPENSE,
+                    "午饭",
+                    listOf(posting("p1", "acct-asset", -1_234L), posting("p2", "acct-expense", 1_234L)),
+                ),
                 categorySnapshot(),
                 catalog,
             )
+        assertEquals("午饭", presentation.title)
+        assertEquals(listOf("早餐"), presentation.categoryBadges.map { it.name })
         val description = homeRowAndroidContentDescription(presentation)
 
         assertTrue(description.contains("午饭"))
-        assertTrue(description.contains("早餐"))
+        assertTrue(description.contains("#早餐"))
         assertTrue(description.contains("-12.34 CNY"))
+        assertTrue(description.contains("统计时间 2026-11-10T20:00"))
+        assertTrue(description.contains("发生时间 2026-11-09T20:00"))
+        // The real ASSET leg is an amount line, never a category badge.
+        assertFalse(presentation.categoryBadges.any { it.name.contains("acct-asset") || it.name.contains("现金") })
+        assertEquals(listOf("acct-asset"), presentation.amountLines.map { it.accountId.value })
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -248,6 +262,17 @@ class P503AndroidTabPresentationTest {
         assertFalse(accountsCatalogManagementRouteActive(UiPresentationProfile.LEGACY, catalogManagementSurface = true))
         assertFalse(accountsCatalogManagementRouteActive(UiPresentationProfile.ANDROID, catalogManagementSurface = false))
         assertTrue(accountsCatalogManagementRouteActive(UiPresentationProfile.ANDROID, catalogManagementSurface = true))
+    }
+
+    @Test
+    fun theCatalogManagementTitleKeepsTheOldCopyOnLegacyAndOnlyTheAndroidFirstScreenSaysAccounts() {
+        // Only the Android first screen is 「账户」.
+        assertEquals("账户", catalogManagementScreenTitle(UiPresentationProfile.ANDROID, managementRouteActive = false))
+        // The management route keeps the pre-B title.
+        assertEquals("账户与分类管理", catalogManagementScreenTitle(UiPresentationProfile.ANDROID, managementRouteActive = true))
+        // LEGACY never has the route and must keep the old copy.
+        assertEquals("账户与分类管理", catalogManagementScreenTitle(UiPresentationProfile.LEGACY, managementRouteActive = false))
+        assertEquals("账户与分类管理", catalogManagementScreenTitle(UiPresentationProfile.LEGACY, managementRouteActive = true))
     }
 
     @Test
@@ -399,6 +424,17 @@ class P503AndroidTabPresentationTest {
     }
 
     @Test
+    fun aCountedDayWhoseAmountsAreAllZeroKeepsTheCountAndDropsTheZeroAmounts() {
+        // count > 0 with every axis at zero: the day IS counted (a real zero amount, not an empty
+        // day), so Android keeps the 笔数 line and drops only the zero amount rows.
+        val day = calendarDay(LocalDate(2026, 11, 6), listOf(calendarRow(cny, income = 0L, expense = 0L), calendarRow(jpy, 0L, 0L)), count = 2)
+
+        assertTrue(calendarDayShowsAmounts(day))
+        assertTrue(calendarVisibleCurrencyRows(day, UiPresentationProfile.ANDROID).isEmpty())
+        assertEquals("2 笔", calendarDayCountText(day, UiPresentationProfile.ANDROID))
+    }
+
+    @Test
     fun aDayWithRealMovementShowsItsNonZeroAmountsAndItsCount() {
         val day =
             calendarDay(
@@ -492,6 +528,23 @@ class P503AndroidTabPresentationTest {
         val leftByTab = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(opened, P503UiEvent.SelectTab(P503Tab.HOME)))
         assertFalse(leftByTab.catalogManagementSurface)
         assertEquals(P503Tab.HOME, leftByTab.selectedTab)
+    }
+
+    @Test
+    fun theSecondBackLeavesTheAccountsFirstScreenForHome() {
+        val readState = LedgerCurrentState(LedgerId("ledger-test"), emptyList(), emptyList())
+        val reducer: P503Reducer = P503ReducerImpl(ParseManualExpenseAmount(), cny)
+        val overview = P503AppState.OverviewEmpty(readState, P503Tab.ACCOUNTS)
+
+        val route = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(overview, P503UiEvent.OpenCatalogManagement))
+        val accountsFirst = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(route, P503UiEvent.Back))
+        assertFalse(accountsFirst.catalogManagementSurface)
+        assertEquals(P503Tab.ACCOUNTS, accountsFirst.selectedTab)
+
+        // The first Back only closed the route; the second Back runs the ordinary ACCOUNTS -> HOME
+        // rule. Both come from the same state machine, so the gesture and the route button agree.
+        val home = assertIs<P503AppState.OverviewEmpty>(reducer.reduce(accountsFirst, P503UiEvent.Back))
+        assertEquals(P503Tab.HOME, home.selectedTab)
     }
 
     @Test
@@ -601,6 +654,51 @@ class P503AndroidTabPresentationTest {
         assertFalse(catalogDisplayPairComplete(null, catalog))
         assertFalse(catalogDisplayPairComplete(snapshot, null))
         assertFalse(catalogDisplayPairComplete(null, null))
+    }
+
+    @Test
+    fun anIncompleteFreshPairNeverOverwritesTheCurrentDisplayPair() {
+        val currentSnapshot = categorySnapshot()
+        val freshSnapshot = snapshot(listOf(category("cat-new", null, "新分类", "acct-expense")))
+
+        // A fresh snapshot without its catalog must NOT replace the current snapshot alone.
+        val snapshotOnly =
+            landCatalogDisplayPair(
+                currentSnapshot,
+                catalog,
+                CatalogDisplayPair(freshSnapshot, null),
+            )
+        assertSame(currentSnapshot, snapshotOnly.snapshot)
+        assertSame(catalog, snapshotOnly.catalog)
+
+        // A fresh catalog without its snapshot likewise keeps both current halves.
+        val catalogOnly =
+            landCatalogDisplayPair(
+                currentSnapshot,
+                catalog,
+                CatalogDisplayPair(null, catalog),
+            )
+        assertSame(currentSnapshot, catalogOnly.snapshot)
+        assertSame(catalog, catalogOnly.catalog)
+
+        val emptyPair =
+            landCatalogDisplayPair(
+                currentSnapshot,
+                catalog,
+                CatalogDisplayPair(null, null),
+            )
+        assertSame(currentSnapshot, emptyPair.snapshot)
+        assertSame(catalog, emptyPair.catalog)
+
+        // Only a COMPLETE fresh pair advances the cache.
+        val complete =
+            landCatalogDisplayPair(
+                currentSnapshot,
+                catalog,
+                CatalogDisplayPair(freshSnapshot, catalog),
+            )
+        assertSame(freshSnapshot, complete.snapshot)
+        assertSame(catalog, complete.catalog)
     }
 
     @Test

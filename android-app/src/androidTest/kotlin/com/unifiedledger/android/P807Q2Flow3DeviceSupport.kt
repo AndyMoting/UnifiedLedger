@@ -28,6 +28,8 @@ import com.unifiedledger.application.P806SnapshotResult
 import com.unifiedledger.application.P806Window
 import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailLeg
+import com.unifiedledger.application.statisticsPresentationTime
+import com.unifiedledger.application.transactionKindBusinessName
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.YearMonth
@@ -484,10 +486,16 @@ internal fun p807Q2Flow3DrilldownLines(view: P806DrilldownView): List<String> {
 }
 
 /**
- * One flow row's visible headline, mirroring `P503OverviewScreen.kt:307-308`: the effective kind, the
- * statistics instant and — only when the current version carries one — the note.
+ * One flow row's visible headline, mirroring `flowRowHeaderText` under the Android profile: the
+ * Chinese business name, the statistics instant in the frozen Shanghai wall clock, and — only when
+ * the current version carries a non-blank note — the note. The posting lines below it are unchanged
+ * and keep their caller's exact amount formatter.
  */
-internal fun p807Q2Flow3RowHeadline(row: LedgerEntryRow): String = row.kind.toString() + " · 统计 " + row.statisticsAt + (row.note?.let { note -> " · " + note } ?: "")
+internal fun p807Q2Flow3RowHeadline(row: LedgerEntryRow): String {
+    val time = statisticsPresentationTime(row.statisticsAt).text()
+    val note = row.note?.takeIf { it.isNotBlank() }
+    return transactionKindBusinessName(row.kind) + " · 统计 " + time + (note?.let { " · " + it } ?: "")
+}
 
 /** One transaction's posting lines, mirroring `flowRowPostingLineText` (`P503LedgerViewPresentation.kt:431-437`). */
 internal fun p807Q2Flow3PostingLines(legs: List<TransactionDetailLeg>): List<String> =

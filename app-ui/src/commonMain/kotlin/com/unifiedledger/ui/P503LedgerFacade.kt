@@ -443,11 +443,12 @@ class P503LedgerFacade(
      * up without a restart) and falls back to the injected catalog only when no session exists
      * (legacy constructions and startup tests).
      *
-     * Call it ONLY inside the existing leased background snapshot read, in the same `leased { }`
-     * block as [catalogSnapshot], and land the pair together — the main thread must never query the
-     * session or the database, and a screen must never read this during composition. A failed
-     * catalog read there is a failed PAIR: keep the previous successful snapshot+catalog pair
-     * instead of mixing a fresh snapshot with a stale catalog.
+     * Call it ONLY paired with [catalogSnapshot] inside an existing read wrapper: the leased
+     * background snapshot read (`leased { }`), or the synchronous `probe { }` wrapper the catalog
+     * command success and manual/pin refresh paths already use. Land the pair together — the main
+     * thread must never query the session or the database, and a screen must never read this
+     * during composition. A failed catalog read there is a failed PAIR: keep the previous
+     * successful snapshot+catalog pair instead of mixing a fresh snapshot with a stale catalog.
      */
     fun currentAuthoritativeCatalog(): LedgerCatalog = session?.authority?.catalog ?: catalog
 

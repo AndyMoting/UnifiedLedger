@@ -473,18 +473,21 @@ private fun P503AppContent(
                     when (outcome) {
                         is LeaseOutcome.Completed ->
                             if (ledger.isCurrentGeneration(outcome.generation)) {
-                                // D-369 B: a snapshot without its catalog is not a usable display
-                                // pair — keep the last successful pair instead of a fresh snapshot
-                                // beside a stale catalog (never half-new).
-                                val freshSnapshot = outcome.value?.first
-                                val freshCatalog = outcome.value?.second
-                                val pairComplete = catalogDisplayPairComplete(freshSnapshot, freshCatalog)
+                                // D-369 B: one landing decision for every host path — an incomplete
+                                // fresh pair keeps BOTH current halves, so a snapshot is never
+                                // installed beside a stale catalog (never half-new).
+                                val landed =
+                                    landCatalogDisplayPair(
+                                        cachedCatalogSnapshot,
+                                        cachedAuthoritativeCatalog,
+                                        CatalogDisplayPair(outcome.value?.first, outcome.value?.second),
+                                    )
                                 cachedCatalogSnapshot =
                                     catalogSnapshotLoadCoordinator.loadCompleted(
                                         cachedCatalogSnapshot,
-                                        if (pairComplete) freshSnapshot else null,
+                                        landed.snapshot,
                                     )
-                                if (pairComplete && freshCatalog != null) cachedAuthoritativeCatalog = freshCatalog
+                                cachedAuthoritativeCatalog = landed.catalog
                                 // D-203 startup trace: the snapshot read landed.
                                 StartupTrace.emit("read.catalogSnapshot end kind=completed")
                             } else {
@@ -4273,7 +4276,8 @@ private fun P503AppContent(
                     }
                 snapshot to catalog
             }
-        val freshSnapshot = freshPair?.first ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
+        val freshSnapshotRaw = freshPair?.first
+        val freshSnapshot = freshSnapshotRaw ?: (latestState.value as? P503AppState.OverviewEmpty)?.catalogSnapshot
         val freshCatalog = freshPair?.second
         if (refreshReadModel) {
             // R1 (spec 6.2/7.3, D-027): HOME's balances/transaction lines come from the read
@@ -4284,12 +4288,17 @@ private fun P503AppContent(
             refresh()
         }
         val snapshot = freshSnapshot ?: return
-        // D-369 B: the cached display pair only advances when BOTH halves are present; otherwise the
-        // previous pair stands (the management payload below still dispatches this snapshot).
-        if (catalogDisplayPairComplete(snapshot, freshCatalog) && freshCatalog != null) {
-            cachedCatalogSnapshot = snapshot
-            cachedAuthoritativeCatalog = freshCatalog
-        }
+        // D-369 B: the ONE landing decision — judged on the RAW read halves (not on the payload's
+        // fallback snapshot). Both previous halves stand unless the read itself returned both; the
+        // management payload below still dispatches the fresh snapshot.
+        val landed =
+            landCatalogDisplayPair(
+                cachedCatalogSnapshot,
+                cachedAuthoritativeCatalog,
+                CatalogDisplayPair(freshSnapshotRaw, freshCatalog),
+            )
+        cachedCatalogSnapshot = landed.snapshot
+        cachedAuthoritativeCatalog = landed.catalog
         val payload =
             CatalogSnapshotView(
                 snapshot.catalogVersion,
@@ -4410,13 +4419,19 @@ private fun P503AppContent(
         // Fired BEFORE the degenerate-snapshot return (the base order): an unavailable snapshot
         // must not drop the read-model refresh chain.
         refresh()
-        val snapshot = freshPair?.first ?: return
+        val freshSnapshot = freshPair?.first
         val freshCatalog = freshPair?.second
-        // D-369 B: never half-new — the pair only advances when both halves landed.
-        if (catalogDisplayPairComplete(snapshot, freshCatalog) && freshCatalog != null) {
-            cachedCatalogSnapshot = snapshot
-            cachedAuthoritativeCatalog = freshCatalog
-        }
+        val snapshot = freshSnapshot ?: return
+        // D-369 B: never half-new — the same landing decision keeps both previous halves when the
+        // fresh pair is incomplete.
+        val landed =
+            landCatalogDisplayPair(
+                cachedCatalogSnapshot,
+                cachedAuthoritativeCatalog,
+                CatalogDisplayPair(freshSnapshot, freshCatalog),
+            )
+        cachedCatalogSnapshot = landed.snapshot
+        cachedAuthoritativeCatalog = landed.catalog
         val payload =
             CatalogSnapshotView(
                 snapshot.catalogVersion,

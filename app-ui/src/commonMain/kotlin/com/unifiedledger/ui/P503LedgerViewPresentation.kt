@@ -686,16 +686,44 @@ internal fun homeRowAndroidPresentation(
 internal fun homeBadgeText(badge: PresentationCategory): String = "#" + badge.displayName
 
 /**
+ * D-369 B: the two halves of one display pair — the authoritative catalog snapshot and the
+ * [LedgerCatalog] the same leased read produced. They are cached, landed and handed to the Android
+ * home row together.
+ */
+internal data class CatalogDisplayPair(
+    val snapshot: CatalogSnapshotView?,
+    val catalog: LedgerCatalog?,
+)
+
+/**
  * D-369 B: whether one authoritative snapshot read produced a USABLE display pair.
  *
  * The snapshot and the catalog it belongs to land together, and only together: a read whose catalog
  * half failed keeps the previous successful pair, so the home row can never render a fresh snapshot
- * beside a stale catalog (or the reverse). This is the single decision the host's landing path uses.
+ * beside a stale catalog (or the reverse). This is the predicate the landing decision below uses.
  */
 internal fun catalogDisplayPairComplete(
     snapshot: CatalogSnapshotView?,
     catalog: LedgerCatalog?,
 ): Boolean = snapshot != null && catalog != null
+
+/**
+ * D-369 B: the ONE landing decision shared by the initial background load, the catalog-command
+ * success path and the manual/pin refresh. An incomplete fresh pair (either half null) keeps BOTH
+ * current halves; it never installs the fresh snapshot alone beside the old catalog (or the
+ * reverse). A failed read therefore leaves the last successful pair standing instead of opening a
+ * one-half-new window the Android home row could render.
+ */
+internal fun landCatalogDisplayPair(
+    currentSnapshot: CatalogSnapshotView?,
+    currentCatalog: LedgerCatalog?,
+    freshPair: CatalogDisplayPair,
+): CatalogDisplayPair =
+    if (catalogDisplayPairComplete(freshPair.snapshot, freshPair.catalog)) {
+        freshPair
+    } else {
+        CatalogDisplayPair(currentSnapshot, currentCatalog)
+    }
 
 /** 「其余 N 个」 for the categories beyond the third badge; null when nothing was dropped. */
 internal fun homeRemainingBadgesText(remaining: Int): String? = if (remaining > 0) "其余 $remaining 个" else null
@@ -753,6 +781,21 @@ internal fun accountsShowsManagementSections(
     profile: UiPresentationProfile,
     managementRouteActive: Boolean,
 ): Boolean = if (androidTabPresentation(profile)) managementRouteActive else true
+
+/**
+ * ACCOUNTS: the surface's title. Only the Android tab's first screen (`!managementRouteActive`)
+ * says 「账户」; the management secondary route and every LEGACY rendering keep the pre-B
+ * 「账户与分类管理」, so the desktop output is byte-identical to before B.
+ */
+internal fun catalogManagementScreenTitle(
+    profile: UiPresentationProfile,
+    managementRouteActive: Boolean,
+): String =
+    if (androidTabPresentation(profile) && !managementRouteActive) {
+        "账户"
+    } else {
+        "账户与分类管理"
+    }
 
 /**
  * The analysis page's section decisions. On Android the page leads with the month summary, the

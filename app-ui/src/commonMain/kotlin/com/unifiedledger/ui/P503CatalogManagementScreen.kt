@@ -109,7 +109,7 @@ fun P503CatalogManagementScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (managementRouteActive) "账户与分类管理" else "账户",
+                catalogManagementScreenTitle(profile, managementRouteActive),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
