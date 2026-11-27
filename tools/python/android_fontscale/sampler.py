@@ -166,7 +166,7 @@ SEEDED_HOME_COUNT = "流水 · 共 2 笔"
 # or content description contains it, and TalkBack's own fragments inside that target's window
 # must repeat it.
 # - P8-00: the empty-ledger sentence is the SAME copy on the home and the analysis tab
-#   (P503OverviewScreen.kt:183, P503TabShell.kt:516); the assets tab renders no empty copy, so its
+#   (P503OverviewScreen.kt:201, P503TabShell.kt:529); the assets tab renders no empty copy, so its
 #   always-composed 总借入 card label (P503AssetsScreen.kt:215) is the screen's main line.
 P8_00_EMPTY_COPY = "账本为空，还没有任何交易。"
 P8_00_ASSET_TARGET = "总借入"
@@ -271,8 +271,9 @@ PRESENTATION_DEFERRED_SCENARIOS: tuple[str, ...] = (
 # merge):
 # - `流水 · 共 N 笔` is the HOME flow header (P503OverviewScreen.kt:207); the P369 seed carries six
 #   transactions, so N is six.
-# - Each detail screen's marker is the Success-only 账目信息 row `备注：<note>`
-#   (P503LedgerView.kt:622), and its note is the seed's own literal (P369PresentationSeedWriterTest).
+# - Each detail screen's marker is the Success-only 账目信息 row `备注：<note>`, rendered on the
+#   ANDROID profile by cTransactionDetailUserLines (P503LedgerViewPresentation.kt:1158) and composed
+#   by P503LedgerView.kt:627-628; its note is the seed's own literal (P369PresentationSeedWriterTest).
 # - The expense headline is `-<amount> <code>` for the two-leg EXPENSE shape
 #   (P503LedgerView.kt:799-816, the EXPENSE branch at :808-809), which is exactly the 8.88 CNY and
 #   100.00 USD rows.
@@ -1688,18 +1689,25 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 #
 # The ACCOUNTS first screen is captured BEFORE the account-flow round trip on purpose: it opens from
 # HOME with a fresh scroll at the top, so the forward-only step can reach 总借入 (the lending-card
-# pair, P503AssetsScreen.kt:215) and the TalkBack focus target is on screen. Capturing
-# it after the flow's Back would restore the accounts list to the tapped account row instead
+# pair, P503AssetsScreen.kt:215) and the TalkBack focus target is on screen. The run must first
+# press Back off the USD detail: that surface composes no tab shell (P503App.kt:5804 against the
+# shell's :5508), so the 账户 dock does not exist there and the screen's first tap would abort the
+# rest of the sweep; Back returns the retained overview (P503Reducer.kt:2107-2109). Capturing this
+# screen after the flow's Back would restore the accounts list to the tapped account row instead
 # (P503App.kt passes the sampled OverviewEmpty.originListScroll back to the screen), which leaves
 # 总借入 ABOVE the viewport where a forward-only ScrollStep can never reach it. For the same
 # reachability reason every screen whose speech target is not guaranteed above the fold scrolls to
 # that exact target before the speech pass: 未核对 1 条 on the queue, 总借入 on ACCOUNTS, and
-# 新建一级分类 on the management route — the route inherits the scroll offset of the entry tap, so
-# its title can sit above the viewport and the on-screen category button is the honest target.
+# 新建一级分类 on the management route. That last target is the on-screen category button because
+# the route reuses the entry tap's scroll offset, so its 账户与分类管理 title is not guaranteed to be
+# inside the window; the cost is that the speech target and the screenshot marker become one literal.
 #
-# System Back from the account flow returns to the ACCOUNTS tab (P503Reducer.kt:2335 returns the
-# preserved overview, whose selectedTab is ACCOUNTS), and Back from the management route closes only
-# the route (P503Reducer.kt:2056-2065), which is what the management steps rely on.
+# System Back walks the captured surfaces: from the USD detail it returns the retained HOME overview
+# (P503Reducer.kt:2107-2109), from the reconciliation queue it returns the carried account flow whole
+# (P503Reducer.kt:2464), and from the account flow it returns the preserved overview whose selectedTab
+# is ACCOUNTS (P503Reducer.kt:2335). The management route itself is left by the 分析 dock, not by
+# Back: a bottom-bar tap clears catalogManagementSurface (P503Reducer.kt:1502), which is how the
+# analysis screen leaves it.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -1756,7 +1764,7 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
     ),
     Screen(
         "presentation-asset",
-        (TapStep("账户"), ScrollStep(P8_00_ASSET_TARGET)),
+        (BACK, TapStep("账户"), ScrollStep(P8_00_ASSET_TARGET)),
         P8_00_ASSET_TARGET,
         absent=(PRESENTATION_MULTI_CURRENCY_MARKER,),
         required=(SEEDED_ACCOUNT_NAME,),

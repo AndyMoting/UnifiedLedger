@@ -9,6 +9,7 @@ from unittest import mock
 
 from android_fontscale.sampler import (
     BACK,
+    BackStep,
     DEFAULT_UI_MODE,
     P8_00_ASSET_TARGET,
     P806_REPORT_TITLE,
@@ -154,7 +155,7 @@ class PresentationProfileTests(unittest.TestCase):
         # I3: a real TalkBack target must be IN the window, so the two screens whose speech target
         # can sit below the fold scroll to the exact target before the speech pass.
         self.assertEqual(
-            (TapStep("账户"), ScrollStep(P8_00_ASSET_TARGET)),
+            (BACK, TapStep("账户"), ScrollStep(P8_00_ASSET_TARGET)),
             by_stem["presentation-asset"].steps,
         )
         self.assertEqual(
@@ -170,6 +171,30 @@ class PresentationProfileTests(unittest.TestCase):
             (PRESENTATION_HOME_COUNT, PRESENTATION_MULTI_CATEGORY_REMAINING),
             by_stem["presentation-multi-currency"].absent,
         )
+
+    def test_a_screen_after_a_detail_capture_starts_with_back(self):
+        # The detail surface is a sibling of the tab shell (P503App.kt:5804 against the shell's
+        # :5508), so the dock a later screen taps does not exist there and that screen's first
+        # TapStep would abort the remaining captures. Every capture whose marker is the detail's
+        # Success-only 备注 row ends on that surface, so the capture after one must press Back onto
+        # the retained HOME overview first.
+        detail_stems = {
+            "presentation-ordinary-expense",
+            "presentation-detail",
+            "presentation-multi-currency",
+        }
+        # Pinning the set keeps the rule below from going vacuous when a marker changes.
+        self.assertEqual(
+            detail_stems,
+            {screen.stem for screen in PRESENTATION_SCREENS if screen.marker.startswith("备注：")},
+        )
+        stems = [screen.stem for screen in PRESENTATION_SCREENS]
+        for stem in sorted(detail_stems):
+            index = stems.index(stem)
+            self.assertLess(index + 1, len(stems), f"{stem} ends the table, so nothing follows it")
+            follower = PRESENTATION_SCREENS[index + 1]
+            self.assertTrue(follower.steps, follower.stem)
+            self.assertIsInstance(follower.steps[0], BackStep, follower.stem)
 
     def test_non_android_profiles_keep_the_default_analysis_steps(self):
         # The presentation/profile path must not leak the extra toggle into a screen set that never
