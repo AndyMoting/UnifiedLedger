@@ -1,24 +1,57 @@
-"""D-369 A presentation rig configuration proofs (no device, no emulator, no Gradle)."""
+"""D-369 E1 presentation rig configuration proofs (no device, no emulator, no Gradle)."""
 from __future__ import annotations
 
 import unittest
 
 from android_fontscale.sampler import (
     DEFAULT_UI_MODE,
+    P8_00_ASSET_TARGET,
     P806_REPORT_TITLE,
+    PRESENTATION_CALENDAR_EMPTY_MARKER,
+    PRESENTATION_CALENDAR_EMPTY_TITLE,
+    PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT,
+    PRESENTATION_DEFERRED_SCENARIOS,
     PRESENTATION_EVIDENCE_PLAN,
+    PRESENTATION_HOME_COUNT,
+    PRESENTATION_MANAGEMENT_ABSENT,
+    PRESENTATION_MANAGEMENT_MARKER,
+    PRESENTATION_MULTI_CATEGORY_REMAINING,
+    PRESENTATION_MULTI_CURRENCY_MARKER,
     PRESENTATION_PROFILE_NAME,
+    PRESENTATION_RANKING_MARKER,
+    PRESENTATION_RANKING_TEXT,
+    PRESENTATION_SCENARIO_STEMS,
     PRESENTATION_SCREENS,
     PROFILES,
+    Screen,
     SampleError,
     ScrollStep,
     TapStep,
     UI_MODES,
+    gate_evidence_plan_problems,
     gate_profile_problems,
     gate_ui_mode_problems,
+    marker_problems,
+    screen_problems,
     ui_mode_night_value,
     ui_mode_readback_problem,
+    visible_absent_problems,
 )
+
+PRESENTATION_STEMS = [
+    "presentation-home",
+    "presentation-search-results",
+    "presentation-ordinary-expense",
+    "presentation-detail",
+    "presentation-multi-currency",
+    "presentation-multiple-categories",
+    "presentation-account-flow",
+    "presentation-reconciliation",
+    "presentation-asset",
+    "presentation-catalog-management",
+    "presentation-analysis",
+    "presentation-calendar-empty",
+]
 
 
 class PresentationProfileTests(unittest.TestCase):
@@ -28,20 +61,8 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertTrue(profile.seeded)
         self.assertTrue(profile.talkback)
         self.assertEqual([screen.stem for screen in PRESENTATION_SCREENS], [screen.stem for screen in profile.screens])
-        self.assertEqual(8, len(profile.screens))
-        self.assertEqual(
-            [
-                "presentation-home",
-                "presentation-detail",
-                "presentation-search-results",
-                "presentation-account-flow",
-                "presentation-reconciliation",
-                "presentation-asset",
-                "presentation-analysis",
-                "presentation-calendar",
-            ],
-            [screen.stem for screen in profile.screens],
-        )
+        self.assertEqual(PRESENTATION_HOME_COUNT, profile.launch_marker)
+        self.assertEqual(PRESENTATION_STEMS, [screen.stem for screen in profile.screens])
 
     def test_existing_profiles_keep_their_screen_sets(self):
         # Adding the presentation target must not move an existing profile's evidence contract.
@@ -74,9 +95,13 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertEqual(P806_REPORT_TITLE, p806_report.marker)
         self.assertIsInstance(p806_report.steps[4], ScrollStep)
 
+    def test_presentation_analysis_captures_the_single_category_ranking(self):
+        # E1 replaces the old report-face capture with the plan's single-category ranking: the
+        # analysis page opens and the one 100.0% row is scrolled into view.
         presentation = next(screen for screen in PRESENTATION_SCREENS if screen.stem == "presentation-analysis")
-        self.assertEqual(expected_lead, presentation.steps)
-        self.assertEqual(P806_REPORT_TITLE, presentation.marker)
+        self.assertEqual((TapStep("分析"), ScrollStep(PRESENTATION_RANKING_TEXT)), presentation.steps)
+        self.assertEqual(PRESENTATION_RANKING_MARKER, presentation.marker)
+        self.assertEqual((PRESENTATION_RANKING_TEXT,), presentation.required)
 
     def test_non_android_profiles_keep_the_default_analysis_steps(self):
         # The presentation/profile path must not leak the extra toggle into a screen set that never
@@ -99,6 +124,68 @@ class PresentationProfileTests(unittest.TestCase):
             ),
             PRESENTATION_EVIDENCE_PLAN,
         )
+
+    def test_scenario_mapping_covers_the_implemented_stems_and_defers_two(self):
+        captured = {screen.stem for screen in PRESENTATION_SCREENS}
+        mapped: list[str] = []
+        for name, stems in PRESENTATION_SCENARIO_STEMS:
+            self.assertTrue(stems, name)
+            mapped.extend(stems)
+            if name in PRESENTATION_DEFERRED_SCENARIOS:
+                self.assertFalse(captured & set(stems), name)
+            else:
+                self.assertTrue(set(stems) <= captured, name)
+        # One stem never stands for two scenarios.
+        self.assertEqual(len(mapped), len(set(mapped)))
+        self.assertEqual(["cross-day-reconciliation", "technical-details"], list(PRESENTATION_DEFERRED_SCENARIOS))
+        self.assertIn(PRESENTATION_MANAGEMENT_MARKER, {screen.marker for screen in PRESENTATION_SCREENS})
+        self.assertIn("presentation-catalog-management", captured)
+        self.assertEqual([], gate_evidence_plan_problems(PRESENTATION_PROFILE_NAME))
+        self.assertEqual([], gate_evidence_plan_problems("seeded"))
+
+    def test_evidence_plan_gate_rejects_a_broken_mapping(self):
+        screens = (Screen("presentation-home", (), PRESENTATION_HOME_COUNT),)
+        plan = ("ordinary-expense", "technical-details")
+
+        def problems(scenario_stems, deferred=("technical-details",)):
+            return gate_evidence_plan_problems(
+                PRESENTATION_PROFILE_NAME,
+                screens=screens,
+                evidence_plan=plan,
+                scenario_stems=scenario_stems,
+                deferred=deferred,
+            )
+
+        complete = (
+            ("ordinary-expense", ("presentation-home",)),
+            ("technical-details", ("presentation-technical-collapsed",)),
+        )
+        # The management screen is missing from the synthetic table, which is a problem by itself.
+        self.assertEqual(
+            ["the D7 management screen stem presentation-catalog-management is absent"],
+            problems(complete),
+        )
+        # A mapped stem the profile does not capture is red.
+        uncaptured = (
+            ("ordinary-expense", ("presentation-ordinary-expense",)),
+            ("technical-details", ("presentation-technical-collapsed",)),
+        )
+        self.assertTrue(any("does not capture" in problem for problem in problems(uncaptured)))
+        # A deferred scenario that already names a captured stem is red.
+        deferred_captured = (
+            ("ordinary-expense", ("presentation-home",)),
+            ("technical-details", ("presentation-home",)),
+        )
+        self.assertTrue(any("already maps captured stem" in problem for problem in problems(deferred_captured)))
+        # A scenario the plan names but the mapping omits is red.
+        incomplete = (("ordinary-expense", ("presentation-home",)),)
+        self.assertTrue(any("PRESENTATION_EVIDENCE_PLAN names" in problem for problem in problems(incomplete)))
+        # An empty scenario is red.
+        empty = (
+            ("ordinary-expense", ()),
+            ("technical-details", ("presentation-technical-collapsed",)),
+        )
+        self.assertTrue(any("maps no screen" in problem for problem in problems(empty)))
 
     def test_ui_modes_map_to_the_platform_night_value(self):
         self.assertEqual(("light", "dark"), UI_MODES)
@@ -136,17 +223,88 @@ class PresentationProfileTests(unittest.TestCase):
         swapped = {"profile": "seeded", "screens": expected}
         self.assertTrue(gate_profile_problems(swapped, PRESENTATION_PROFILE_NAME))
 
-    def test_presentation_screens_carry_speech_targets_for_real_talkback(self):
-        speaking = [screen.stem for screen in PRESENTATION_SCREENS if screen.speech]
-        self.assertEqual(
-            ["presentation-home", "presentation-detail", "presentation-search-results"],
-            speaking,
-        )
+    def test_every_presentation_screen_carries_a_real_talkback_target(self):
+        # Plan section 2.2 requires each screen to declare marker, absent, required and speech, and
+        # Block B's deferred screens are the only ones absent. Every current screen therefore
+        # carries all four, and every speech target names its required literal.
         for screen in PRESENTATION_SCREENS:
             self.assertTrue(screen.marker, screen.stem)
+            self.assertTrue(screen.absent, screen.stem)
+            self.assertTrue(screen.required, screen.stem)
+            self.assertTrue(screen.speech, screen.stem)
             for check in screen.speech:
                 self.assertTrue(check.target, screen.stem)
                 self.assertTrue(check.required, screen.stem)
+        self.assertEqual(
+            ["presentation-calendar-empty"],
+            [screen.stem for screen in PRESENTATION_SCREENS if screen.visible_absent],
+        )
+
+    def test_every_presentation_screen_marker_is_a_product_literal(self):
+        # The four home-row screens plus the tab screens are the evidence; each marker is the
+        # production copy named in sampler.py's constant block, never a seed-derived number except
+        # where the screen's own copy carries it.
+        by_stem = {screen.stem: screen for screen in PRESENTATION_SCREENS}
+        self.assertEqual(PRESENTATION_MANAGEMENT_MARKER, by_stem["presentation-catalog-management"].marker)
+        self.assertEqual((PRESENTATION_MANAGEMENT_ABSENT,), by_stem["presentation-catalog-management"].absent)
+        self.assertEqual(PRESENTATION_MULTI_CATEGORY_REMAINING, by_stem["presentation-multiple-categories"].marker)
+        self.assertEqual(PRESENTATION_MULTI_CURRENCY_MARKER, by_stem["presentation-multi-currency"].marker)
+        self.assertEqual(P8_00_ASSET_TARGET, by_stem["presentation-asset"].marker)
+        self.assertEqual(PRESENTATION_CALENDAR_EMPTY_MARKER, by_stem["presentation-calendar-empty"].marker)
+        self.assertEqual(
+            PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT,
+            by_stem["presentation-calendar-empty"].visible_absent,
+        )
+
+
+class VisibleAbsentTests(unittest.TestCase):
+    def test_visible_absent_ignores_content_description(self):
+        # The empty calendar cell renders its date only while its accessibility sentence keeps
+        # spelling the zero values; `visible_absent` must classify that frame as correct.
+        tree = (
+            '<hierarchy><node text="该月暂无收支。" content-desc="" bounds="[0,0][100,100]"/>'
+            '<node text="16" content-desc="2020-01-16，CNY 支出 0.00、收入 0.00；共 0 笔" '
+            'bounds="[0,100][100,200]"/></hierarchy>'
+        )
+        self.assertEqual([], visible_absent_problems(tree, ("0.00", "共 0 笔")))
+        # `absent` keeps its own text-and-description meaning and WOULD red this correct frame.
+        self.assertTrue(marker_problems(tree, PRESENTATION_CALENDAR_EMPTY_MARKER, ("0.00",)))
+        # The same criterion must still catch a zero printed as visible text.
+        bad = '<hierarchy><node text="0.00 CNY" content-desc="" bounds="[0,0][100,100]"/></hierarchy>'
+        self.assertEqual(["visible text '0.00' is still shown"], visible_absent_problems(bad, ("0.00",)))
+        # A needle in a readable text node is reported even when another node only carries it in
+        # its content description.
+        mixed = (
+            '<hierarchy><node text="共 0 笔" content-desc="" bounds="[0,0][100,100]"/>'
+            '<node text="17" content-desc="0.00" bounds="[0,100][100,200]"/></hierarchy>'
+        )
+        self.assertEqual(
+            ["visible text '共 0 笔' is still shown"],
+            visible_absent_problems(mixed, ("0.00", "共 0 笔")),
+        )
+
+    def test_screen_problems_is_the_shared_driver_and_gate_criterion(self):
+        # Both the driver and the gate call this one function, so a screen's whole verdict — marker,
+        # previous-screen absence, required values, visible-only absence and viewport — cannot drift
+        # between the live capture and the replay from disk.
+        screen = next(s for s in PRESENTATION_SCREENS if s.stem == "presentation-calendar-empty")
+        correct = (
+            "<hierarchy>"
+            f'<node text="{screen.marker}" content-desc="" bounds="[0,0][100,100]"/>'
+            f'<node text="{PRESENTATION_CALENDAR_EMPTY_TITLE}" content-desc="" bounds="[0,100][100,200]"/>'
+            '<node text="16" content-desc="2020-01-16，CNY 支出 0.00、收入 0.00；共 0 笔" '
+            'bounds="[0,200][100,300]"/>'
+            "</hierarchy>"
+        )
+        self.assertEqual([], screen_problems(correct, screen))
+        wrong = correct.replace('<node text="16"', '<node text="0.00"')
+        self.assertEqual(["visible text '0.00' is still shown"], screen_problems(wrong, screen))
+        missing_marker = correct.replace(screen.marker, "x")
+        self.assertTrue(any("marker" in problem for problem in screen_problems(missing_marker, screen)))
+        missing_title = correct.replace(PRESENTATION_CALENDAR_EMPTY_TITLE, "x")
+        self.assertTrue(
+            any("required string" in problem for problem in screen_problems(missing_title, screen))
+        )
 
 
 if __name__ == "__main__":

@@ -19,11 +19,13 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 - `profile=refund` (the P8-03 V-14 leg): the same seeded database, whose confirmed manual expense
   is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
   its confirmation page at the requested scale;
-- `profile=presentation` (D-369 A, prepared): an independent target over the shared P8-01 seed that
-  captures the foundation contract's current surfaces in either platform `ui_mode` (light default,
-  dark opt-in) and records REAL TalkBack on its speech screens. `PRESENTATION_EVIDENCE_PLAN` names
-  the eight future presentation scenarios; A prepares that configuration and never cites these
-  frames as an accepted presentation result;
+- `profile=presentation` (D-369 E1): an independent target over the dedicated P369 presentation
+  seed (six transactions: ordinary expense, transfer, multi-category, multi-currency, two
+  fixed-instant cross-day transfers) that captures the current presentation surfaces in either
+  platform `ui_mode` (light default, dark opt-in) and records REAL TalkBack on every screen.
+  `PRESENTATION_EVIDENCE_PLAN` names the eight plan scenarios and `PRESENTATION_SCENARIO_STEMS`
+  maps six of them onto this table; the cross-day reconciliation and technical-collapse screens
+  are deferred to Block B, so this profile never cites a frame as an accepted E2 result;
 - `profile=p806` (the P8-06 batch 6 V-12 leg): an independent anonymous seed of two fixed expenses
   on one clock-relative day, driving the ANALYSIS report region (plus a second scrolled frame that
   shows the natural-day statement in full), the calendar day cell and that day's drilldown rows at
@@ -242,6 +244,72 @@ PRESENTATION_EVIDENCE_PLAN: tuple[str, ...] = (
     "cross-day-reconciliation",
     "technical-details",
 )
+
+# D-369 E1: which captured stems stand for which plan scenario. Block A implements six of the
+# eight scenarios; the last two stay deferred until Block B's production text lands (C batch), so
+# they are named here with the stems they will add and listed in PRESENTATION_DEFERRED_SCENARIOS.
+# A stem belongs to exactly one scenario, and every implemented stem below is in
+# PRESENTATION_SCREENS; the unit test (tests/python/test_android_presentation_rig.py) holds both
+# directions of that contract.
+PRESENTATION_SCENARIO_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ordinary-expense", ("presentation-ordinary-expense",)),
+    ("multiple-categories", ("presentation-multiple-categories",)),
+    ("transfer", ("presentation-detail", "presentation-account-flow")),
+    ("multi-currency", ("presentation-multi-currency",)),
+    ("empty-day", ("presentation-calendar-empty",)),
+    ("single-category-ranking", ("presentation-analysis",)),
+    ("cross-day-reconciliation", ("presentation-reconciliation-cross-day",)),
+    ("technical-details", ("presentation-technical-collapsed", "presentation-technical-expanded")),
+)
+PRESENTATION_DEFERRED_SCENARIOS: tuple[str, ...] = (
+    "cross-day-reconciliation",
+    "technical-details",
+)
+
+# E1 presentation profile's production literals, each copied from the source the device renders:
+# - `流水 · 共 N 笔` is the HOME flow header (P503OverviewScreen.kt:207); the P369 seed carries six
+#   transactions, so N is six.
+# - Each detail screen's marker is the Success-only 账目信息 row `备注：<note>`
+#   (P503LedgerView.kt:593), and its note is the seed's own literal (P369PresentationSeedWriterTest).
+# - The expense headline is `-<amount> <code>` for the two-leg EXPENSE shape
+#   (P503LedgerView.kt:739-756, the EXPENSE branch at :748-749), which is exactly the 8.88 CNY and
+#   100.00 USD rows.
+# - `其余 N 个` is the home row's badge-cap copy (P503LedgerViewPresentation.kt:727); the cap is
+#   MAX_HOME_CATEGORY_BADGES = 3 in ledger-application's PresentationProjection.kt:435, so the
+#   four-category seed row shows three badges and `其余 1 个`.
+# - The ranking row text is categoryShareRowText (P503LedgerViewPresentation.kt:938-941):
+#   `<category> <amount> <code> <tenths>%`. The current month has exactly one level-1 expense
+#   category (餐饮) at 8.88 CNY, i.e. a single 100.0% row.
+# - `该月暂无收支。` is the calendar's READY_EMPTY copy (P503CalendarScreen.kt:135); the two `‹`
+#   month steps land on the month before the seed's last-month rows, where every cell is a real
+#   zero. calendarDayShowsAmounts (P503LedgerViewPresentation.kt:956) then renders the date only,
+#   while the cell's contentDescription still spells the zeros (P806CalendarPresentation.kt:122-130)
+#   — the reason this screen alone uses `visible_absent`.
+# - `新建一级分类` is the management route's category button (P503CatalogManagementScreen.kt:343);
+#   总借入 belongs to the ACCOUNTS first screen only (P503AssetSummaryRegion), so its absence proves
+#   the route switched.
+PRESENTATION_HOME_COUNT = "流水 · 共 6 笔"
+PRESENTATION_ORDINARY_EXPENSE_NOTE = "午餐样本支出"
+PRESENTATION_ORDINARY_EXPENSE_MARKER = f"备注：{PRESENTATION_ORDINARY_EXPENSE_NOTE}"
+PRESENTATION_ORDINARY_EXPENSE_AMOUNT = "-8.88 CNY"
+PRESENTATION_MULTI_CURRENCY_NOTE = "美元样本支出"
+PRESENTATION_MULTI_CURRENCY_MARKER = f"备注：{PRESENTATION_MULTI_CURRENCY_NOTE}"
+PRESENTATION_MULTI_CURRENCY_AMOUNT = "-100.00 USD"
+PRESENTATION_MULTI_CATEGORY_NOTE = "多分类样本支出"
+PRESENTATION_MULTI_CATEGORY_REMAINING = "其余 1 个"
+PRESENTATION_MULTI_CATEGORY_BADGE = "午餐"
+PRESENTATION_RANKING_TEXT = "餐饮 8.88 CNY 100.0%"
+PRESENTATION_RANKING_AMOUNT = "8.88 CNY"
+PRESENTATION_RANKING_MARKER = "100.0%"
+PRESENTATION_CALENDAR_EMPTY_MARKER = "该月暂无收支。"
+PRESENTATION_CALENDAR_EMPTY_TITLE = "收支日历"
+PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT = ("0.00", "共 0 笔")
+PRESENTATION_MANAGEMENT_MARKER = "新建一级分类"
+PRESENTATION_MANAGEMENT_TITLE = "账户与分类管理"
+PRESENTATION_MANAGEMENT_ABSENT = P8_00_ASSET_TARGET
+PRESENTATION_MANAGEMENT_REQUIRED = ("餐饮", "交通", "日用品", "差旅")
+PRESENTATION_ACCOUNT_FLOW_REQUIRED = ("CNY 12.34", f"{SEEDED_ACCOUNT_NAME} 12.34 CNY")
+PRESENTATION_RECONCILIATION_REQUIRED = (SEEDED_TRANSFER_NOTE, "12.34 CNY")
 
 
 def ui_mode_night_value(ui_mode: str) -> str:
@@ -674,6 +742,22 @@ def required_problems(xml_text: str, required: tuple[str, ...]) -> list[str]:
     return [f"required string {needle!r} is absent" for needle in required if not dump_contains(xml_text, needle)]
 
 
+def visible_absent_problems(xml_text: str, visible_absent: tuple[str, ...]) -> list[str]:
+    """The strings a screen's VISIBLE text must not carry.
+
+    Only the `text` attribute is inspected: `content-desc` is the accessibility sentence and may
+    keep stating a value the visible composition deliberately omits (an empty calendar day renders
+    its date only, while its content description still says `支出 0.00 … 共 0 笔`). `absent` keeps
+    its own text-and-description meaning; this criterion never weakens it.
+    """
+    texts = [node.get("text") or "" for node in _nodes(xml_text)]
+    return [
+        f"visible text {needle!r} is still shown"
+        for needle in visible_absent
+        if any(needle in text for text in texts)
+    ]
+
+
 def viewport_problems(xml_text: str, marker: str) -> list[str]:
     """The marker node's whole rect must sit inside the dump's window bounds.
 
@@ -699,6 +783,23 @@ def viewport_problems(xml_text: str, marker: str) -> list[str]:
     if rect[0] >= window[0] and rect[1] >= window[1] and rect[2] <= window[2] and rect[3] <= window[3]:
         return []
     return [f"marker {marker!r} is clipped by the window bounds {window!r} (node {rect!r})"]
+
+
+def screen_problems(xml_text: str, screen: Screen) -> list[str]:
+    """Every mechanically decidable verdict for one screen, in one place.
+
+    The driver checks these before it keeps a capture and the gate re-derives them from the dump on
+    disk; one shared function keeps the two paths from drifting (a screen must satisfy the marker,
+    the previous-screen strings' absence, the required values, the visible-only absence criterion
+    and, when declared, whole-rect containment). `Screen` is a later dataclass; the module's
+    postponed annotations make the reference safe.
+    """
+    problems = marker_problems(xml_text, screen.marker, screen.absent)
+    problems += required_problems(xml_text, screen.required)
+    problems += visible_absent_problems(xml_text, screen.visible_absent)
+    if screen.marker_in_viewport:
+        problems += viewport_problems(xml_text, screen.marker)
+    return problems
 
 
 # AOSP `liblog/logprint.cpp` FORMAT_BRIEF is `%c/%-8.*s(%s%5d): `: the tag is left-justified and
@@ -1421,6 +1522,11 @@ class Screen:
     # whose exact values only the seed can tell). The driver checks them before the capture and
     # the gate re-derives the same tuple from the seed, so neither trusts the other's word.
     required: tuple[str, ...] = ()
+    # Strings a screen's VISIBLE text must not carry, checked against the `text` attribute only.
+    # A cell's contentDescription can still spell the value it deliberately stops showing (the
+    # empty-day calendar cell announces `0.00`/`共 0 笔` while rendering only its date), so `absent`
+    # would turn that correct frame red; this criterion states the visible-only claim instead.
+    visible_absent: tuple[str, ...] = ()
     # The D-292 speech limb: each ordered check names its focus target (substring match on the
     # node's text or content description) and the values TalkBack's fragments inside THAT target's
     # accepted, completed window must contain. Empty keeps the screen on the screenshot-only path,
@@ -1569,35 +1675,29 @@ REFUND_SCREENS: tuple[Screen, ...] = (
     ),
 )
 
-# D-369 A presentation profile: the foundation contract's current surfaces over the same shared
-# P8-01 seed (one transfer plus one confirmed expense), captured in either ui_mode. The stems name
-# the surface, not a future feature: a frame is only ever evidence for what the product actually
-# renders. `PRESENTATION_EVIDENCE_PLAN` names the future scenarios (multi-category, multi-currency,
-# empty day, ranking, technical collapse) that later batches add once their surfaces exist; this
-# profile's gate can never be read as an accepted presentation result.
+# D-369 E1 presentation profile: the presentation surfaces over the dedicated P369 seed, captured
+# in either ui_mode and either font_scale by the E-batch sweep. Each stem names the surface it
+# photographs; the navigation is monotonic — the home list is only ever scrolled DOWN (a ScrollStep
+# swipes forward and never back), so the four home-row screens run from the top row downward and
+# every later screen leaves HOME through a bottom tab. From there the system Back from the account
+# flow returns to the ACCOUNTS tab (P503Reducer.kt:2335 returns the preserved overview, whose
+# selectedTab is ACCOUNTS), and Back from the management route closes only the route
+# (P503Reducer.kt:2056-2064), which is what the asset/management steps rely on.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
         (),
-        SEEDED_HOME_COUNT,
-        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
-    ),
-    Screen(
-        "presentation-detail",
-        (TapStep(SEEDED_TRANSFER_NOTE, contains=True),),
-        SEEDED_DETAIL_MARKER,
-        absent=(SEEDED_HOME_COUNT,),
+        PRESENTATION_HOME_COUNT,
+        absent=(P8_00_EMPTY_COPY,),
+        required=(SEEDED_TRANSFER_NOTE,),
         speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
     ),
     Screen(
         "presentation-search-results",
-        (
-            BACK,
-            TapStep("搜索账目", contains=True),
-            TapStep("提交搜索"),
-        ),
+        (TapStep("搜索账目", contains=True), TapStep("提交搜索")),
         SEARCH_RESULTS_MARKER,
-        absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
+        absent=(SEARCH_GUIDE_MARKER, PRESENTATION_HOME_COUNT),
+        required=(SEEDED_TRANSFER_NOTE, P8_02_RESULT_DEBIT, P8_02_RESULT_CREDIT),
         speech=(
             SpeechCheck(
                 SEEDED_TRANSFER_NOTE,
@@ -1606,34 +1706,96 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         ),
     ),
     Screen(
+        "presentation-ordinary-expense",
+        (BACK, ScrollStep(PRESENTATION_ORDINARY_EXPENSE_NOTE), TapStep(PRESENTATION_ORDINARY_EXPENSE_NOTE, contains=True)),
+        PRESENTATION_ORDINARY_EXPENSE_MARKER,
+        absent=(PRESENTATION_HOME_COUNT,),
+        required=(PRESENTATION_ORDINARY_EXPENSE_AMOUNT,),
+        speech=(SpeechCheck(PRESENTATION_ORDINARY_EXPENSE_NOTE, (PRESENTATION_ORDINARY_EXPENSE_NOTE,)),),
+    ),
+    Screen(
+        "presentation-detail",
+        (BACK, ScrollStep(SEEDED_TRANSFER_NOTE), TapStep(SEEDED_TRANSFER_NOTE, contains=True)),
+        SEEDED_DETAIL_MARKER,
+        absent=(PRESENTATION_HOME_COUNT,),
+        required=(P8_02_RESULT_DEBIT, P8_02_RESULT_CREDIT),
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+    ),
+    Screen(
+        "presentation-multi-currency",
+        (BACK, ScrollStep(PRESENTATION_MULTI_CURRENCY_NOTE), TapStep(PRESENTATION_MULTI_CURRENCY_NOTE, contains=True)),
+        PRESENTATION_MULTI_CURRENCY_MARKER,
+        absent=(PRESENTATION_HOME_COUNT,),
+        required=(PRESENTATION_MULTI_CURRENCY_AMOUNT,),
+        speech=(SpeechCheck(PRESENTATION_MULTI_CURRENCY_NOTE, (PRESENTATION_MULTI_CURRENCY_NOTE,)),),
+    ),
+    Screen(
+        "presentation-multiple-categories",
+        (BACK, ScrollStep(PRESENTATION_MULTI_CATEGORY_NOTE)),
+        PRESENTATION_MULTI_CATEGORY_REMAINING,
+        absent=(PRESENTATION_MULTI_CURRENCY_MARKER,),
+        required=(PRESENTATION_MULTI_CATEGORY_NOTE, PRESENTATION_MULTI_CATEGORY_BADGE),
+        speech=(SpeechCheck(PRESENTATION_MULTI_CATEGORY_REMAINING, (PRESENTATION_MULTI_CATEGORY_REMAINING,)),),
+    ),
+    Screen(
         "presentation-account-flow",
-        (BACK, TapStep("账户"), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
+        (TapStep("账户"), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
         ACCOUNT_FLOW_HEADER,
-        absent=(SEARCH_RESULTS_MARKER,),
+        absent=(PRESENTATION_MULTI_CATEGORY_REMAINING,),
+        required=PRESENTATION_ACCOUNT_FLOW_REQUIRED,
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
     ),
     Screen(
         "presentation-reconciliation",
         (TapStep(RECONCILIATION_TITLE),),
         SEEDED_QUEUE_MARKER,
         absent=(ACCOUNT_FLOW_HEADER,),
+        required=PRESENTATION_RECONCILIATION_REQUIRED,
+        speech=(SpeechCheck(SEEDED_QUEUE_MARKER, (SEEDED_QUEUE_MARKER,)),),
     ),
     Screen(
         "presentation-asset",
-        (BACK, BACK, TapStep("账户")),
+        (BACK, BACK),
         P8_00_ASSET_TARGET,
+        absent=(SEEDED_QUEUE_MARKER,),
+        required=(SEEDED_ACCOUNT_NAME,),
+        speech=(SpeechCheck(P8_00_ASSET_TARGET, (P8_00_ASSET_TARGET,)),),
+    ),
+    Screen(
+        "presentation-catalog-management",
+        (TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True), ScrollStep(PRESENTATION_MANAGEMENT_MARKER)),
+        PRESENTATION_MANAGEMENT_MARKER,
+        absent=(PRESENTATION_MANAGEMENT_ABSENT,),
+        required=PRESENTATION_MANAGEMENT_REQUIRED,
+        speech=(SpeechCheck(PRESENTATION_MANAGEMENT_TITLE, (PRESENTATION_MANAGEMENT_TITLE,)),),
     ),
     Screen(
         "presentation-analysis",
-        # 1.3x may place 更多分析 below the first screen, so scroll it into view before the tap.
-        (TapStep("分析"), ScrollStep("更多分析"), TapStep("更多分析"), ScrollStep(P806_REPORT_TITLE)),
-        P806_REPORT_TITLE,
-        absent=(SEEDED_HOME_COUNT,),
+        (TapStep("分析"), ScrollStep(PRESENTATION_RANKING_TEXT)),
+        PRESENTATION_RANKING_MARKER,
+        absent=(PRESENTATION_MANAGEMENT_MARKER,),
+        required=(PRESENTATION_RANKING_TEXT,),
+        speech=(
+            # The spoken limb claims the exact amount, not the percentage: TalkBack's reading of
+            # `%` is unverified (the same reason `#`/`>` stay out of required), while the visible
+            # `100.0%` share is already a required tree string on this screen.
+            SpeechCheck(PRESENTATION_RANKING_TEXT, (PRESENTATION_RANKING_AMOUNT,)),
+        ),
     ),
     Screen(
-        "presentation-calendar",
-        (TapStep("首页"), TapStep(P806_CALENDAR_TITLE)),
-        P806_CALENDAR_TITLE,
-        absent=(P806_REPORT_TITLE,),
+        "presentation-calendar-empty",
+        (
+            TapStep("首页"),
+            TapStep(PRESENTATION_CALENDAR_EMPTY_TITLE),
+            TapStep("‹"),
+            TapStep("‹"),
+            ScrollStep(PRESENTATION_CALENDAR_EMPTY_MARKER),
+        ),
+        PRESENTATION_CALENDAR_EMPTY_MARKER,
+        absent=(PRESENTATION_RANKING_MARKER,),
+        required=(PRESENTATION_CALENDAR_EMPTY_TITLE,),
+        visible_absent=PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT,
+        speech=(SpeechCheck(PRESENTATION_CALENDAR_EMPTY_MARKER, (PRESENTATION_CALENDAR_EMPTY_MARKER,)),),
     ),
 )
 
@@ -1954,11 +2116,12 @@ PROFILES: dict[str, Profile] = {
     # The screens are placeholders here: run/gate replace them with `p806_screens` built from the
     # pushed seed, so a static literal can never drift out of the evidence.
     "p806": Profile("p806", SEEDED_HOME_COUNT, P806_SCREENS, seeded=True, talkback=True),
-    # D-369 A: the presentation profile reuses the shared P8-01 seed and adds the ui_mode switch;
-    # it is an independent target, not a replacement for any existing profile.
+    # D-369 E1: the presentation profile rides the dedicated P369 seed (D1: the eight scenarios are
+    # physically unreachable on the P8-01 ledger shape) and adds the ui_mode switch; it is an
+    # independent target, not a replacement for any existing profile.
     PRESENTATION_PROFILE_NAME: Profile(
         PRESENTATION_PROFILE_NAME,
-        SEEDED_HOME_COUNT,
+        PRESENTATION_HOME_COUNT,
         PRESENTATION_SCREENS,
         seeded=True,
         talkback=True,
@@ -2013,6 +2176,54 @@ def gate_profile_problems(host: dict[str, object], profile_name: str) -> list[st
         problems.append(
             f"host.json records screens {recorded_screens!r}, the {profile_name!r} profile captures {expected!r}"
         )
+    return problems
+
+
+def gate_evidence_plan_problems(
+    profile_name: str,
+    screens: tuple[Screen, ...] | None = None,
+    evidence_plan: tuple[str, ...] | None = None,
+    scenario_stems: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
+    deferred: tuple[str, ...] | None = None,
+) -> list[str]:
+    """The gate's re-derivation of the plan-to-screen mapping for the presentation profile.
+
+    Plan section 2.4 asks the mapping to be asserted rather than trusted: every scenario name is
+    accounted for exactly once, every IMPLEMENTED scenario resolves to at least one stem of this
+    profile's screen table, a deferred scenario's stems are not in the table yet (Block B adds
+    them), no stem stands for two scenarios, and the management screen D7 adds is present. A
+    non-presentation profile has no mapping to check. The parameters default to the module
+    constants so the unit test can feed synthetic tables without touching the real configuration.
+    """
+    if profile_name != PRESENTATION_PROFILE_NAME:
+        return []
+    screens = PRESENTATION_SCREENS if screens is None else screens
+    evidence_plan = PRESENTATION_EVIDENCE_PLAN if evidence_plan is None else evidence_plan
+    scenario_stems = PRESENTATION_SCENARIO_STEMS if scenario_stems is None else scenario_stems
+    deferred = PRESENTATION_DEFERRED_SCENARIOS if deferred is None else deferred
+    problems: list[str] = []
+    names = [name for name, _ in scenario_stems]
+    if names != list(evidence_plan):
+        problems.append(f"the scenario mapping names {names!r}, PRESENTATION_EVIDENCE_PLAN names {list(evidence_plan)!r}")
+    stems = {screen.stem for screen in screens}
+    owner: dict[str, str] = {}
+    for name, mapped in scenario_stems:
+        if name not in evidence_plan:
+            problems.append(f"scenario {name!r} is mapped but is not in PRESENTATION_EVIDENCE_PLAN")
+            continue
+        if not mapped:
+            problems.append(f"scenario {name!r} maps no screen")
+        for stem in mapped:
+            if stem in owner:
+                problems.append(f"stem {stem!r} is mapped to both {owner[stem]!r} and {name!r}")
+            owner[stem] = name
+            if name in deferred:
+                if stem in stems:
+                    problems.append(f"deferred scenario {name!r} already maps captured stem {stem!r}")
+            elif stem not in stems:
+                problems.append(f"scenario {name!r} maps {stem!r}, which this profile does not capture")
+    if "presentation-catalog-management" not in stems:
+        problems.append("the D7 management screen stem presentation-catalog-management is absent")
     return problems
 
 
@@ -2135,6 +2346,28 @@ class Sampler:
             talkback_version_artifact(dump, api_level), encoding="utf-8"
         )
         return {"version": package_version_name(dump), "api_level": api_level}
+
+    def attempt_trace(self) -> tuple[str, str]:
+        """D4: the per-combination best-effort atrace; `(status, unavailable_reason)`.
+
+        `atrace -t 5 gfx view sched freq` is attempted once per run. A managed AVD can refuse it
+        (tracing permissions, a read-only tracefs, or a build without the categories), so a failure
+        is recorded — never raised and never a gate input: the E2 registry states what was actually
+        obtained. The raw output is kept as `trace.txt` so the recorded status can be re-read.
+        """
+        output = self.adb(
+            "shell", "atrace", "-t", "5", "gfx", "view", "sched", "freq", timeout=30, best_effort=True
+        )
+        stripped = output.strip()
+        if not stripped:
+            return "", "atrace produced no output (the device refused the trace or the categories are unavailable)"
+        (self.evidence / "trace.txt").write_text(output, encoding="utf-8")
+        error_lines = [
+            line for line in stripped.splitlines() if line.strip().lower().startswith(("error", "cannot", "unable"))
+        ]
+        if error_lines:
+            return "", error_lines[0].strip()[:200]
+        return "available", ""
 
     def prepare_talkback_device(self) -> dict[str, str]:
         """Put the run-owned AVD into a known accessibility state and return the prior one.
@@ -3426,11 +3659,9 @@ def run(args: argparse.Namespace) -> int:
             "marker_present": dump_contains(tree, screen.marker),
             "absent": list(screen.absent),
             "required": list(screen.required),
+            "visible_absent": list(screen.visible_absent),
         }
-        problems = marker_problems(tree, screen.marker, screen.absent)
-        problems += required_problems(tree, screen.required)
-        if screen.marker_in_viewport:
-            problems += viewport_problems(tree, screen.marker)
+        problems = screen_problems(tree, screen)
         if problems:
             raise SampleError(
                 f"screen {screen.stem}: {'; '.join(problems)} at font_scale {applied:g}"
@@ -3452,6 +3683,9 @@ def run(args: argparse.Namespace) -> int:
             SETTING_A11Y_CLICK,
         ):
             sampler.adb("shell", "settings", "delete", "global", key, best_effort=True)
+    # D4: one best-effort trace attempt per combination. It never changes the verdict; it only
+    # records whether this run could leave the E2 registry's R9 with a trace or with a reason.
+    trace_status, trace_unavailable = sampler.attempt_trace()
 
     def apk_record(path: str) -> dict[str, str]:
         return {"path": str(path), "sha256": sha256_file(Path(path))}
@@ -3470,6 +3704,10 @@ def run(args: argparse.Namespace) -> int:
     }
     if talkback:
         host["artifacts"]["test_apk"] = apk_record(args.test_apk)
+    if trace_unavailable:
+        host["trace_unavailable"] = trace_unavailable
+    else:
+        host["trace"] = trace_status
     if profile.seeded and facts is None:
         # The seed contract this evidence was produced against (the ledger id must be the app's
         # PRODUCT_LEDGER_ID; a mismatch would have failed the launch marker above). The digest is
@@ -3881,6 +4119,7 @@ def gate(args: argparse.Namespace) -> int:
         return 1
     host = json.loads(host_path.read_text(encoding="utf-8"))
     problems: list[str] = gate_profile_problems(host, profile.name)
+    problems.extend(gate_evidence_plan_problems(profile.name))
     if host.get("sha") != args.sha:
         problems.append(f"host.json records sha {host.get('sha')!r}, expected {args.sha!r}")
     applied = host.get("font_scale")
@@ -3895,15 +4134,8 @@ def gate(args: argparse.Namespace) -> int:
         if not tree.exists():
             problems.append(f"{screen.stem}: accessibility dump missing")
             continue
-        for problem in marker_problems(
-            tree.read_text(encoding="utf-8"), screen.marker, screen.absent
-        ):
+        for problem in screen_problems(tree.read_text(encoding="utf-8"), screen):
             problems.append(f"{screen.stem}: {problem}")
-        for problem in required_problems(tree.read_text(encoding="utf-8"), screen.required):
-            problems.append(f"{screen.stem}: {problem}")
-        if screen.marker_in_viewport:
-            for problem in viewport_problems(tree.read_text(encoding="utf-8"), screen.marker):
-                problems.append(f"{screen.stem}: {problem}")
     if profile.seeded:
         seed_file = Path(args.seed) if args.seed else None
         actual = sha256_file(seed_file) if seed_file is not None and seed_file.is_file() else None
