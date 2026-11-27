@@ -566,11 +566,12 @@ class P369PresentationSeedWriterTest {
             // The legs carry the signed ORIGINAL posting amount (`Posting.amount`,
             // FormalLedger.kt:3-7; `QueryTransactionDetail` copies it verbatim), and the seed uses
             // the golden sign convention: EXPENSE legs positive, the funding ASSET leg negative
-            // (docs/specs/2026-11-15-p8-05-readable-export-design.md:93). `PostingSet.create`
-            // rejects any set whose per-currency total is non-zero (FormalLedger.kt:24-36) and
-            // writeMultiCategoryExpense checks the same sum before inserting, so summing ALL legs
-            // can never yield the 40.00 the screen shows; the amount lives on the four positive
-            // (expense) legs.
+            // (docs/specs/2026-11-15-p8-05-readable-export-design.md:93). Balance has two owners:
+            // a product-command row is held to a zero per-currency total by `PostingSet.create`
+            // (FormalLedger.kt:24-36), while this synthetic row bypasses the domain factory (raw
+            // `insertPosting`) and is held balanced by writeMultiCategoryExpense's own check. Either
+            // way, summing ALL legs can never yield the 40.00 the screen shows; the amount lives on
+            // the four positive (expense) legs.
             val netMinor = detail.legs.sumOf { leg -> leg.amount.minorUnits }
             val expenseSideMinor = detail.legs.filter { leg -> leg.amount.minorUnits > 0L }.sumOf { leg -> leg.amount.minorUnits }
             assertEquals(0L, netMinor, "all five legs of $MULTI_CATEGORY_NOTE must net to zero (double-entry balance)")

@@ -162,8 +162,10 @@ jobs:
             | tee fontscale-evidence/host-test-apk.txt
       - name: Write the prepared ledger database (seeded, refund, p806 and presentation profiles only)
         if: inputs.profile == 'seeded' || inputs.profile == 'refund' || inputs.profile == 'p806' || inputs.profile == 'presentation'
-        # Each writer is a jvmTest no-op unless its property names the output; the build script
+        # Each writer writes the named output only when its property is set; the build script
         # forwards all properties to the test JVM (Gradle does not pass -D through by itself).
+        # The P369 writer class also has a property-free entry that builds and reads back the same
+        # seed in a temp file, so its assertions run on the ordinary ledger-data shards too.
         # p806 and presentation each use their own writer and property, so their samples stay
         # independent of the P8-01/P8-03 ledger shape the other two seeded profiles share.
         run: |

@@ -101,8 +101,10 @@ jobs:
           sha256sum android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
             | tee "${EVIDENCE_ROOT}/host-test-apk.txt"
       - name: Write the one prepared ledger database
-        # The P369 writer is a jvmTest no-op unless its property names the output; the build script
-        # forwards it to the test JVM (Gradle does not pass -D through by itself).
+        # Only the property-named entry of the P369 writer opens the output; the class also runs the
+        # same build and read-back over a temp file on the ordinary ledger-data shards, so its
+        # assertions are proven without this job. The build script forwards the property to the test
+        # JVM (Gradle does not pass -D through by itself).
         run: |
           set -euo pipefail
           mkdir -p presentation-seed
