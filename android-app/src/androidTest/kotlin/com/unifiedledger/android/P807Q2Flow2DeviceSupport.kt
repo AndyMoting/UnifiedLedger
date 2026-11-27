@@ -22,11 +22,13 @@ import com.unifiedledger.application.P801CandidateEvidenceResult
 import com.unifiedledger.application.P801ReconciledLegAudit
 import com.unifiedledger.application.P801ReconciledLegAuditResult
 import com.unifiedledger.application.P801ReconciliationCandidateEvidence
+import com.unifiedledger.application.presentationWallClockText
 import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.PostingId
 import com.unifiedledger.ui.LeaseOutcome
 import com.unifiedledger.ui.P503LedgerFacade
 import kotlin.math.abs
+import kotlin.time.Instant
 
 /**
  * P8-07 Q2 flow 2 device evidence: IMPORT EVIDENCE → RECONCILIATION → AUDIT RE-READ, on the dev
@@ -258,8 +260,30 @@ internal object P807Q2Flow2Facts {
     const val AUDIT_SOURCE_LINE =
         "证据来源：导入 p807-shared-seed-statement · 第 0 条（transfer_flow_source）· 来源时间 2026-10-14T04:00:00Z"
 
-    /** The evidence id the four-element block and the audit name (`P503ReconciliationScreen.kt:468`). */
-    const val AUDIT_EXTERNAL_EVIDENCE_LINE = "外部证据：p807-seed-import-evidence"
+    /**
+     * The confirm block's ANDROID `外部证据` line, mirroring `reconciliationConfirmEvidenceLine`
+     * (`P503ReconciliationPresentation.kt:351-357`) over `reconciliationEvidenceText`
+     * (`:330-336`): the persisted source-time text and raw amount, never the opaque evidence id.
+     */
+    fun confirmEvidenceFactsLine(evidence: P801ReconciliationCandidateEvidence): String {
+        val time = evidence.occurredAt.rawText.ifBlank { "—" }
+        val amountMinor = evidence.rawAmountMinor
+        val precision = evidence.rawCurrencyPrecision
+        val code = evidence.rawCurrencyCode
+        val amount =
+            if (amountMinor != null && precision != null && code != null) {
+                p807Q2Flow2MinorText(amountMinor, precision) + " " + code
+            } else {
+                "—"
+            }
+        return ELEMENT_EXTERNAL_EVIDENCE + "：来源时间 " + time + " · " + amount
+    }
+
+    /** The collapsed 技术信息 sentence's prefix (`cTechnicalInfoDisclosure.spokenText`, `P503LedgerViewPresentation.kt:1135-1142`). */
+    const val TECHNICAL_INFO_COLLAPSED_PREFIX = "技术信息，已收起"
+
+    /** The expanded 技术信息 sentence's prefix (the same producer). */
+    const val TECHNICAL_INFO_EXPANDED_PREFIX = "技术信息，共"
 
     /** The four-element duty line (`P503ReconciliationScreen.kt:472-475`). */
     const val FOUR_ELEMENT_RESPONSIBILITY_LINE = ELEMENT_RESPONSIBILITY + "：" + RESPONSIBILITY_DESTINATION
@@ -277,8 +301,12 @@ internal object P807Q2Flow2Facts {
     /** The frozen five-field basis line this flow expects on both the four-element block and the audit. */
     const val MATCH_BASIS_LINE = ELEMENT_MATCH_BASIS + "：amount · currency · direction · account · occurred_at_window"
 
-    /** The audit's headline for the confirmed destination leg (`P503ReconciliationPresentation.kt:468`). */
-    val AUDIT_HEADLINE: String = "分录 " + TRANSFER_DESTINATION_POSTING_ID + " · 已核对"
+    /**
+     * The audit's ANDROID headline, mirroring `reconciliationAuditHeadlineText(audit, ANDROID)`
+     * (`P503ReconciliationPresentation.kt:631-639`): the reconciliation status label, never the
+     * internal posting id (the id stays complete in 技术信息).
+     */
+    fun auditStatusHeadline(status: P408ReconciliationStatus): String = "对账状态：" + status.label
 
     /** The per-item refusal line for the seeded candidate (`P503ImportBatchPresentation.kt:616`). */
     val BATCH_REJECTED_LINE: String =
@@ -297,11 +325,16 @@ internal object P807Q2Flow2Facts {
     /** The audit's duty line for a persisted responsibility (mirrors `reconciliationAuditResponsibilityText`). */
     fun auditResponsibilityLine(responsibility: P408EvidenceResponsibility): String = ELEMENT_RESPONSIBILITY + "：" + responsibility.storageValue
 
-    /** The audit's human-decision line (mirrors the human-decision element of `reconciliationAuditDecisionLines`). */
+    /**
+     * The audit's ANDROID human-decision line, mirroring the element of
+     * `reconciliationAuditDecisionLines(link, ANDROID)` (`P503ReconciliationPresentation.kt:581`):
+     * the persisted decision token plus the stored instant as a Shanghai wall clock
+     * (`cStoredAuditText`, `P503LedgerViewPresentation.kt:1257-1267`).
+     */
     fun auditHumanDecisionLine(
         humanDecision: String,
         decidedAt: String,
-    ): String = ELEMENT_HUMAN_DECISION + "：" + humanDecision + " · " + decidedAt
+    ): String = ELEMENT_HUMAN_DECISION + "：" + humanDecision + " · " + p807Q2Flow2StoredAuditText(decidedAt)
 
     /** The audit's source line for a read link (mirrors `reconciliationAuditSourceText`). */
     fun auditSourceLine(
@@ -767,6 +800,60 @@ internal class P807Q2Flow2Ui(
     /** Every visible node's text, used by the flow to assert a summary line's tail (counts) and absences. */
     fun visibleTexts(): List<String> = flow.appNodes().map(flow::textOf).filter { text -> text.isNotBlank() }
 
+    /**
+     * Expands the ONE 技术信息 disclosure that follows [anchorLine] in TREE order and returns the
+     * resulting expanded spoken sentence (`技术信息，共 N 项：…`), or `null` when no disclosure
+     * appears there. The anchor names the section, so a neighbouring disclosure — the bind step's
+     * target-account fold — cannot be expanded by mistake. The collapsed body is not exposed, so
+     * the expanded sentence is the evidence that the full original value is readable; a failure
+     * dumps the window instead of passing silently.
+     */
+    fun expandTechnicalInfoAfter(
+        anchorLine: String,
+        timeoutMillis: Long = NODE_TIMEOUT_MILLIS,
+    ): String? {
+        runCatching { flow.seekApp(anchorLine) }
+        repeat(TECHNICAL_INFO_SCROLL_ATTEMPTS) { attempt ->
+            val nodes = flow.ui.nodes(flow.ui.root())
+            val anchorIndex = nodes.indexOfFirst { node -> flow.textOf(node) == anchorLine }
+            val target =
+                if (anchorIndex >= 0) {
+                    nodes.drop(anchorIndex + 1).firstOrNull { node ->
+                        flow.descriptionOf(node).startsWith(P807Q2Flow2Facts.TECHNICAL_INFO_COLLAPSED_PREFIX)
+                    }
+                } else {
+                    null
+                }
+            if (target == null) {
+                runCatching { flow.ui.scroll() }
+            } else if (!target.isVisibleToUser) {
+                log("$tag technical info target below the fold anchor=$anchorLine attempt=$attempt")
+                runCatching { flow.ui.scroll() }
+            } else {
+                log("$tag technical info expand anchor=$anchorLine attempt=$attempt ${describe(target)}")
+                flow.tap(target)
+                val expanded =
+                    runCatching {
+                        flow.ui.await(timeoutMillis) {
+                            flow.ui
+                                .nodes(flow.ui.root())
+                                .any { node -> flow.descriptionOf(node).startsWith(P807Q2Flow2Facts.TECHNICAL_INFO_EXPANDED_PREFIX) }
+                        }
+                    }
+                if (expanded.isSuccess) {
+                    return flow.ui
+                        .nodes(flow.ui.root())
+                        .firstOrNull { node -> flow.descriptionOf(node).startsWith(P807Q2Flow2Facts.TECHNICAL_INFO_EXPANDED_PREFIX) }
+                        ?.let(flow::descriptionOf)
+                }
+                log("$tag technical info expansion not observed anchor=$anchorLine attempt=$attempt")
+            }
+            SystemClock.sleep(POLL_MILLIS)
+        }
+        flow.dumpUiSnapshot("expandTechnicalInfoAfter:$anchorLine")
+        return null
+    }
+
     private fun awaitDecisionForm(timeoutMillis: Long = DECISION_FORM_TIMEOUT_MILLIS): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMillis
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -1206,6 +1293,9 @@ internal class P807Q2Flow2Ui(
         /** The selection/decision click retries (the frozen flow-1 `SELECTION_CLICK_ATTEMPTS` value). */
         const val SELECTION_ATTEMPTS = 3
 
+        /** How many forward scrolls may bring the 技术信息 disclosure below its anchor into view. */
+        const val TECHNICAL_INFO_SCROLL_ATTEMPTS = 8
+
         /** The poll interval used while proving a selection took effect (ms). */
         const val PROBE_POLL_MILLIS = 250L
 
@@ -1236,15 +1326,25 @@ internal class P807Q2Flow2Ui(
 }
 
 /**
- * The status-history line of one `posting_reconciliation_history` entry, mirroring
- * `reconciliationAuditStatusHistoryText` (`P503ReconciliationPresentation.kt:460`):
- * `#<sequence> <label> <occurredAt>`.
+ * A stored audit instant TEXT as the ANDROID display text, mirroring `cStoredAuditText(raw, ANDROID)`
+ * (`P503LedgerViewPresentation.kt:1257-1267`). A parseable instant renders the frozen reporting
+ * zone's wall clock through the SAME production formatter (`presentationWallClockText`,
+ * `PresentationProjection.kt:78-85`); a value that is not a parseable instant is echoed verbatim,
+ * so the stored fact is never replaced by a guess.
+ */
+internal fun p807Q2Flow2StoredAuditText(raw: String): String =
+    runCatching { Instant.parse(raw.trim()) }.getOrNull()?.let(::presentationWallClockText) ?: raw
+
+/**
+ * The status-history line of one `posting_reconciliation_history` entry, mirroring the ANDROID
+ * branch of `reconciliationAuditStatusHistoryText` (`P503ReconciliationPresentation.kt:607-614`):
+ * `#<sequence> <label> <Shanghai wall clock>`.
  */
 internal fun p807Q2Flow2StatusHistoryLine(
     sequence: Long,
     status: P408ReconciliationStatus,
     occurredAt: String,
-): String = "#$sequence " + status.label + " " + occurredAt
+): String = "#$sequence " + status.label + " " + p807Q2Flow2StoredAuditText(occurredAt)
 
 /**
  * The accumulated-total face of one summary read as the flow compares it: the `(currency, status)`

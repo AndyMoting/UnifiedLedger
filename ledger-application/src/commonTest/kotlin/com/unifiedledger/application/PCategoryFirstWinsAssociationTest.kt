@@ -60,7 +60,7 @@ class PCategoryFirstWinsAssociationTest {
     @Test
     fun monthlyAggregationNamesTheSmallestIdCategoryForADuplicatedMapping() {
         val rows = listOf(expenseRow())
-        val activity =
+        val rowsByMonth =
             MonthlyBuckets
                 .aggregate(
                     rows = rows,
@@ -68,7 +68,7 @@ class PCategoryFirstWinsAssociationTest {
                     catalog = duplicateCatalog(),
                     months = listOf(YearMonth(2026, 3)),
                 )
-                .getValue(YearMonth(2026, 3))
+        val activity = rowsByMonth.getValue(YearMonth(2026, 3))
 
         // The product tree rule is unchanged: the posting-mapped leaf is grouped under its parent,
         // so the level-1 node is 餐饮 and the first-wins leaf appears as its only child.

@@ -226,10 +226,11 @@ B 在 `LEGACY` profile 之外只改显示与布局，落地落点如下（本小
 
 - 详情、搜索、账户流水、报表与日历消费同一投影；发生/统计时间分列。
 - 分类关联统一为 A 的稳定 `CategoryId` 文本 first-wins：C 批把 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 现有的重复 `posting_account_id` last-wins 与投影对齐；A 不改这四处生产文件，只登记差异（§8 第 7 条）。四处共用同一 first-wins fold，因此重复 `posting_account_id`（目录异常态，产品路径每个 posting 账户只有一条映射）下 Android 与 Desktop 一致取最小 `CategoryId`；这是 `D-369` 明确批准的对齐，除该异常态外 Desktop 的 LEGACY 呈现逐字不变。
-- 搜索与报表下钻的结果行由 B 的共享行组件承接呈现，C 不另做该行的视觉重排；C 只提供并被 B 消费同一行投影与 profile 选择点。
+- 搜索与报表下钻的结果行由 B 的共享行组件承接呈现，C 不另做该行的视觉重排；该行沿用 A 的行投影与 B 的共享行组件，呈现 profile 的选择点由 A 提供（`UiPresentationProfile.kt:18` 的 `LocalUiPresentationProfile`，`P503App.kt:333` 默认 `LEGACY` 的参数），C 不重排该行。
 - 恢复确认预览的账本身份（源/目标）与工件 SHA-256 是用户确认「替换哪一份备份」的必需证据，属于恢复确认证据而非普通技术诊断：保持完整可见，不进入技术信息折叠，不省略、不截断。
 - 对账确认面的四要素（外部证据、证据职责、匹配依据、人工决定）保持可见：外部证据显示持久事实（来源时间原文与原始金额，事实不重写），证据 ID 折叠进技术信息；LEGACY 保留旧的 ID 行。收起时正常面看不到 ID，展开后可读完整 ID。审计回看保留其读取模型实际持有的事实（来源证据、职责、匹配依据与人工决定），不新增不存在的字段。
 - 报告与日历的期间、日均与空日口径沿用 `D-343`；本专项只统一呈现，不重开产品口径。
+- 导入回顾面落地（`P503ImportReview.kt` / `P503ImportReviewPresentation.kt`）：ANDROID profile 把候选类型、方向、结算状态与重复处置换成中文业务标签，发生时间改走 A 的上海墙钟原语，候选与重复候选 ID 折叠进共享 `TechnicalInfoSection`；LEGACY 输出逐字不变。`P503SecondaryPresentationTest` 以字面期望覆盖两种 profile 的输出。
 - 技术信息折叠进入二级页面或详情，事实与日志不删除。
 
 ### 7.3 D：widget 与 icon

@@ -225,8 +225,8 @@ internal object P807Q2Flow1Facts {
     /** The detail-only selection-row copy; the checkbox is the single 勾选候选 node in its Row. */
     const val CANDIDATE_SELECTION_HINT = "勾选进入批量确认（须先补齐决策）"
 
-    /** The imported self-entry row's structured kind (the seed candidate is transfer_flow). */
-    const val CANDIDATE_IMPORTED_META_PREFIX = "类型 ordinary_flow"
+    /** The imported self-entry row's kind line prefix (the imported 7.77 CNY candidate is ordinary_flow). */
+    const val CANDIDATE_IMPORTED_META_PREFIX = "类型 普通收支"
 
     /**
      * The self-entry row names 一级分类 餐饮 + 二级分类 早餐, so the D-18/D-19 basis carries the full

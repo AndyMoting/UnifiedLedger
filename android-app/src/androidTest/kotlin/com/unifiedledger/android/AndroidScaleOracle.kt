@@ -48,9 +48,35 @@ internal data class ScaleRow(
                 else -> 0
             }
     val amountText: String get() = "${amount / 100}.${(amount % 100).toString().padStart(2, '0')} CNY"
-    val metaText: String get() = "类型 ordinary_flow；发生 2026-01-15T08:00:00+08:00；方向 out；状态 settled；重复 ${duplicate ?: "无"}"
+
+    /**
+     * The rendered kind line under the Android profile (D-369 C): Chinese business labels, the
+     * `Asia/Shanghai` wall clock of the fixture's `+08:00` source text, the direction under the
+     * ordinary-flow vocabulary and the Chinese duplicate disposition. `AndroidScaleUi`'s row
+     * matcher/signature read back exactly this shape.
+     */
+    val metaText: String
+        get() =
+            "类型 普通收支；发生 2026-01-15T08:00；方向 支出；状态 交易成功；重复 " +
+                (duplicate?.let(::scaleDuplicateLabel) ?: "无")
+
     val signature: String get() = "$amountText|$metaText"
 }
+
+/**
+ * The Chinese duplicate-disposition label of one folded status token, mirroring
+ * `importDuplicateStatusLabel` (`P503ImportReviewPresentation.kt`): the oracle restates the copy
+ * because that function is `internal` to `app-ui`. An unknown token is echoed verbatim.
+ */
+internal fun scaleDuplicateLabel(token: String): String =
+    when (token) {
+        "DEFERRED" -> "疑似重复——待审核"
+        "CONFIRMED_DUPLICATE" -> "重复已确认——阻断"
+        "CONFIRMED_DISTINCT" -> "已确认不重复"
+        "DISMISSED_LOOKALIKE" -> "已忽略相似"
+        "REJECTED" -> "已拒绝"
+        else -> token
+    }
 
 internal data class ScaleSnapshot(
     val generation: String,

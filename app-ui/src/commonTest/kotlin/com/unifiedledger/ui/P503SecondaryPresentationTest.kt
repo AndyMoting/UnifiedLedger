@@ -1,6 +1,12 @@
 package com.unifiedledger.ui
 
 import com.unifiedledger.application.CreationEntry
+import com.unifiedledger.application.ImportCandidateId
+import com.unifiedledger.application.ImportCompleteness
+import com.unifiedledger.application.ImportDuplicateCandidateId
+import com.unifiedledger.application.ImportDuplicateStatus
+import com.unifiedledger.application.ImportFundingState
+import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.LedgerCurrentState
 import com.unifiedledger.application.P408EvidenceResponsibility
 import com.unifiedledger.application.P408MatchBasis
@@ -830,4 +836,156 @@ class P503SecondaryPresentationTest {
                 ),
         )
     }
+
+    // ---- D-369 C: the import review face's business labels, time and technical area ----
+
+    @Test
+    fun importCandidateMetaKeepsTheDesktopLineVerbatim() {
+        val row = importRow(duplicateStatus = ImportDuplicateStatus.DEFERRED)
+
+        assertEquals(
+            "类型 ordinary_flow；发生 2026-11-27T17:05:00Z；方向 out；状态 settled；重复 DEFERRED",
+            importCandidateMetaText(row, UiPresentationProfile.LEGACY),
+        )
+        // The default argument is LEGACY, so every existing desktop call site keeps its exact output.
+        assertEquals(importCandidateMetaText(row, UiPresentationProfile.LEGACY), importCandidateMetaText(row))
+    }
+
+    @Test
+    fun importCandidateMetaAndroidUsesBusinessLabelsAndTheShanghaiWallClock() {
+        val row = importRow(duplicateStatus = ImportDuplicateStatus.DEFERRED)
+
+        // The stored 17:05Z instant is 01:05 the NEXT Shanghai day: the label carries the local
+        // wall clock, never the bare ISO instant.
+        assertEquals(
+            "类型 普通收支；发生 2026-11-28T01:05；方向 支出；状态 交易成功；重复 疑似重复——待审核",
+            importCandidateMetaText(row, UiPresentationProfile.ANDROID),
+        )
+    }
+
+    @Test
+    fun importCandidateMetaEchoesNullFieldsUnknownTokensAndAnUnparseableTime() {
+        val unknown = importRow(occurredAt = "未提供时间", statusToken = "trade_success")
+        assertEquals(
+            "类型 普通收支；发生 未提供时间；方向 支出；状态 trade_success；重复 无",
+            importCandidateMetaText(unknown, UiPresentationProfile.ANDROID),
+        )
+        val missingTime = importRow(occurredAt = null)
+        assertEquals(
+            "类型 普通收支；方向 支出；状态 交易成功；重复 无",
+            importCandidateMetaText(missingTime, UiPresentationProfile.ANDROID),
+        )
+    }
+
+    @Test
+    fun importDirectionLabelsFollowTheCandidateKind() {
+        assertEquals("转入", importDirectionLabel("transfer_flow", "in"))
+        assertEquals("转出", importDirectionLabel("transfer_flow_missing_leg", "out"))
+        assertEquals("收入", importDirectionLabel("ordinary_flow", "in"))
+        assertEquals("支出", importDirectionLabel("ordinary_flow", "out"))
+        // An unknown persisted token is echoed, never guessed into a direction.
+        assertEquals("不计收支", importDirectionLabel("ordinary_flow", "不计收支"))
+    }
+
+    @Test
+    fun importKindLabelsCoverEveryPersistedTokenAndTheCreditRefundVariant() {
+        assertEquals("普通收支", importCandidateKindLabel(importRow(candidateKind = "ordinary_flow")))
+        assertEquals("转账", importCandidateKindLabel(importRow(candidateKind = "transfer_flow")))
+        assertEquals("转账（缺少对方腿）", importCandidateKindLabel(importRow(candidateKind = "transfer_flow_missing_leg")))
+        assertEquals("信用消费", importCandidateKindLabel(importRow(candidateKind = "credit_expense")))
+        assertEquals(
+            "信用退款",
+            importCandidateKindLabel(importRow(candidateKind = "credit_expense", paymentProfileVariant = "credit_expense_refund")),
+        )
+        assertEquals("信用还款", importCandidateKindLabel(importRow(candidateKind = "credit_repayment")))
+        assertEquals("混合支付", importCandidateKindLabel(importRow(candidateKind = "mixed_payment")))
+        assertEquals("未知来源", importCandidateKindLabel(importRow(candidateKind = "未知来源")))
+    }
+
+    @Test
+    fun importDuplicateLabelsCoverEveryFoldedDisposition() {
+        assertEquals("疑似重复——待审核", importDuplicateStatusLabel(ImportDuplicateStatus.DEFERRED))
+        assertEquals("重复已确认——阻断", importDuplicateStatusLabel(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
+        assertEquals("已确认不重复", importDuplicateStatusLabel(ImportDuplicateStatus.CONFIRMED_DISTINCT))
+        assertEquals("已忽略相似", importDuplicateStatusLabel(ImportDuplicateStatus.DISMISSED_LOOKALIKE))
+        assertEquals("已拒绝", importDuplicateStatusLabel(ImportDuplicateStatus.REJECTED))
+    }
+
+    @Test
+    fun groupItemKeepsTheDesktopIdentifierLineAndNamesTheCandidateByOrdinalOnAndroid() {
+        val item = groupItem()
+
+        assertEquals("候选 candidate-import-1", groupDispositionItemCandidateText(item, UiPresentationProfile.LEGACY))
+        // The default argument is LEGACY, so the desktop card keeps its exact subject line.
+        assertEquals("候选 candidate-import-1", groupDispositionItemCandidateText(item))
+        assertEquals("候选第 3 项", groupDispositionItemCandidateText(item, UiPresentationProfile.ANDROID))
+        // A not-yet-assigned ordinal degrades to the bare noun, never a fabricated position.
+        assertEquals("候选", groupDispositionItemCandidateText(groupItem(ordinal = 0), UiPresentationProfile.ANDROID))
+    }
+
+    @Test
+    fun groupItemTechnicalAreaKeepsBothIdentifiersComplete() {
+        assertEquals(
+            listOf(TechnicalInfoRow("候选 ID", "candidate-import-1"), TechnicalInfoRow("重复候选 ID", "duplicate-1")),
+            groupDispositionItemTechnicalRows(groupItem()),
+        )
+
+        val expanded = cTechnicalInfoDisclosure(groupDispositionItemTechnicalRows(groupItem()), expanded = true)
+        assertTrue(expanded.visibleText().contains("候选 ID：candidate-import-1"), expanded.visibleText())
+        assertTrue(expanded.spokenText().contains("重复候选 ID duplicate-1"), expanded.spokenText())
+    }
+
+    @Test
+    fun comparisonToggleDescriptionKeepsTheDesktopIdSentenceAndUsesTheOrdinalOnAndroid() {
+        val candidateId = ImportCandidateId("candidate-import-1")
+
+        assertEquals("展开候选 candidate-import-1 的第 2 条比较信息", groupDispositionItemComparisonToggleDescription(expanded = false, candidateId = candidateId, itemOrdinal = 2))
+        assertEquals("收起候选 candidate-import-1 的第 1 条比较信息", groupDispositionItemComparisonToggleDescription(expanded = true, candidateId = candidateId, itemOrdinal = 1))
+
+        val android = groupDispositionItemComparisonToggleDescription(expanded = false, candidateId = candidateId, itemOrdinal = 2, groupOrdinal = 3, profile = UiPresentationProfile.ANDROID)
+        assertEquals("展开候选第 3 项的第 2 条比较信息", android)
+        assertFalse(android.contains(candidateId.value), android)
+    }
+
+    private fun importRow(
+        candidateKind: String = "ordinary_flow",
+        occurredAt: String? = "2026-11-27T17:05:00Z",
+        directionToken: String? = "out",
+        statusToken: String? = "settled",
+        duplicateStatus: ImportDuplicateStatus? = null,
+        paymentProfileVariant: String? = null,
+    ): ImportReviewRow =
+        ImportReviewRow(
+            candidateId = ImportCandidateId("candidate-import-1"),
+            candidateKind = candidateKind,
+            sourceInputRef = "pick-handle-1",
+            amountMinor = 3_580L,
+            currencyCode = "CNY",
+            currencyPrecision = 2,
+            occurredAt = occurredAt,
+            directionToken = directionToken,
+            statusToken = statusToken,
+            fundingState = ImportFundingState.SETTLED,
+            completeness = ImportCompleteness.VALID_COMPLETE,
+            contentHash = "sha256:fixed-content-hash",
+            candidateStatus = "pending_confirmation",
+            requiresConfirmation = true,
+            confidence = "high",
+            duplicateStatus = duplicateStatus,
+            paymentProfileVariant = paymentProfileVariant,
+            paymentProfileAssetLegKindToken = null,
+            paymentProfileCreditLegKindToken = null,
+        )
+
+    private fun groupItem(ordinal: Int = 3): ImportDuplicateGroupItemState =
+        ImportDuplicateGroupItemState(
+            item =
+                ImportDuplicateGroupDispositionItem(
+                    candidateId = ImportCandidateId("candidate-import-1"),
+                    duplicateCandidateId = ImportDuplicateCandidateId("duplicate-1"),
+                    comparisonSnapshot = "{\"amount_minor\":3580}",
+                    expectedComparisonFingerprint = "sha256:fixed-fingerprint",
+                ),
+            ordinal = ordinal,
+        )
 }

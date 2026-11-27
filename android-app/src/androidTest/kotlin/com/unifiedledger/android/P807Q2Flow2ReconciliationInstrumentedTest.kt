@@ -218,8 +218,11 @@ class P807Q2Flow2ReconciliationInstrumentedTest {
 
         // ---------------------------------------------------------------- L5: four elements + confirm
         assertTrue("${facts.PREFIX} the candidate selection must open the four-element block", ui.selectCandidate())
+        // D-369 C: the ANDROID 外部证据 line shows the persisted facts (source-time text + raw
+        // amount), never the opaque evidence id; the four elements themselves stay visible.
+        val confirmEvidenceLine = facts.confirmEvidenceFactsLine(evidenceAfterBind)
         sequenceOf(
-            facts.AUDIT_EXTERNAL_EVIDENCE_LINE,
+            confirmEvidenceLine,
             facts.FOUR_ELEMENT_RESPONSIBILITY_LINE,
             facts.MATCH_BASIS_LINE,
             facts.NATURAL_DAY_DISTANCE,
@@ -228,6 +231,22 @@ class P807Q2Flow2ReconciliationInstrumentedTest {
             ui.seek(line)
             assertTrue("${facts.PREFIX} the four-element block must show the exact line [$line]", ui.hasText(line))
         }
+        assertNull(
+            "${facts.PREFIX} the evidence id must not appear on the normal confirm rows",
+            ui.awaitNoText(facts.SEEDED_EVIDENCE_ID),
+        )
+        assertNull(
+            "${facts.PREFIX} the confirm block must not render the LEGACY id line",
+            ui.awaitNoText(facts.ELEMENT_EXTERNAL_EVIDENCE + "：" + facts.SEEDED_EVIDENCE_ID),
+        )
+        val confirmTechnical =
+            checkNotNull(ui.expandTechnicalInfoAfter(facts.FOUR_ELEMENT_HUMAN_DECISION_LINE)) {
+                "${facts.PREFIX} the confirm block must carry a 技术信息 disclosure below the four elements"
+            }
+        assertTrue(
+            "${facts.PREFIX} the expanded confirm 技术信息 must read the full evidence id [$confirmTechnical]",
+            confirmTechnical.contains("证据 ID " + facts.SEEDED_EVIDENCE_ID),
+        )
         assertTrue("${facts.PREFIX} 确认核对 must be accepted and answer its success notice", ui.confirm())
 
         // ---------------------------------------------------------------- L6: the queue flips
@@ -294,6 +313,7 @@ class P807Q2Flow2ReconciliationInstrumentedTest {
             )
         val portBasisLine = facts.auditBasisLine(decision.matchBasis)
         val portResponsibilityLine = facts.auditResponsibilityLine(link.responsibility)
+        val portHeadlineLine = facts.auditStatusHeadline(reconciliationRow.status)
         val portHumanDecisionLine = facts.auditHumanDecisionLine(decision.humanDecision, decision.decidedAt)
         val portHistoryLine = p807Q2Flow2StatusHistoryLine(checkedHistory.sequence, checkedHistory.status, checkedHistory.occurredAt)
         assertEquals(
@@ -312,7 +332,7 @@ class P807Q2Flow2ReconciliationInstrumentedTest {
             portResponsibilityLine,
         )
         sequenceOf(
-            facts.AUDIT_HEADLINE,
+            portHeadlineLine,
             facts.AUDIT_SOURCE_LINE,
             portResponsibilityLine,
             portBasisLine,
@@ -324,6 +344,30 @@ class P807Q2Flow2ReconciliationInstrumentedTest {
             ui.seek(line)
             assertTrue("${facts.PREFIX} the audit surface must show the port's own line verbatim [$line]", ui.hasText(line))
         }
+        assertNull(
+            "${facts.PREFIX} the audit headline and rows must not name the raw posting id",
+            ui.awaitNoText("分录 " + facts.TRANSFER_DESTINATION_POSTING_ID),
+        )
+        assertNull(
+            "${facts.PREFIX} the evidence id must not appear on the normal audit rows",
+            ui.awaitNoText(facts.SEEDED_EVIDENCE_ID),
+        )
+        val auditTechnical =
+            checkNotNull(ui.expandTechnicalInfoAfter(portHistoryLine)) {
+                "${facts.PREFIX} the audit must carry a 技术信息 disclosure below its history"
+            }
+        assertTrue(
+            "${facts.PREFIX} the expanded audit 技术信息 must read the full evidence id [$auditTechnical]",
+            auditTechnical.contains("证据 ID " + facts.SEEDED_EVIDENCE_ID),
+        )
+        assertTrue(
+            "${facts.PREFIX} the expanded audit 技术信息 must read the full posting id [$auditTechnical]",
+            auditTechnical.contains("分录 ID " + facts.TRANSFER_DESTINATION_POSTING_ID),
+        )
+        assertTrue(
+            "${facts.PREFIX} the expanded audit 技术信息 must read the stored decision time verbatim [$auditTechnical]",
+            auditTechnical.contains("核对决定时间（原值） " + decision.decidedAt),
+        )
         log(
             "${facts.PREFIX} audit link=${link.linkId} evidence=${link.evidenceId} basis=[${decision.matchBasis.joinToString(";")}] " +
                 "distance=${decision.naturalDayDistance} decision=${decision.humanDecision} at=${decision.decidedAt}",
