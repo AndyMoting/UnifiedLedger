@@ -50,7 +50,10 @@ internal fun restoreSwitchConfirmEnabled(state: P503AppState.BackupRestore): Boo
 // ------------------------------------------------------------------ the 7-field preview (spec 5.5)
 
 /** The ruled preview field list, one line per field, in the spec's order. No secret, no path. */
-internal fun restorePreviewLines(summary: RestorePreflightSummary): List<String> =
+internal fun restorePreviewLines(
+    summary: RestorePreflightSummary,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): List<String> =
     listOf(
         "容器格式：版本 ${summary.containerFormatVersion}（${summary.containerSize} 字节）",
         "账本结构版本：${summary.sourceSchemaVersion} → ${summary.migratedSchemaVersion}",
@@ -58,11 +61,17 @@ internal fun restorePreviewLines(summary: RestorePreflightSummary): List<String>
         "工件摘要：${summary.authenticatedArtifactSha256Hex}",
         "校验：完整性 ${checkText(summary.integrityOk)}、外键 ${checkText(summary.foreignKeyOk)}、领域 ${checkText(summary.domainOk)}",
         "将替换为：${summary.accountsCount} 个账户、${summary.categoriesCount} 个分类、${summary.transactionsCount} 笔交易",
-        "预检时间：${restoreTimestampText(summary.preflightEpochMillis)}",
+        "预检时间：${restoreTimestampText(summary.preflightEpochMillis, profile)}",
     )
 
-/** The UTC ISO-8601 display of the preflight timestamp (the host's clock captured it; no locale). */
-internal fun restoreTimestampText(epochMillis: Long): String = Instant.fromEpochMilliseconds(epochMillis).toString()
+/**
+ * The preflight timestamp. LEGACY keeps the UTC ISO-8601 text the host clock produced; the Android
+ * profile shows the same instant as the `Asia/Shanghai` wall clock every other business time uses.
+ */
+internal fun restoreTimestampText(
+    epochMillis: Long,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String = cBusinessTimeText(Instant.fromEpochMilliseconds(epochMillis), profile)
 
 private fun checkText(ok: Boolean): String = if (ok) "通过" else "未通过"
 

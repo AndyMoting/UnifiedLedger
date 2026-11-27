@@ -483,6 +483,10 @@ internal fun P503TransactionDetailScreen(
     versionHistory: com.unifiedledger.application.TransactionVersionHistoryResult? = null,
 ) {
     val palette = LocalP8Palette.current
+    // D-369 C: the profile selection point of the secondary surfaces. LEGACY (Desktop's composition
+    // root never names a profile) keeps every line of this page byte-identical; ANDROID switches the
+    // business language and moves the internal identifiers into the collapsed 技术信息 area.
+    val presentationProfile = LocalUiPresentationProfile.current
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
     ) {
@@ -499,7 +503,7 @@ internal fun P503TransactionDetailScreen(
                 // 旗帜行 (canvas 04): the direction/status pill. The kind is the transaction's
                 // effective business kind — one honest pill, no fabricated direction split.
                 Text(
-                    data.kind.name,
+                    cBusinessKindText(data.kind, presentationProfile),
                     style = MaterialTheme.typography.labelLarge,
                     color = palette.onSurfaceVariant,
                 )
@@ -516,7 +520,7 @@ internal fun P503TransactionDetailScreen(
                     )
                 }
                 Text(
-                    transactionDetailHeadlineSubLine(data),
+                    transactionDetailHeadlineSubLine(data, presentationProfile),
                     style = MaterialTheme.typography.bodySmall,
                     color = palette.onSurfaceVariant,
                 )
@@ -568,8 +572,25 @@ internal fun P503TransactionDetailScreen(
                     } else {
                         annotationHistory.forEach { entry ->
                             Text(
-                                transactionAnnotationHistoryLine(entry, tagNameOf),
+                                if (presentationProfile == UiPresentationProfile.LEGACY) {
+                                    transactionAnnotationHistoryLine(entry, tagNameOf)
+                                } else {
+                                    cTransactionAnnotationUserLine(entry, tagNameOf, presentationProfile)
+                                },
                                 style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (presentationProfile == UiPresentationProfile.ANDROID) {
+                            // D-369 C: the revision's seen-version id and request id leave the normal
+                            // line and stay readable behind the one expandable 技术信息 control.
+                            TechnicalInfoSection(
+                                rows =
+                                    annotationHistory.flatMap { entry ->
+                                        cTransactionAnnotationTechnicalRows(entry).map { row ->
+                                            TechnicalInfoRow("修订 ${entry.annotationRevision} · ${row.label}", row.value)
+                                        }
+                                    },
+                                toggleKey = annotationHistory.map { it.annotationRevision },
                             )
                         }
                     }
@@ -588,10 +609,18 @@ internal fun P503TransactionDetailScreen(
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
                         Text("账目信息", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
-                        Text("发生时间：${data.occurredAt}", style = MaterialTheme.typography.bodyMedium)
-                        Text("统计时间：${data.statisticsAt}", style = MaterialTheme.typography.bodyMedium)
-                        Text("备注：${data.note ?: "无"}", style = MaterialTheme.typography.bodyMedium)
-                        Text("类型：${data.kind}", style = MaterialTheme.typography.bodyMedium)
+                        if (presentationProfile == UiPresentationProfile.LEGACY) {
+                            Text("发生时间：${data.occurredAt}", style = MaterialTheme.typography.bodyMedium)
+                            Text("统计时间：${data.statisticsAt}", style = MaterialTheme.typography.bodyMedium)
+                            Text("备注：${data.note ?: "无"}", style = MaterialTheme.typography.bodyMedium)
+                            Text("类型：${data.kind}", style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            // D-369 C: the user-facing rows first — the Shanghai wall clock, the note and
+                            // the Chinese business type. The identifiers move to 技术信息 below.
+                            cTransactionDetailUserLines(data, presentationProfile).forEach { line ->
+                                Text(line, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
                         Spacer(Modifier.height(8.dp))
                         Text("金额明细", style = MaterialTheme.typography.titleMedium)
                         data.legs.forEach { leg ->
@@ -625,6 +654,13 @@ internal fun P503TransactionDetailScreen(
                             "对账汇总：${data.reconciliation.rollup?.label ?: "无对账资格"}",
                             style = MaterialTheme.typography.bodyMedium,
                         )
+                        if (presentationProfile == UiPresentationProfile.ANDROID) {
+                            Spacer(Modifier.height(4.dp))
+                            TechnicalInfoSection(
+                                rows = cTransactionDetailTechnicalRows(data),
+                                toggleKey = data.transactionId,
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -685,8 +721,25 @@ internal fun P503TransactionDetailScreen(
                                         Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp)) {
                                             versionHistory.history.versions.forEach { version ->
                                                 Text(
-                                                    transactionVersionHistoryLine(version, versionHistory.history.currentVersionId),
+                                                    if (presentationProfile == UiPresentationProfile.LEGACY) {
+                                                        transactionVersionHistoryLine(version, versionHistory.history.currentVersionId)
+                                                    } else {
+                                                        cTransactionVersionUserLine(version, versionHistory.history.currentVersionId, presentationProfile)
+                                                    },
                                                     style = MaterialTheme.typography.bodySmall,
+                                                )
+                                            }
+                                            if (presentationProfile == UiPresentationProfile.ANDROID) {
+                                                // D-369 C: each version's internal id (and its posting-set id)
+                                                // stays complete, collapsed behind the same 技术信息 control.
+                                                TechnicalInfoSection(
+                                                    rows =
+                                                        versionHistory.history.versions.flatMap { version ->
+                                                            cTransactionVersionTechnicalRows(version).map { row ->
+                                                                TechnicalInfoRow("版本 ${version.versionNumber} · ${row.label}", row.value)
+                                                            }
+                                                        },
+                                                    toggleKey = versionHistory.history.currentVersionId,
                                                 )
                                             }
                                         }
@@ -694,19 +747,19 @@ internal fun P503TransactionDetailScreen(
                                 }
                                 com.unifiedledger.application.TransactionVersionHistoryResult.NotFound ->
                                     Text(
-                                        "版本历史不可用：交易不存在或不在当前账本。",
+                                        transactionVersionHistoryFailureText(com.unifiedledger.application.TransactionVersionHistoryResult.NotFound),
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
                                     )
                                 com.unifiedledger.application.TransactionVersionHistoryResult.InvalidState ->
                                     Text(
-                                        "版本历史不可用：交易数据不一致。",
+                                        transactionVersionHistoryFailureText(com.unifiedledger.application.TransactionVersionHistoryResult.InvalidState),
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
                                     )
                                 com.unifiedledger.application.TransactionVersionHistoryResult.Unavailable ->
                                     Text(
-                                        "无法读取版本历史（本地数据库不可用）。",
+                                        transactionVersionHistoryFailureText(com.unifiedledger.application.TransactionVersionHistoryResult.Unavailable),
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
                                     )
@@ -716,11 +769,11 @@ internal fun P503TransactionDetailScreen(
                 }
             }
             TransactionDetailResult.NotFound ->
-                Text("交易不存在或不在当前账本。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+                Text(transactionDetailFailureText(TransactionDetailResult.NotFound), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
             TransactionDetailResult.InvalidState ->
-                Text("交易数据不一致，无法展示详情。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+                Text(transactionDetailFailureText(TransactionDetailResult.InvalidState), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
             TransactionDetailResult.Unavailable ->
-                Text("无法读取交易详情（本地数据库不可用）。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+                Text(transactionDetailFailureText(TransactionDetailResult.Unavailable), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
         }
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
@@ -760,7 +813,10 @@ internal fun transactionDetailHeadlineAmount(data: TransactionDetail): String? {
  * when one exists (else the first leg's currency — an honest projection of the payload, never a
  * guess across currencies), plus the persisted occurred time (R-Q06-1).
  */
-internal fun transactionDetailHeadlineSubLine(data: TransactionDetail): String {
+internal fun transactionDetailHeadlineSubLine(
+    data: TransactionDetail,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String {
     val currency =
         transactionDetailHeadlineAmount(data)
             ?.let { headline ->
@@ -774,7 +830,7 @@ internal fun transactionDetailHeadlineSubLine(data: TransactionDetail): String {
                 ?.amount
                 ?.currency
     val currencyPrefix = currency?.let { code -> "${code.code} · " } ?: ""
-    return currencyPrefix + "发生 " + data.occurredAt
+    return currencyPrefix + "发生 " + cBusinessTimeText(data.occurredAt, profile)
 }
 
 /**
@@ -810,4 +866,37 @@ internal fun transactionAnnotationHistoryLine(
         }
     val merchant = entry.merchantId?.value ?: "无"
     return "修订 ${entry.annotationRevision}（${entry.createdAt}）· 所见版本 ${entry.observedTransactionVersionId.value} · 请求 ${entry.requestId} · 标签：$tags · 商家：$merchant"
+}
+
+/**
+ * D-369 C: the one expandable 技术信息 control of the secondary surfaces. Collapsed by default; the
+ * toggle carries a readable 展开/收起 label, the visible rows are the exact stored values and the
+ * TalkBack sentence comes from the SAME [TechnicalInfoDisclosure], so the announced content matches
+ * what is on screen in both states. Nothing here deletes an identifier, request id or diagnostic
+ * code — collapsing only moves it out of the normal user rows.
+ */
+@Composable
+private fun TechnicalInfoSection(
+    rows: List<TechnicalInfoRow>,
+    toggleKey: Any,
+) {
+    var expanded by remember(toggleKey) { mutableStateOf(false) }
+    val disclosure = cTechnicalInfoDisclosure(rows, expanded)
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClickLabel = disclosure.toggleLabel) { expanded = !expanded }
+                    .semantics { contentDescription = disclosure.spokenText() }
+                    .padding(vertical = 4.dp),
+        ) {
+            Text(disclosure.header, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            Text(if (expanded) "▾" else "▸", style = MaterialTheme.typography.bodySmall)
+        }
+        if (expanded) {
+            Text(disclosure.visibleText(), style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }

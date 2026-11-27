@@ -143,7 +143,7 @@ internal fun P503TransactionEditScreen(
             Text("差异预览（旧值 → 新值）", style = MaterialTheme.typography.titleMedium)
             transactionEditDiffLines(preview, categoryNames, accountNames, currency).forEach { line ->
                 Text(
-                    "${line.label}：${line.oldText} → ${line.newText}${if (line.changed) "（已修改）" else ""}",
+                    cDiffLineProjection(line).visibleText,
                     style = MaterialTheme.typography.bodyMedium,
                     // C04 precedent: each preview line announces its old and new value as one node.
                     modifier = Modifier.semantics { contentDescription = transactionEditDiffLineContentDescription(line) },
@@ -289,7 +289,7 @@ internal fun P503TransferEditScreen(
         Text("差异预览（旧值 → 新值）", style = MaterialTheme.typography.titleMedium)
         transferCorrectionPreview(state.origin, state.draft, categoryNames, accountNames).fields.forEach { line ->
             Text(
-                "${line.label}：${line.oldText} → ${line.newText}${if (line.changed) "（已修改）" else ""}",
+                cDiffLineProjection(line).visibleText,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { contentDescription = transferEditDiffLineContentDescription(line) },
             )
@@ -312,7 +312,7 @@ internal fun P503TransferEditScreen(
 }
 
 /** One preview line's TalkBack label: the field, its old value, its new value and whether it changed. */
-internal fun transactionEditDiffLineContentDescription(line: TransactionEditDiffLine): String = "${line.label}，旧值 ${line.oldText}，新值 ${line.newText}${if (line.changed) "，已修改" else "，未修改"}"
+internal fun transactionEditDiffLineContentDescription(line: TransactionEditDiffLine): String = cDiffLineProjection(line).spokenText
 
 /**
  * P7-05.C: the void confirmation page (spec section 4.4). The reason-code picker covers the frozen

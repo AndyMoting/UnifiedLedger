@@ -26,11 +26,7 @@ class QueryTransactionDetail(
     private val catalog: LedgerCatalog,
 ) {
     private val accountsById = catalog.accounts.associateBy { it.id }
-    private val categoryByPostingAccount =
-        catalog.categories
-            .filter { it.postingAccountId != null }
-            .sortedBy { it.id.value }
-            .associateBy { requireNotNull(it.postingAccountId) }
+    private val categoryByPostingAccount = categoryByPostingAccountFirstWins(catalog.categories)
 
     fun query(transactionId: TransactionId): TransactionDetailResult {
         // DEF-A (D-266): a keyed single-row read; the detail surface never materialises the ledger.

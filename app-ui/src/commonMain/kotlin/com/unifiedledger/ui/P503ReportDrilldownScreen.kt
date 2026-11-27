@@ -152,15 +152,7 @@ internal fun p806DrilldownOldContextText(state: P503AppState.ReportDrilldown): S
 
 /** The typed failure copy — one reason per line, never a zero and never an empty claim. */
 internal fun p806DrilldownFailureText(failure: P806SnapshotFailure): String =
-    when (failure) {
-        P806SnapshotFailure.Unavailable -> "明细读取失败，可点击重试。"
-        P806SnapshotFailure.CatalogVersionMismatch -> "账目目录已更新，请从第一页重试。"
-        is P806SnapshotFailure.CatalogReference -> "目录引用不一致（缺账户 / 跨账本 / 币种不符），明细不可用。"
-        P806SnapshotFailure.MissingProjection -> "账目缺少统计时间投影，明细不可用。"
-        P806SnapshotFailure.OccurredAtUnparseable -> "存在无法解析的资金发生时间，明细不可用。"
-        P806SnapshotFailure.InvalidState -> "明细数据不一致，不可用。"
-        P806SnapshotFailure.InvalidWindow -> "明细时间范围无效，不可用。"
-    }
+    p806SnapshotFailureUserText(failure, CPresentationSurface.DRILLDOWN)
 
 /** The keyset-page footer decision over the drilldown's own fields (the shared [FlowFooterState]). */
 internal fun p806DrilldownFooterState(state: P503AppState.ReportDrilldown): FlowFooterState =

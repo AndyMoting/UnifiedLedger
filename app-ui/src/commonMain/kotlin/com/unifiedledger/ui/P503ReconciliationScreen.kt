@@ -190,7 +190,7 @@ private fun ReconciliationQueueRowLine(
         // The row states the leg's own five-state label; whether it already carries an active
         // evidence link is the audit read-back's business (spec section 2.6), so nothing is
         // duplicated here.
-        Text(reconciliationQueueRowText(row), style = MaterialTheme.typography.bodyMedium)
+        Text(reconciliationQueueRowText(row, LocalUiPresentationProfile.current), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -436,7 +436,7 @@ private fun ReconciliationProposalBlock(
                     onClick = { onSelectCandidate(proposalIndex, candidateIndex) },
                     enabled = !state.binding && !state.confirming,
                 )
-                Text(reconciliationCandidateText(candidate), style = MaterialTheme.typography.bodyMedium)
+                Text(reconciliationCandidateText(candidate, LocalUiPresentationProfile.current), style = MaterialTheme.typography.bodyMedium)
             }
             // F11: the audit belongs to the ANCHOR leg, so a sibling leg's candidate is judged
             // neutrally (a block reason is only rendered for the leg the audit actually read).

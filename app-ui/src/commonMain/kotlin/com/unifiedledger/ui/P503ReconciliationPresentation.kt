@@ -14,6 +14,7 @@ import com.unifiedledger.application.P801ReconciledLegEvidenceLink
 import com.unifiedledger.application.P801ReconciledLegLinkHistoryEntry
 import com.unifiedledger.application.P801ReconciledLegStatusEntry
 import com.unifiedledger.application.P801ReconciliationCandidateEvidence
+import com.unifiedledger.application.occurredPresentationTime
 import com.unifiedledger.domain.CurrencyUnit
 
 /*
@@ -163,6 +164,23 @@ internal fun reconciliationResponsibilityText(responsibility: P408EvidenceRespon
 internal fun reconciliationRowDateText(row: P801AccountReconciliationQueueRow): String = row.occurredAt.toString().take(10)
 
 /**
+ * The date of one queue row under a presentation profile.
+ *
+ * D-369 C: the Android profile puts the row on the SAME `Asia/Shanghai` day boundary every other
+ * business surface uses, so a leg whose stored instant falls between UTC 16:00 and 23:59 (already
+ * the next Shanghai day) groups under the day the user sees elsewhere. The LEGACY profile keeps the
+ * raw UTC date it has always printed, so Desktop output is unchanged.
+ */
+internal fun reconciliationRowDateText(
+    row: P801AccountReconciliationQueueRow,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationRowDateText(row)
+        UiPresentationProfile.ANDROID -> occurredPresentationTime(row.occurredAt).localDate().toString()
+    }
+
+/**
  * One queue row's headline (spec section 2.3: 日期、备注或交易类型、该腿精确带符号金额与币种).
  * The amount is the leg's exact signed minor units through [formatMinorUnits] — never a net, never
  * a float.
@@ -172,6 +190,24 @@ internal fun reconciliationQueueRowText(row: P801AccountReconciliationQueueRow):
     val amount = formatMinorUnits(row.amountMinor, row.currency.precision) + " " + row.currency.code
     return "$head · $amount · ${reconciliationStatusText(row.status)}"
 }
+
+/**
+ * The queue row under a presentation profile. The Android profile names the Chinese business type
+ * when the row has no note and renders the `带符号金额 + 空格 + 币种代码` shape; nothing else about the
+ * row (status label, exact minor units, absence copy) changes, and LEGACY keeps the frozen output.
+ */
+internal fun reconciliationQueueRowText(
+    row: P801AccountReconciliationQueueRow,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationQueueRowText(row)
+        UiPresentationProfile.ANDROID -> {
+            val head = reconciliationRowDateText(row, profile) + " · " + (row.note ?: cBusinessKindText(row.transactionKind, profile))
+            val amount = cAmountText(row.amountMinor, row.currency, profile)
+            "$head · $amount · ${reconciliationStatusText(row.status)}"
+        }
+    }
 
 // ------------------------------------------------------------------ summary (spec section 2.3)
 
@@ -259,6 +295,32 @@ internal fun reconciliationCandidateText(candidate: com.unifiedledger.applicatio
     val date = posting.occurredAt.rawText.take(10)
     return "$date · $amount · ${reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance)}"
 }
+
+/**
+ * One candidate line under a presentation profile.
+ *
+ * D-369 C: the Android profile takes the candidate's parsed posting instant and renders its
+ * `Asia/Shanghai` day — the same day boundary as the queue row — while keeping the exact amount,
+ * currency code and natural-day distance untouched. A posting whose stored text carries no
+ * parseable instant falls back to the stored text prefix (an honest echo of the persisted value,
+ * never an invented date). The evidence area's raw source text is a different field and stays
+ * verbatim under both profiles.
+ */
+internal fun reconciliationCandidateText(
+    candidate: com.unifiedledger.application.P408MatchCandidate,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> reconciliationCandidateText(candidate)
+        UiPresentationProfile.ANDROID -> {
+            val posting = candidate.posting
+            val amount = cAmountText(posting.amountMinor, CurrencyUnit(posting.currencyCode, posting.currencyPrecision), profile)
+            val date =
+                posting.occurredAt.instant?.let { instant -> occurredPresentationTime(instant).localDate().toString() }
+                    ?: posting.occurredAt.rawText.take(10)
+            "$date · $amount · ${reconciliationNaturalDayDistanceText(candidate.basis.naturalDayDistance)}"
+        }
+    }
 
 /**
  * One evidence row's line (spec section 2.4): which import row it is (来源时间) and its RAW amount
