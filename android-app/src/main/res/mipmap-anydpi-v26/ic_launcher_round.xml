@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  D-369 D round adaptive launcher icon (spec section 7.3). `android:roundIcon` points here. The
+  layers are identical to `ic_launcher.xml`: the round mask is the launcher's choice, and the glyph
+  already lives inside the unmasked central circle, so no separate artwork is drawn.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
