@@ -1,5 +1,7 @@
 package com.unifiedledger.android
 
+import org.w3c.dom.Document
+import org.w3c.dom.Element
 import java.nio.file.Files
 import java.nio.file.Path
 import javax.xml.parsers.DocumentBuilderFactory
@@ -7,8 +9,6 @@ import kotlin.math.hypot
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import org.w3c.dom.Document
-import org.w3c.dom.Element
 
 /**
  * D-369 D launcher-icon evidence (spec section 7.3; official adaptive-icon design guidance
