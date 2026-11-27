@@ -1119,12 +1119,43 @@ internal fun groupDispositionComparisonBatchToggleDescription(
     itemCount: Int,
 ): String = if (collapsedAll) "展开全部比较信息（共 $itemCount 条）" else "收起全部比较信息（共 $itemCount 条）"
 
-/** The per-item outcome copy of one flattened card item (待处置 / 已标记 / 失败, frozen verbatim). */
-internal fun groupDispositionItemOutcomeText(state: ImportDuplicateGroupItemState): String =
+/**
+ * The per-item outcome copy of one flattened card item under a presentation profile.
+ *
+ * LEGACY keeps the frozen 待处置 / 已标记 / 失败 lines verbatim, including the raw disposition
+ * name and the diagnostic code. ANDROID renders the recorded disposition with the same Chinese
+ * vocabulary the classification groups use, and replaces the rejection's diagnostic code with the
+ * existing explainable zero-write copy; the raw value stays readable in 技术信息
+ * ([groupDispositionItemOutcomeTechnicalRows]).
+ */
+internal fun groupDispositionItemOutcomeText(
+    state: ImportDuplicateGroupItemState,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String =
     when (val outcome = state.outcome) {
         null -> "待处置"
-        is ImportDuplicateGroupItemResult.Reviewed -> "已标记：${outcome.outcome.name}"
-        is ImportDuplicateGroupItemResult.Rejected -> "失败（${outcome.code}）"
+        is ImportDuplicateGroupItemResult.Reviewed ->
+            when (profile) {
+                UiPresentationProfile.LEGACY -> "已标记：${outcome.outcome.name}"
+                UiPresentationProfile.ANDROID -> "已标记：${importDuplicateStatusLabel(outcome.outcome)}"
+            }
+        is ImportDuplicateGroupItemResult.Rejected ->
+            when (profile) {
+                UiPresentationProfile.LEGACY -> "失败（${outcome.code}）"
+                UiPresentationProfile.ANDROID -> "失败：重复审核未通过，未写入任何记录。"
+            }
+    }
+
+/**
+ * The raw outcome fact of one flattened card item, kept complete behind 技术信息 on ANDROID once
+ * the normal face stops printing it: the persisted disposition name or the rejection's diagnostic
+ * code. A still-pending item (待处置) recorded nothing, so it contributes no row.
+ */
+internal fun groupDispositionItemOutcomeTechnicalRows(state: ImportDuplicateGroupItemState): List<TechnicalInfoRow> =
+    when (val outcome = state.outcome) {
+        null -> emptyList()
+        is ImportDuplicateGroupItemResult.Reviewed -> listOf(TechnicalInfoRow("处置结果（原值）", outcome.outcome.name))
+        is ImportDuplicateGroupItemResult.Rejected -> listOf(TechnicalInfoRow("诊断码", outcome.code))
     }
 
 // ------------------------------------------------------------------ overview render model (FOUND-P704-D01-01)

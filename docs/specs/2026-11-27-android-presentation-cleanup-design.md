@@ -230,7 +230,7 @@ B 在 `LEGACY` profile 之外只改显示与布局，落地落点如下（本小
 - 恢复确认预览的账本身份（源/目标）与工件 SHA-256 是用户确认「替换哪一份备份」的必需证据，属于恢复确认证据而非普通技术诊断：保持完整可见，不进入技术信息折叠，不省略、不截断。
 - 对账确认面的四要素（外部证据、证据职责、匹配依据、人工决定）保持可见：外部证据显示持久事实（来源时间原文与原始金额，事实不重写），证据 ID 折叠进技术信息；LEGACY 保留旧的 ID 行。收起时正常面看不到 ID，展开后可读完整 ID。审计回看保留其读取模型实际持有的事实（来源证据、职责、匹配依据与人工决定），不新增不存在的字段。
 - 报告与日历的期间、日均与空日口径沿用 `D-343`；本专项只统一呈现，不重开产品口径。
-- 导入回顾面落地（`P503ImportReview.kt` / `P503ImportReviewPresentation.kt`）：ANDROID profile 把候选类型、方向、结算状态与重复处置换成中文业务标签，发生时间改走 A 的上海墙钟原语，候选与重复候选 ID 折叠进共享 `TechnicalInfoSection`；LEGACY 输出逐字不变。`P503SecondaryPresentationTest` 以字面期望覆盖两种 profile 的输出。
+- 导入回顾面落地（`P503ImportReview.kt` / `P503ImportReviewPresentation.kt`）：ANDROID profile 把候选类型、方向、结算状态、重复处置与逐项处置结果换成中文业务标签（失败行的诊断码进技术信息，正常面给既有零写入文案），发生时间改走 A 的上海墙钟原语，候选/重复候选 ID 与处置原值折叠进共享 `TechnicalInfoSection`；LEGACY 输出逐字不变。`P503SecondaryPresentationTest` 以字面期望覆盖两种 profile 的输出。
 - 技术信息折叠进入二级页面或详情，事实与日志不删除。
 
 ### 7.3 D：widget 与 icon

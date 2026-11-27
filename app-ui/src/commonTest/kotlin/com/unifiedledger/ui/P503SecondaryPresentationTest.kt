@@ -947,6 +947,60 @@ class P503SecondaryPresentationTest {
         assertFalse(android.contains(candidateId.value), android)
     }
 
+    @Test
+    fun groupItemOutcomeKeepsTheDesktopTokensAndUsesBusinessLabelsOnAndroid() {
+        val pending = groupItem()
+        assertEquals("待处置", groupDispositionItemOutcomeText(pending, UiPresentationProfile.LEGACY))
+        assertEquals("待处置", groupDispositionItemOutcomeText(pending, UiPresentationProfile.ANDROID))
+
+        val reviewed = groupItem(outcome = ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
+        assertEquals("已标记：CONFIRMED_DUPLICATE", groupDispositionItemOutcomeText(reviewed, UiPresentationProfile.LEGACY))
+        assertEquals("已标记：重复已确认——阻断", groupDispositionItemOutcomeText(reviewed, UiPresentationProfile.ANDROID))
+        // The default argument is LEGACY, so the desktop card keeps its exact outcome line.
+        assertEquals(groupDispositionItemOutcomeText(reviewed, UiPresentationProfile.LEGACY), groupDispositionItemOutcomeText(reviewed))
+
+        val deferred = groupItem(outcome = ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.DEFERRED))
+        assertEquals("已标记：疑似重复——待审核", groupDispositionItemOutcomeText(deferred, UiPresentationProfile.ANDROID))
+
+        val rejected = groupItem(outcome = ImportDuplicateGroupItemResult.Rejected("SPINE_CANDIDATE_INCOMPLETE"))
+        assertEquals("失败（SPINE_CANDIDATE_INCOMPLETE）", groupDispositionItemOutcomeText(rejected, UiPresentationProfile.LEGACY))
+        assertEquals("失败：重复审核未通过，未写入任何记录。", groupDispositionItemOutcomeText(rejected, UiPresentationProfile.ANDROID))
+        assertFalse(
+            groupDispositionItemOutcomeText(rejected, UiPresentationProfile.ANDROID).contains("SPINE_CANDIDATE_INCOMPLETE"),
+            "the ANDROID outcome line must not print the diagnostic code",
+        )
+    }
+
+    @Test
+    fun groupItemOutcomeTechnicalRowsKeepTheRawRecordedOutcome() {
+        assertTrue(groupDispositionItemOutcomeTechnicalRows(groupItem()).isEmpty())
+
+        val reviewed = groupItem(outcome = ImportDuplicateGroupItemResult.Reviewed(ImportDuplicateStatus.CONFIRMED_DUPLICATE))
+        assertEquals(
+            listOf(TechnicalInfoRow("处置结果（原值）", "CONFIRMED_DUPLICATE")),
+            groupDispositionItemOutcomeTechnicalRows(reviewed),
+        )
+
+        val rejected = groupItem(outcome = ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"))
+        assertEquals(
+            listOf(TechnicalInfoRow("诊断码", "IMPORT_REVIEW_IDS_UNAVAILABLE")),
+            groupDispositionItemOutcomeTechnicalRows(rejected),
+        )
+        val expanded = cTechnicalInfoDisclosure(groupDispositionItemOutcomeTechnicalRows(rejected), expanded = true)
+        assertTrue(expanded.visibleText().contains("诊断码：IMPORT_REVIEW_IDS_UNAVAILABLE"), expanded.visibleText())
+    }
+
+    @Test
+    fun groupItemTechnicalAreaCombinesIdentifiersWithTheRecordedOutcome() {
+        val rejected = groupItem(outcome = ImportDuplicateGroupItemResult.Rejected("IMPORT_REVIEW_IDS_UNAVAILABLE"))
+        val rows = groupDispositionItemTechnicalRows(rejected) + groupDispositionItemOutcomeTechnicalRows(rejected)
+
+        val expanded = cTechnicalInfoDisclosure(rows, expanded = true)
+        assertTrue(expanded.visibleText().contains("候选 ID：candidate-import-1"), expanded.visibleText())
+        assertTrue(expanded.visibleText().contains("重复候选 ID：duplicate-1"), expanded.visibleText())
+        assertTrue(expanded.visibleText().contains("诊断码：IMPORT_REVIEW_IDS_UNAVAILABLE"), expanded.visibleText())
+    }
+
     private fun importRow(
         candidateKind: String = "ordinary_flow",
         occurredAt: String? = "2026-11-27T17:05:00Z",
@@ -977,7 +1031,10 @@ class P503SecondaryPresentationTest {
             paymentProfileCreditLegKindToken = null,
         )
 
-    private fun groupItem(ordinal: Int = 3): ImportDuplicateGroupItemState =
+    private fun groupItem(
+        ordinal: Int = 3,
+        outcome: ImportDuplicateGroupItemResult? = null,
+    ): ImportDuplicateGroupItemState =
         ImportDuplicateGroupItemState(
             item =
                 ImportDuplicateGroupDispositionItem(
@@ -986,6 +1043,7 @@ class P503SecondaryPresentationTest {
                     comparisonSnapshot = "{\"amount_minor\":3580}",
                     expectedComparisonFingerprint = "sha256:fixed-fingerprint",
                 ),
+            outcome = outcome,
             ordinal = ordinal,
         )
 }

@@ -758,14 +758,15 @@ private fun ImportReviewOverviewItem(
                     Text(groupDispositionItemComparisonToggleText(expanded))
                 }
                 Text(
-                    groupDispositionItemOutcomeText(item.state),
+                    groupDispositionItemOutcomeText(item.state, presentationProfile),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (presentationProfile == UiPresentationProfile.ANDROID) {
-                    // D-369 C: the subject and duplicate candidate ids leave the normal rows and
-                    // stay complete behind 技术信息 (the shared disclosure control).
+                    // D-369 C: the subject and duplicate candidate ids AND the raw recorded
+                    // outcome (disposition name / diagnostic code) leave the normal rows and stay
+                    // complete behind 技术信息 (the shared disclosure control).
                     TechnicalInfoSection(
-                        rows = groupDispositionItemTechnicalRows(item.state),
+                        rows = groupDispositionItemTechnicalRows(item.state) + groupDispositionItemOutcomeTechnicalRows(item.state),
                         toggleKey = item.state.item.duplicateCandidateId,
                     )
                 }
