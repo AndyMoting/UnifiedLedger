@@ -174,8 +174,7 @@ internal fun p806CalendarMonthMaxExpense(loaded: P806CalendarView): Long =
  * [CPresentationSurface.CALENDAR] wording, so a new stable failure type is mapped once and the
  * calendar's frozen sentences cannot drift from the mapping (a JVM test pins each one).
  */
-internal fun p806CalendarFailureText(failure: P806SnapshotFailure): String =
-    p806SnapshotFailureUserText(failure, CPresentationSurface.CALENDAR)
+internal fun p806CalendarFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.CALENDAR)
 
 /**
  * The label of the last accepted payload when the shown payload may NOT be the current cursor's own

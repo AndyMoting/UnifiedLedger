@@ -151,8 +151,7 @@ internal fun p806DrilldownOldContextText(state: P503AppState.ReportDrilldown): S
     }
 
 /** The typed failure copy — one reason per line, never a zero and never an empty claim. */
-internal fun p806DrilldownFailureText(failure: P806SnapshotFailure): String =
-    p806SnapshotFailureUserText(failure, CPresentationSurface.DRILLDOWN)
+internal fun p806DrilldownFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.DRILLDOWN)
 
 /** The keyset-page footer decision over the drilldown's own fields (the shared [FlowFooterState]). */
 internal fun p806DrilldownFooterState(state: P503AppState.ReportDrilldown): FlowFooterState =

@@ -243,8 +243,7 @@ internal fun accountFlowOldContextText(state: P503AppState.AccountFlow): String?
     }
 
 /** The typed failure copy — one reason per line, never a zero and never an empty account. */
-internal fun accountFlowFailureText(failure: P806SnapshotFailure): String =
-    p806SnapshotFailureUserText(failure, CPresentationSurface.ACCOUNT_FLOW)
+internal fun accountFlowFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.ACCOUNT_FLOW)
 
 /**
  * The typed-failure face with a REAL retry affordance (an OutlinedButton, the footer's RETRY

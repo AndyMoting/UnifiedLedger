@@ -1023,7 +1023,10 @@ internal fun currentRowAndroidContentDescription(
 // every identifier, request id and diagnostic code readable instead of dropping it.
 
 /** The business name of a kind: the frozen Chinese name on Android, the enum constant on LEGACY. */
-internal fun cBusinessKindText(kind: TransactionKind, profile: UiPresentationProfile): String =
+internal fun cBusinessKindText(
+    kind: TransactionKind,
+    profile: UiPresentationProfile,
+): String =
     when (profile) {
         UiPresentationProfile.LEGACY -> kind.name
         UiPresentationProfile.ANDROID -> transactionKindBusinessName(kind)
@@ -1071,7 +1074,10 @@ internal fun cReadInstantText(
  * The occurred/statistics pair as one line, each value labelled with its own role. The two roles
  * never substitute for each other, and the Android branch never prints either as a bare UTC instant.
  */
-internal fun cPresentationTimesText(times: PresentationTimes, profile: UiPresentationProfile): String =
+internal fun cPresentationTimesText(
+    times: PresentationTimes,
+    profile: UiPresentationProfile,
+): String =
     when (profile) {
         UiPresentationProfile.LEGACY ->
             "发生时间 ${times.occurred.instant} · 统计时间 ${times.statistics.instant}"
@@ -1248,7 +1254,10 @@ internal fun cTransactionAnnotationTechnicalRows(entry: TransactionAnnotationHis
  * an audit value. A value that is not a parseable instant is shown verbatim — the stored fact is
  * never replaced by a guess, and an unparseable value is not silently dropped either.
  */
-internal fun cStoredAuditText(raw: String, profile: UiPresentationProfile): String =
+internal fun cStoredAuditText(
+    raw: String,
+    profile: UiPresentationProfile,
+): String =
     when (profile) {
         UiPresentationProfile.LEGACY -> raw
         UiPresentationProfile.ANDROID ->

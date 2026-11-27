@@ -260,8 +260,7 @@ internal fun p806ReportLastSuccessContextText(
 internal fun p806ReportLastSuccessCaption(): String = "以下为最近一次成功载荷（旧数据）："
 
 /** The typed failure copy (D-343 section 3.8): explainable, never a bare zero and never a retry loop. */
-internal fun p806ReportFailureText(failure: P806SnapshotFailure): String =
-    p806SnapshotFailureUserText(failure, CPresentationSurface.REPORT)
+internal fun p806ReportFailureText(failure: P806SnapshotFailure): String = p806SnapshotFailureUserText(failure, CPresentationSurface.REPORT)
 
 /** The two honest empty successes (D-343 section 3.7.7): no period at all, or a zero-contribution period. */
 internal fun p806ReportEmptyText(state: P806ReportRegionState): String =

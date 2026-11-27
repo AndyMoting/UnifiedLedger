@@ -435,12 +435,12 @@ internal fun correctionAccountOptions(snapshot: CatalogSnapshotView): List<Pair<
         .filter { it.kind == com.unifiedledger.domain.AccountKind.ASSET && it.active }
         .map { it.accountId to it.name }
 
-/** One transfer preview line's TalkBack label: the field, its old value, its new value and whether it changed. */
 /**
- * D-369 C: the ONE difference-preview projection. The transaction-edit and the transfer-correction
- * previews used to build the visible sentence and the TalkBack sentence independently (two
- * near-identical read-aloud functions); both surfaces now read this projection, so the spoken line
- * is derived from the same fields as the text on screen and cannot drift from it.
+ * D-369 C: the ONE difference-preview projection of one preview line — the field, its old value, its
+ * new value and whether it changed. The transaction-edit and the transfer-correction previews used
+ * to build the visible sentence and the TalkBack sentence independently (two near-identical
+ * read-aloud functions); both surfaces now read this projection, so the spoken line is derived from
+ * the same fields as the text on screen and cannot drift from it.
  */
 internal data class CDiffLineProjection(
     val label: String,
@@ -462,11 +462,9 @@ internal fun cDiffLineProjection(
     changed: Boolean,
 ): CDiffLineProjection = CDiffLineProjection(label = label, oldText = oldText, newText = newText, changed = changed)
 
-internal fun cDiffLineProjection(line: TransactionEditDiffLine): CDiffLineProjection =
-    cDiffLineProjection(line.label, line.oldText, line.newText, line.changed)
+internal fun cDiffLineProjection(line: TransactionEditDiffLine): CDiffLineProjection = cDiffLineProjection(line.label, line.oldText, line.newText, line.changed)
 
-internal fun cDiffLineProjection(line: TransferEditDiffLine): CDiffLineProjection =
-    cDiffLineProjection(line.label, line.oldText, line.newText, line.changed)
+internal fun cDiffLineProjection(line: TransferEditDiffLine): CDiffLineProjection = cDiffLineProjection(line.label, line.oldText, line.newText, line.changed)
 
 /** One transfer-correction preview line's TalkBack label, read from the shared projection. */
 internal fun transferEditDiffLineContentDescription(line: TransferEditDiffLine): String = cDiffLineProjection(line).spokenText

@@ -669,8 +669,7 @@ internal fun reconciliationAuditTechnicalRows(audit: P801ReconciledLegAudit): Li
  * match basis and the natural-day distance stay visible beside the confirm action (spec section
  * 2.5), and the identifier remains explicitly viewable here — never silently dropped.
  */
-internal fun reconciliationConfirmTechnicalRows(evidenceId: String): List<TechnicalInfoRow> =
-    listOf(TechnicalInfoRow("证据 ID", evidenceId))
+internal fun reconciliationConfirmTechnicalRows(evidenceId: String): List<TechnicalInfoRow> = listOf(TechnicalInfoRow("证据 ID", evidenceId))
 
 /**
  * The bind step's target-account line, profile-driven.
@@ -699,8 +698,7 @@ internal fun reconciliationTargetAccountText(
  * The ANDROID technical row carrying the bind target's raw account id. It is added whether or not
  * the visible line could name the account, so the identity stays readable and is never deleted.
  */
-internal fun reconciliationTargetAccountTechnicalRows(accountIdValue: String?): List<TechnicalInfoRow> =
-    accountIdValue?.let { id -> listOf(TechnicalInfoRow("目标账户 ID", id)) }.orEmpty()
+internal fun reconciliationTargetAccountTechnicalRows(accountIdValue: String?): List<TechnicalInfoRow> = accountIdValue?.let { id -> listOf(TechnicalInfoRow("目标账户 ID", id)) }.orEmpty()
 
 /** The audit's empty status-history copy (a reconciliation row exists but carries no history). */
 internal fun reconciliationAuditEmptyHistoryText(): String = RECONCILIATION_NO_STATUS_HISTORY_TEXT
