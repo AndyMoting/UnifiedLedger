@@ -137,7 +137,7 @@ class LedgerWidgetSnapshotReaderTest {
                 month = march,
                 generation = 4,
                 catalogVersion = 9L,
-                amounts = WidgetMonthlyAmounts(jpy, 87L, -5L, 82L),
+                amounts = WidgetMonthlyAmounts(jpy, 87L, -5L, 92L),
                 asOf = Instant.parse("2026-03-20T05:00:00Z"),
             )
         val state = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden().withAmounts(true), 5, 7)
@@ -145,7 +145,7 @@ class LedgerWidgetSnapshotReaderTest {
             listOf(
                 "普通收入 87 JPY",
                 "净支出（含退款） -5 JPY",
-                "结余 82 JPY",
+                "结余 92 JPY",
             ),
             state.amountLines,
         )

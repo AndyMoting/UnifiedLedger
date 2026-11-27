@@ -186,6 +186,13 @@ class LauncherIconResourceTest {
         val path = paths.item(0) as Element
         assertEquals("#FFFFFFFF", path.getAttributeNS(androidNs, "strokeColor"), "$relative must be a white mark")
         assertEquals("6", path.getAttributeNS(androidNs, "strokeWidth"), "$relative must use the 6dp stroke")
+        // The 3dp stroke radius used by the safe-zone bound is only true for a ROUND line cap: a
+        // butt/square cap would paint past the endpoint by up to half the stroke width on the axis.
+        assertEquals(
+            "round",
+            path.getAttributeNS(androidNs, "strokeLineCap"),
+            "$relative must round the 6dp stroke so the 3dp safe-zone radius holds",
+        )
         return path.getAttributeNS(androidNs, "pathData")
     }
 
