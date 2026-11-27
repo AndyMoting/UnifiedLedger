@@ -812,8 +812,7 @@ class P503AndroidTabPresentationTest {
             postingAccountId = postingAccountId?.let(::AccountId),
         )
 
-    private fun snapshot(categories: List<CategoryTreeView>): CatalogSnapshotView =
-        CatalogSnapshotView(catalogVersion = 1, manageableAccounts = emptyList(), categories = categories)
+    private fun snapshot(categories: List<CategoryTreeView>): CatalogSnapshotView = CatalogSnapshotView(catalogVersion = 1, manageableAccounts = emptyList(), categories = categories)
 
     private fun categorySnapshot(): CatalogSnapshotView =
         snapshot(
@@ -918,8 +917,7 @@ class P503AndroidTabPresentationTest {
         currency: CurrencyUnit,
         income: Long,
         expense: Long,
-    ): P806CalendarCurrencyView =
-        P806CalendarCurrencyView(currency = currency, ordinaryIncomeMinorUnits = income, netExpenseMinorUnits = expense)
+    ): P806CalendarCurrencyView = P806CalendarCurrencyView(currency = currency, ordinaryIncomeMinorUnits = income, netExpenseMinorUnits = expense)
 
     private fun calendarDay(
         date: LocalDate,
