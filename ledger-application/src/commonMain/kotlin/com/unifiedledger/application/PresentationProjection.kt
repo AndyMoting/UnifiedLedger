@@ -1,17 +1,3 @@
-package com.unifiedledger.application
-
-import com.unifiedledger.domain.AccountId
-import com.unifiedledger.domain.AccountKind
-import com.unifiedledger.domain.CategoryId
-import com.unifiedledger.domain.CurrencyUnit
-import com.unifiedledger.domain.LedgerCatalog
-import com.unifiedledger.domain.Posting
-import com.unifiedledger.domain.TransactionKind
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.toLocalDateTime
-import kotlin.time.Instant
-
 /**
  * Android presentation foundation (D-369 A): pure display projections over the existing read
  * models. Nothing here reads a database, changes a schema, or writes a ledger fact; every function
@@ -26,6 +12,19 @@ import kotlin.time.Instant
  * - category presentation resolves only through the catalog `posting_account_id` association;
  * - an absent value names its own state instead of printing a zero.
  */
+package com.unifiedledger.application
+
+import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.AccountKind
+import com.unifiedledger.domain.CategoryId
+import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerCatalog
+import com.unifiedledger.domain.Posting
+import com.unifiedledger.domain.TransactionKind
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Instant
 
 // ---------------------------------------------------------------------------------------------
 // Business names
@@ -531,14 +530,16 @@ fun projectCategoryShares(entries: List<CategoryShareInput>): CategoryShareProje
     }
     var denominator = 0L
     for (entry in entries) {
-        denominator = checkedPresentationAdd(denominator, entry.amountMinorUnits)
-            ?: return CategoryShareProjection.NoChart(CategoryShareFailure.OVERFLOW)
+        denominator =
+            checkedPresentationAdd(denominator, entry.amountMinorUnits)
+                ?: return CategoryShareProjection.NoChart(CategoryShareFailure.OVERFLOW)
     }
     if (denominator == 0L) return CategoryShareProjection.NoChart(CategoryShareFailure.ZERO_DENOMINATOR)
     val rows = ArrayList<CategoryShareRow>(entries.size)
     for (entry in entries) {
-        val tenths = fixedTenths(entry.amountMinorUnits, denominator)
-            ?: return CategoryShareProjection.NoChart(CategoryShareFailure.OVERFLOW)
+        val tenths =
+            fixedTenths(entry.amountMinorUnits, denominator)
+                ?: return CategoryShareProjection.NoChart(CategoryShareFailure.OVERFLOW)
         rows.add(CategoryShareRow(entry.categoryId, entry.name, entry.amountMinorUnits, tenths))
     }
     rows.sortWith(compareByDescending<CategoryShareRow> { it.amountMinorUnits }.thenBy { it.categoryId.value })
