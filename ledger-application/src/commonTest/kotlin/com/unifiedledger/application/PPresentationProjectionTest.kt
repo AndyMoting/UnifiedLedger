@@ -151,8 +151,7 @@ class PPresentationProjectionTest {
         parentId: String?,
         name: String,
         postingAccountId: String?,
-    ): CatalogCategoryFixture =
-        CatalogCategoryFixture(CategoryId(id), parentId?.let(::CategoryId), name, postingAccountId)
+    ): CatalogCategoryFixture = CatalogCategoryFixture(CategoryId(id), parentId?.let(::CategoryId), name, postingAccountId)
 
     private data class CatalogCategoryFixture(
         val categoryId: CategoryId,
