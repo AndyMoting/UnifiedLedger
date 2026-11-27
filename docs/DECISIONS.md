@@ -8307,7 +8307,7 @@ Q3 三档的候选身份：每档 `host.json` 的 `talkback.version=16.0.0.73866
 
 1. **专项范围 A–E 分列。** A = 纯显示投影、两 profile 选择点与设备取证配置；B = 主 Tab 呈现；C = 二级页面；D = widget 与图标；E = 固定候选上的设备验收与收口。E 另开决定收口，A 不代判。
 2. **显示契约单一来源。** `ledger-application` 新增纯显示投影：`TransactionKind` 穷尽中文业务名；业务 `Instant` 统一转 `Asia/Shanghai`，发生时间与统计时间带角色、不互换；金额固定为「带符号金额 + 空格 + 币种代码」，精确 minor units，precision 0..18，`Long.MIN_VALUE` 从其十进制文本渲染，不转浮点；汇总标签统一 `净支出（含退款）`／`普通收入`／`结余`；空值区分未加载、失败、无记录、未分类、无对账资格与真实零。
-3. **分类只按目录关联。** 用 `catalog_category.posting_account_id` 关联 `LedgerEntryRow.postings.accountId`，候选按稳定 `CategoryId` 文本升序、显式 first-wins；`QueryTransactionDetail` 对重复 `posting_account_id` 仍是 last-wins，差异登记为 C 批残余，本批不改它。输出保持 posting 原顺序，带稳定 ID、当前名与层级路径，同名二级带一级路径，未分类不猜。`LedgerEntryRow` 不加字段，不改 SQL/driver/schema/迁移。后续 tint 只按稳定 `CategoryId` 确定性映射，A 只给纯 helper/契约。
+3. **分类只按目录关联。** 用 `catalog_category.posting_account_id` 关联 `LedgerEntryRow.postings.accountId`，候选按稳定 `CategoryId` 文本升序、显式 first-wins；`QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍是 last-wins，差异登记为 C 批残余，本批不改这四处生产文件。输出保持 posting 原顺序，带稳定 ID、当前名与层级路径，同名二级带一级路径，未分类不猜。`LedgerEntryRow` 不加字段，不改 SQL/driver/schema/迁移。后续 tint 只按稳定 `CategoryId` 确定性映射，A 只给纯 helper/契约。
 4. **首页后续契约冻结。** 主标题 = 非空备注 → 单分类显示名 → 中文业务类型；`#分类` 角标按 posting 原顺序最多三枚，更多显示其余数量；任何类型的真实 `ASSET`/`LIABILITY` 腿都按 posting 原顺序逐腿显示精确金额——转账、混合支付与普通支出都不把多腿相加成伪净额，单真实腿仍是一行——且这些腿与 `EQUITY` 腿不承担分类义务、不因没有 `posting_account_id` 被记成未分类；未分类只判 `EXPENSE`/`INCOME` 腿，目录缺失或账户未知 fail-closed；未实现占位保持禁用或静态说明；技术 ID、请求码与日志以后进入可展开技术信息区，事实与日志不删。
 5. **横向占比为有理数。** 一位小数固定 half-up，不先转 `Double`；单分类恰为 `100.0%`；分母异常或溢出返回明确无图结果，并保留精确表。
 6. **profile 选择点。** `P503App` 新增默认 `UiPresentationProfile = LEGACY` 参数并沿用 CompositionLocal；Android 组合根显式传 `ANDROID`，Desktop 组合根不传。纯函数默认旧输出，测试覆盖两 profile，不复制整套 UI。
@@ -8318,6 +8318,6 @@ Q3 三档的候选身份：每档 `host.json` 的 `talkback.version=16.0.0.73866
 
 **边界：** 入 = 本条、规格、`docs/PRODUCT_REQUIREMENTS.md` 的呈现条款、`docs/ARCHITECTURE.md` 的呈现指针、`docs/ROADMAP.md`/`docs/CURRENT_STATE.md` 的进行中登记、`docs/CONTRIBUTING.md` 的字号机调用措辞，以及 A 列出的实现与测试文件。出 = B/C/D 的任何界面、widget/图标、SQL/driver/schema/迁移、`.external`、既有测试期望与其他跟踪文档。
 
-**残余（登记，不并入任何 PASS）：** ①`profile=presentation` 的八场景屏幕尚未齐全，当前只覆盖既有面，且新导航与 marker 未在设备上实跑；②分类色板色值未批准；③技术信息折叠控件未实现；④占比舍入后各行之和可能不等于 `100.0%`；⑤多币种占比只按单一币种分母，跨币种排序/合并不在范围内；⑥`QueryTransactionDetail` 的重复 `posting_account_id` last-wins 与本批 first-wins 的差异留 C 批统一。
+**残余（登记，不并入任何 PASS）：** ①`profile=presentation` 的八场景屏幕尚未齐全，当前只覆盖既有面，且新导航与 marker 未在设备上实跑；②分类色板色值未批准；③技术信息折叠控件未实现；④占比舍入后各行之和可能不等于 `100.0%`；⑤多币种占比只按单一币种分母，跨币种排序/合并不在范围内；⑥`QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处的重复 `posting_account_id` last-wins 与本批 first-wins 的差异留 C 批统一，A 不改这四处生产文件。
 
 **关联决定：** `D-301`（P8-00 呈现基线，本条承接未落地显示差距）、`D-311`（P8-02 收口，本条纳入其裸 UTC 披露范围）、`D-343`（报表与下钻设计，时间/期间口径）、`D-367`（阶段 8 收口）、`D-300`（阶段 8 改向 Android）、`D-305`（P8-00 验收先例）。

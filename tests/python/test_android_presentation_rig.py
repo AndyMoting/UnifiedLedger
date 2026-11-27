@@ -86,7 +86,7 @@ class PresentationProfileTests(unittest.TestCase):
             "Unknown command: uimode",
             "",
             "Night mode: yes\n",
-            "Night mode: no\n",
+            "night mode: no\n",
             "Night mode: no\nNight mode: no\n",
             "Night mode: no (cached)",
         ):

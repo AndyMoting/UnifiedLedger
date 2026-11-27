@@ -137,7 +137,6 @@ class PPresentationProjectionTest {
         val zero = PresentationValue.Present(PresentationAmount(0L, cny))
         // The absent-copy renderer accepts only PresentationAbsence, so a present value has no
         // overload to fall into: it cannot silently become an empty string.
-        assertTrue(zero !is PresentationAbsence)
         assertTrue(isRealZero(zero))
         assertTrue(!isRealZero(PresentationValue.NoRecords))
         assertTrue(!isRealZero(PresentationValue.Present(PresentationAmount(1L, cny))))

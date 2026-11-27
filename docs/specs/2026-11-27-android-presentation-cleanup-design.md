@@ -131,7 +131,7 @@ A 批的可检查结论：
 
 ### 4.6 分类
 
-- 关联只走 `catalog_category.posting_account_id`：候选按稳定 `CategoryId` 文本升序排序后以 posting 的 `accountId` 做显式 first-wins 关联。`CatalogSnapshotView` 是 UI 侧缓存，`LedgerCatalog` 是领域侧回退源；两者都缺时为「未加载」。`QueryTransactionDetail` 对重复 `posting_account_id` 仍是 last-wins，本批不改它，差异登记为 C 批残余（§8 第 6 条）。
+- 关联只走 `catalog_category.posting_account_id`：候选按稳定 `CategoryId` 文本升序排序后以 posting 的 `accountId` 做显式 first-wins 关联。`CatalogSnapshotView` 是 UI 侧缓存，`LedgerCatalog` 是领域侧回退源；两者都缺时为「未加载」。`QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 对重复 `posting_account_id` 仍是 last-wins，本批不改这四处生产文件，差异登记为 C 批残余（§8 第 7 条）。
 - 输出保持 posting 原顺序，按稳定 `CategoryId` 去重；每项带当前名与层级路径（`餐饮 > 早餐`）。
 - 同名二级分类跨父级出现时，显示名使用完整路径；名称唯一时用裸名。分类义务只属于 `EXPENSE` / `INCOME` 腿：只有这两类账户映射缺失才置「未分类」；真实 `ASSET` / `LIABILITY` 腿与 `EQUITY` 腿按设计没有 `posting_account_id`，不承担分类义务、不计未分类。目录缺失或账户不在权威目录时 fail-closed 记未分类。未分类的腿只标记「未分类」，不发明分类、不落到一级分组。
 - 分类色块按稳定 `CategoryId` 做确定性映射（32 位 FNV-1a 取模调色板长度）；A 只冻结 helper 与契约，颜色值属后续呈现批。
@@ -208,7 +208,7 @@ A 批的四项必过检查（`Kotlin tests`、`Android compile`、`Python tests`
 ### 7.2 C：二级页面
 
 - 详情、搜索、账户流水、报表与日历消费同一投影；发生/统计时间分列。
-- 分类关联统一为 A 的稳定 `CategoryId` 文本 first-wins：C 批把 `QueryTransactionDetail` 现有的重复 `posting_account_id` last-wins 与投影对齐；A 不改它，只登记差异（§8 第 6 条）。
+- 分类关联统一为 A 的稳定 `CategoryId` 文本 first-wins：C 批把 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 现有的重复 `posting_account_id` last-wins 与投影对齐；A 不改这四处生产文件，只登记差异（§8 第 7 条）。
 - 报告与日历的期间、日均与空日口径沿用 `D-343`；本专项只统一呈现，不重开产品口径。
 - 技术信息折叠进入二级页面或详情，事实与日志不删除。
 
@@ -240,5 +240,5 @@ A 批的四项必过检查（`Kotlin tests`、`Android compile`、`Python tests`
 3. 技术信息折叠控件未实现，A 只冻结「事实与日志不删」的契约。
 4. 占比舍入后各行之和可能不等于 `100.0%`；显示精确表并保留一位小数是冻结口径，不做强制配平。
 5. `profile=presentation` 的新导航与 marker 未在设备上实跑；A 只登记配置与计划，不产生或引用任何设备证据。
-6. `QueryTransactionDetail` 对重复 `posting_account_id` 仍按 `associateBy` last-wins；本批 A 的投影按稳定 id 文本 first-wins，两者的统一留给 C 批（不扩大本批修改面）。
-5. 多币种占比的图表分母按单一币种；跨币种排序与合并仍不在范围内。
+6. 多币种占比的图表分母按单一币种；跨币种排序与合并仍不在范围内。
+7. `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍按 `associateBy` last-wins；本批 A 的投影按稳定 id 文本 first-wins，四处生产文件不在 A 修改，统一留给 C 批（不扩大本批修改面）。
