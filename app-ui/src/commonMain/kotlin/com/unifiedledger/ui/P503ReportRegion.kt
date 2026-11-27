@@ -252,7 +252,7 @@ internal fun p806ReportLastSuccessContextText(
             .distinct()
             .joinToString("、")
             .ifEmpty { "无" }
-    val asOf = state.landedAsOf?.let { instant -> cBusinessTimeText(instant, profile) } ?: "不可用"
+    val asOf = state.landedAsOf?.let { instant -> cReadInstantText(instant, profile) } ?: "不可用"
     return "最近成功（期间 $kindPrefix$periodText；币种轴 $axis；读取时点 $asOf）"
 }
 

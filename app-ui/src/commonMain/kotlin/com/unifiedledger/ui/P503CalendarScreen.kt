@@ -56,6 +56,10 @@ internal fun P503CalendarScreen(
     onScrollRestored: () -> Unit = {},
 ) {
     val palette = LocalP8Palette.current
+    // D-369 C: the retained-payload read instant follows the composition's presentation profile
+    // (LEGACY keeps the raw UTC text; ANDROID shows the Asia/Shanghai wall clock). The six calendar
+    // faces, the day cells and the payload's own date span are untouched.
+    val presentationProfile = LocalUiPresentationProfile.current
     val scrollState = rememberScrollState()
     val sampleScroll: () -> ListScrollPosition = { ListScrollPosition(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = scrollState.value) }
     val pendingRestore = restoreScrollTo
@@ -90,7 +94,7 @@ internal fun P503CalendarScreen(
             }
             P806CalendarFace.LOADING -> {
                 Text(P806_CALENDAR_LOADING_TEXT, style = MaterialTheme.typography.bodyMedium)
-                p806CalendarOldContextText(state)?.let { oldContext ->
+                p806CalendarOldContextText(state, presentationProfile)?.let { oldContext ->
                     Text(oldContext, style = MaterialTheme.typography.bodySmall)
                 }
                 state.loaded?.let { loaded ->
@@ -103,7 +107,7 @@ internal fun P503CalendarScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
-                p806CalendarOldContextText(state)?.let { oldContext ->
+                p806CalendarOldContextText(state, presentationProfile)?.let { oldContext ->
                     Text(oldContext, style = MaterialTheme.typography.bodySmall)
                 }
                 state.loaded?.let { loaded ->

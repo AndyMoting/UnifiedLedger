@@ -23,6 +23,8 @@ import com.unifiedledger.application.P806CalendarCurrencyView
 import com.unifiedledger.application.P806CalendarDayView
 import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.PresentationCategory
+import com.unifiedledger.application.PresentationTime
+import com.unifiedledger.application.PresentationTimeRole
 import com.unifiedledger.application.PresentationTimes
 import com.unifiedledger.application.PresentationValue
 import com.unifiedledger.application.SelectableMonthsResult
@@ -1027,15 +1029,41 @@ internal fun cBusinessKindText(kind: TransactionKind, profile: UiPresentationPro
     }
 
 /**
- * One business or audit instant as text. LEGACY keeps the raw instant text it always rendered;
- * ANDROID renders the Shanghai wall clock (`2026-11-27T10:47`) through the frozen application
- * projection, so no surface can pick its own zone or print a bare UTC value.
+ * One BUSINESS instant as text, bound to its own role. The role is a required parameter, so a
+ * caller cannot quietly present a statistics instant as if it were the occurred one: the Android
+ * branch constructs [PresentationTime] with the role the caller named, and [PresentationTime]'s own
+ * `init` rejects a swapped pair. LEGACY keeps the raw instant text it always rendered.
  */
-internal fun cBusinessTimeText(instant: Instant, profile: UiPresentationProfile): String =
+internal fun cBusinessTimeText(
+    instant: Instant,
+    role: PresentationTimeRole,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> instant.toString()
+        UiPresentationProfile.ANDROID -> PresentationTime(instant, role).text()
+    }
+
+/** The same rule for an already-role-bound [PresentationTime] (no second role argument exists). */
+internal fun cBusinessTimeText(
+    time: PresentationTime,
+    profile: UiPresentationProfile,
+): String = cBusinessTimeText(time.instant, time.role, profile)
+
+/**
+ * A READ instant (when a payload was read), which is neither a business occurred nor statistics
+ * time. It carries no business role by construction — the surrounding label says 读取时点 — and the
+ * Android branch still renders the frozen `Asia/Shanghai` wall clock. LEGACY keeps the raw value.
+ */
+internal fun cReadInstantText(
+    instant: Instant,
+    profile: UiPresentationProfile,
+): String =
     when (profile) {
         UiPresentationProfile.LEGACY -> instant.toString()
         UiPresentationProfile.ANDROID -> occurredPresentationTime(instant).text()
     }
+
 
 /**
  * The occurred/statistics pair as one line, each value labelled with its own role. The two roles
@@ -1110,8 +1138,8 @@ internal fun cTransactionDetailUserLines(
     profile: UiPresentationProfile,
 ): List<String> =
     listOf(
-        "发生时间：${cBusinessTimeText(detail.occurredAt, profile)}",
-        "统计时间：${cBusinessTimeText(detail.statisticsAt, profile)}",
+        "发生时间：${cBusinessTimeText(detail.occurredAt, PresentationTimeRole.OCCURRED, profile)}",
+        "统计时间：${cBusinessTimeText(detail.statisticsAt, PresentationTimeRole.STATISTICS, profile)}",
         "备注：${detail.note?.takeIf { note -> note.isNotBlank() } ?: "无"}",
         "类型：${cBusinessKindText(detail.kind, profile)}",
     )
@@ -1173,7 +1201,7 @@ internal fun cTransactionAnnotationUserLine(
         when (profile) {
             UiPresentationProfile.LEGACY -> "修订 ${entry.annotationRevision}（${entry.createdAt}）"
             UiPresentationProfile.ANDROID ->
-                "修订 ${entry.annotationRevision}（${cStoredInstantText(entry.createdAt, profile)}）"
+                "修订 ${entry.annotationRevision}（${cStoredAuditText(entry.createdAt, profile)}）"
         }
     val sawVersion =
         when (profile) {
@@ -1192,11 +1220,13 @@ internal fun cTransactionAnnotationTechnicalRows(entry: TransactionAnnotationHis
     )
 
 /**
- * A stored instant TEXT (an audit timestamp persisted as text) as display text. A value that is not
- * a parseable instant is shown verbatim — the stored fact is never replaced by a guess, and an
- * unparseable value is not silently dropped either.
+ * A stored audit instant TEXT as display text. The audit role is its own: this function never
+ * claims the occurred/statistics business roles — it only renders the same frozen reporting zone's
+ * wall clock (the projection helper is the zone/formatter, the role label stays the caller's
+ * business label). A value that is not a parseable instant is shown verbatim — the stored fact is
+ * never replaced by a guess, and an unparseable value is not silently dropped either.
  */
-internal fun cStoredInstantText(raw: String, profile: UiPresentationProfile): String =
+internal fun cStoredAuditText(raw: String, profile: UiPresentationProfile): String =
     when (profile) {
         UiPresentationProfile.LEGACY -> raw
         UiPresentationProfile.ANDROID ->
@@ -1212,12 +1242,14 @@ internal enum class CPresentationSurface {
     ACCOUNT_FLOW,
     REPORT,
     DRILLDOWN,
+    CALENDAR,
 }
 
 /**
- * The ONE mapping from the stable [P806SnapshotFailure] type to explainable user copy. The three
- * secondary surfaces used to re-implement this `when`; they now delegate here, so a new failure
- * branch is mapped once (the compiler keeps it exhaustive) and every surface explains it.
+ * The ONE mapping from the stable [P806SnapshotFailure] type to explainable user copy. The secondary
+ * surfaces used to re-implement this `when`; they now delegate here, so a new failure branch is
+ * mapped once (the compiler keeps it exhaustive) and every surface explains it. Each surface keeps
+ * its own frozen wording.
  */
 internal fun p806SnapshotFailureUserText(
     failure: P806SnapshotFailure,
@@ -1229,12 +1261,14 @@ internal fun p806SnapshotFailureUserText(
                 CPresentationSurface.ACCOUNT_FLOW -> "账户流水读取失败，可点击重试。"
                 CPresentationSurface.REPORT -> "报表读取不可用：请重试。"
                 CPresentationSurface.DRILLDOWN -> "明细读取失败，可点击重试。"
+                CPresentationSurface.CALENDAR -> "日历读取失败，可点击重试。"
             }
         P806SnapshotFailure.CatalogVersionMismatch ->
             when (surface) {
                 CPresentationSurface.ACCOUNT_FLOW -> "账目目录已更新，请从第一页重试。"
                 CPresentationSurface.REPORT -> "目录版本已变化：请重试。"
                 CPresentationSurface.DRILLDOWN -> "账目目录已更新，请从第一页重试。"
+                CPresentationSurface.CALENDAR -> "账目目录已更新，可点击重试。"
             }
         is P806SnapshotFailure.CatalogReference ->
             when (surface) {
@@ -1243,30 +1277,35 @@ internal fun p806SnapshotFailureUserText(
                     "目录引用不一致（缺账户 ${failure.unresolvedAccount}、跨账本 ${failure.crossLedgerAccount}、" +
                         "币种失配 ${failure.currencyMismatch}）：报表不可用。"
                 CPresentationSurface.DRILLDOWN -> "目录引用不一致（缺账户 / 跨账本 / 币种不符），明细不可用。"
+                CPresentationSurface.CALENDAR -> "目录引用不一致（缺账户 / 跨账本 / 币种不符），日历不可用。"
             }
         P806SnapshotFailure.MissingProjection ->
             when (surface) {
                 CPresentationSurface.ACCOUNT_FLOW -> "账目缺少统计时间投影，账户流水不可用。"
                 CPresentationSurface.REPORT -> "统计时间投影缺失：报表不可用。"
                 CPresentationSurface.DRILLDOWN -> "账目缺少统计时间投影，明细不可用。"
+                CPresentationSurface.CALENDAR -> "账目缺少统计时间投影，日历不可用。"
             }
         P806SnapshotFailure.OccurredAtUnparseable ->
             when (surface) {
                 CPresentationSurface.ACCOUNT_FLOW -> "存在无法解析的资金发生时间，账户流水不可用。"
                 CPresentationSurface.REPORT -> "存在无法解析的资金发生时间：报表不可用。"
                 CPresentationSurface.DRILLDOWN -> "存在无法解析的资金发生时间，明细不可用。"
+                CPresentationSurface.CALENDAR -> "存在无法解析的资金发生时间，日历不可用。"
             }
         P806SnapshotFailure.InvalidState ->
             when (surface) {
                 CPresentationSurface.ACCOUNT_FLOW -> "账户流水数据不一致，不可用。"
                 CPresentationSurface.REPORT -> "报表数据不一致：请重试。"
                 CPresentationSurface.DRILLDOWN -> "明细数据不一致，不可用。"
+                CPresentationSurface.CALENDAR -> "日历数据不一致，不可用。"
             }
         P806SnapshotFailure.InvalidWindow ->
             when (surface) {
                 CPresentationSurface.ACCOUNT_FLOW -> "账户流水时间范围无效，不可用。"
                 CPresentationSurface.REPORT -> "自定义区间的起止日期无效：请检查日期后重试。"
                 CPresentationSurface.DRILLDOWN -> "明细时间范围无效，不可用。"
+                CPresentationSurface.CALENDAR -> "日历时间范围无效，不可用。"
             }
     }
 

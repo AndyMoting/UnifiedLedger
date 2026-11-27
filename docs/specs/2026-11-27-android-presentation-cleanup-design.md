@@ -226,6 +226,8 @@ B 在 `LEGACY` profile 之外只改显示与布局，落地落点如下（本小
 
 - 详情、搜索、账户流水、报表与日历消费同一投影；发生/统计时间分列。
 - 分类关联统一为 A 的稳定 `CategoryId` 文本 first-wins：C 批把 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 现有的重复 `posting_account_id` last-wins 与投影对齐；A 不改这四处生产文件，只登记差异（§8 第 7 条）。四处共用同一 first-wins fold，因此重复 `posting_account_id`（目录异常态，产品路径每个 posting 账户只有一条映射）下 Android 与 Desktop 一致取最小 `CategoryId`；这是 `D-369` 明确批准的对齐，除该异常态外 Desktop 的 LEGACY 呈现逐字不变。
+- 搜索与报表下钻的结果行由 B 的共享行组件承接呈现，C 不另做该行的视觉重排；C 只提供并被 B 消费同一行投影与 profile 选择点。
+- 恢复确认预览的账本身份（源/目标）与工件 SHA-256 是用户确认「替换哪一份备份」的必需证据，属于恢复确认证据而非普通技术诊断：保持完整可见，不进入技术信息折叠，不省略、不截断。
 - 报告与日历的期间、日均与空日口径沿用 `D-343`；本专项只统一呈现，不重开产品口径。
 - 技术信息折叠进入二级页面或详情，事实与日志不删除。
 
@@ -264,4 +266,4 @@ D 批落地（2026-11-27）：
 4. 占比舍入后各行之和可能不等于 `100.0%`；显示精确表并保留一位小数是冻结口径，不做强制配平。
 5. `profile=presentation` 的新导航与 marker 未在设备上实跑；A 只登记配置与计划，不产生或引用任何设备证据。
 6. 多币种占比的图表分母按单一币种；跨币种排序与合并仍不在范围内。
-7. `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍按 `associateBy` last-wins；本批 A 的投影按稳定 id 文本 first-wins，四处生产文件不在 A 修改，统一留给 C 批（不扩大本批修改面）。C 批已以共享 `categoryByPostingAccountFirstWins` 统一这四处；该 fold 即 `D-369` 第 3 条批准的对齐，差异只在异常的重复映射下显现，且 Android 与 Desktop 两端一致取最小 `CategoryId`，其余 Desktop 的 LEGACY 输出不变。
+7. A 批登记 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍按 `associateBy` last-wins 的差异（A 的投影按稳定 id 文本 first-wins，四处生产文件不在 A 修改）。C 批已用共享 `categoryByPostingAccountFirstWins` 统一这四处，差异消除；该 fold 即 `D-369` 第 3 条批准的对齐，只影响异常的重复映射，且 Android 与 Desktop 两端一致取最小 `CategoryId`，其余 Desktop 的 LEGACY 输出不变。无遗留的旧差异条目。

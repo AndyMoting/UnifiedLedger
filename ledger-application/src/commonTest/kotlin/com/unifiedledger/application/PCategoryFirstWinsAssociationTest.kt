@@ -68,8 +68,17 @@ class PCategoryFirstWinsAssociationTest {
                 months = listOf(YearMonth(2026, 3)),
             ).getValue(YearMonth(2026, 3))
 
-        assertEquals(listOf("早餐 A"), activity.expenseCategories.map { it.categoryName })
-        assertEquals(listOf(firstLeafId), activity.expenseCategories.map { it.categoryId })
+        // The product tree rule is unchanged: the posting-mapped leaf is grouped under its parent,
+        // so the level-1 node is 餐饮 and the first-wins leaf appears as its only child.
+        val parent = activity.expenseCategories.single()
+        assertEquals(parentId, parent.categoryId)
+        assertEquals("餐饮", parent.categoryName)
+        val child = parent.children.single()
+        assertEquals(firstLeafId, child.categoryId)
+        assertEquals("早餐 A", child.categoryName)
+        // The losing duplicate never materialises as a second child or a second level-1 node.
+        assertEquals(1, parent.children.size)
+        assertEquals(1, activity.expenseCategories.size)
     }
 
     private fun leaf(

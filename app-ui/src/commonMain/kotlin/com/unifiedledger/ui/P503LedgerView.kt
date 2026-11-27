@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,6 +39,7 @@ import com.unifiedledger.application.MonthlyCategoryCurrencyTotal
 import com.unifiedledger.application.MonthlyCategoryTotal
 import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.P408ReconciliationStatus
+import com.unifiedledger.application.PresentationTimeRole
 import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.domain.CategoryId
@@ -830,7 +832,7 @@ internal fun transactionDetailHeadlineSubLine(
                 ?.amount
                 ?.currency
     val currencyPrefix = currency?.let { code -> "${code.code} · " } ?: ""
-    return currencyPrefix + "发生 " + cBusinessTimeText(data.occurredAt, profile)
+    return currencyPrefix + "发生 " + cBusinessTimeText(data.occurredAt, PresentationTimeRole.OCCURRED, profile)
 }
 
 /**
@@ -874,9 +876,13 @@ internal fun transactionAnnotationHistoryLine(
  * TalkBack sentence comes from the SAME [TechnicalInfoDisclosure], so the announced content matches
  * what is on screen in both states. Nothing here deletes an identifier, request id or diagnostic
  * code — collapsing only moves it out of the normal user rows.
+ *
+ * The toggle node merges its descendants and carries that one description, and the expanded body is
+ * stripped of its own semantics, so TalkBack announces each value exactly once (C-SPEC-08) while the
+ * visible text still reads the full original values.
  */
 @Composable
-private fun TechnicalInfoSection(
+internal fun TechnicalInfoSection(
     rows: List<TechnicalInfoRow>,
     toggleKey: Any,
 ) {
@@ -889,14 +895,18 @@ private fun TechnicalInfoSection(
                 Modifier
                     .fillMaxWidth()
                     .clickable(onClickLabel = disclosure.toggleLabel) { expanded = !expanded }
-                    .semantics { contentDescription = disclosure.spokenText() }
+                    .semantics(mergeDescendants = true) { contentDescription = disclosure.spokenText() }
                     .padding(vertical = 4.dp),
         ) {
             Text(disclosure.header, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
             Text(if (expanded) "▾" else "▸", style = MaterialTheme.typography.bodySmall)
         }
         if (expanded) {
-            Text(disclosure.visibleText(), style = MaterialTheme.typography.bodySmall)
+            Text(
+                disclosure.visibleText(),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.clearAndSetSemantics {},
+            )
         }
     }
 }

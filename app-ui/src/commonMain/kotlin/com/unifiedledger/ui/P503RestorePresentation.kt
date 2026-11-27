@@ -71,7 +71,7 @@ internal fun restorePreviewLines(
 internal fun restoreTimestampText(
     epochMillis: Long,
     profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
-): String = cBusinessTimeText(Instant.fromEpochMilliseconds(epochMillis), profile)
+): String = cReadInstantText(Instant.fromEpochMilliseconds(epochMillis), profile)
 
 private fun checkText(ok: Boolean): String = if (ok) "通过" else "未通过"
 
