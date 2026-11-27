@@ -1,5 +1,14 @@
 package com.unifiedledger.ui
 
+import com.unifiedledger.application.CatalogSnapshotView
+import com.unifiedledger.application.CategoryShareFailure
+import com.unifiedledger.application.CategoryShareInput
+import com.unifiedledger.application.CategoryShareProjection
+import com.unifiedledger.application.CategoryShareRow
+import com.unifiedledger.application.HomeAmountLine
+import com.unifiedledger.application.HomeAmountProjection
+import com.unifiedledger.application.HomeRowProjection
+import com.unifiedledger.application.HomeTitleSource
 import com.unifiedledger.application.LedgerEntryRow
 import com.unifiedledger.application.MonthlyActivity
 import com.unifiedledger.application.MonthlyActivityResult
@@ -10,11 +19,21 @@ import com.unifiedledger.application.MonthlyTrend
 import com.unifiedledger.application.MonthlyTrendResult
 import com.unifiedledger.application.OrdinaryFlowClassification
 import com.unifiedledger.application.P408ReconciliationStatus
+import com.unifiedledger.application.P806CalendarCurrencyView
+import com.unifiedledger.application.P806CalendarDayView
+import com.unifiedledger.application.PresentationCategory
+import com.unifiedledger.application.PresentationValue
 import com.unifiedledger.application.SelectableMonthsResult
 import com.unifiedledger.application.TransactionDetailLeg
 import com.unifiedledger.application.TransactionReconciliationLeg
+import com.unifiedledger.application.presentationCategoryTintSlot
+import com.unifiedledger.application.presentationValueText
+import com.unifiedledger.application.projectCategoryShares
+import com.unifiedledger.application.projectHomeRow
 import com.unifiedledger.domain.AccountId
+import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
+import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionKind
 import kotlinx.datetime.YearMonth
 
@@ -510,3 +529,313 @@ internal fun reconciliationLegContentDescription(leg: TransactionReconciliationL
         }
     return "${leg.leg.accountName} $amount：对账状态 $status"
 }
+
+// ---------------------------------------------------------------------------------------------
+// B: three main tabs (D-369 spec section 7.1)
+// ---------------------------------------------------------------------------------------------
+// The Android profile changes layout and display decisions on the three main tabs; the LEGACY
+// profile (desktop composition root, every pre-B test call site) keeps the pre-B output. Every
+// decision below is a pure function, so a JVM test asserts it without a Compose harness. Nothing
+// here reads a database, changes a query, or touches an accounting rule.
+
+/** Whether the three main tabs take the Android layout at all. */
+internal fun androidTabPresentation(profile: UiPresentationProfile): Boolean = profile == UiPresentationProfile.ANDROID
+
+/**
+ * HOME: the account-balances tail duplicates the ACCOUNTS tab, so the Android first screen drops
+ * it. The LEGACY profile keeps rendering it exactly as before.
+ */
+internal fun homeShowsAccountBalancesTail(profile: UiPresentationProfile): Boolean = !androidTabPresentation(profile)
+
+/**
+ * The flow footer decision with the profile applied. `null` means "render no footer line": on
+ * Android the 已到末页 statement is meaningless (the list simply ends), while loading, a failed
+ * page and its retry stay explicit because they change what the user must do.
+ */
+internal fun flowFooterForProfile(
+    view: FlowRowsView,
+    profile: UiPresentationProfile,
+): FlowFooterState? =
+    when (val state = flowFooterState(view)) {
+        FlowFooterState.END -> if (androidTabPresentation(profile)) null else state
+        else -> state
+    }
+
+/**
+ * One home flow row as the Android profile renders it: the §4.7 title, the posting-ordered
+ * category badges, every real-asset/liability leg as its own exact line, and both business times.
+ * Amount lines are NEVER folded: a transfer or a mixed payment keeps each real account's signed
+ * amount, and two currencies never combine.
+ */
+internal data class HomeRowAndroidPresentation(
+    val title: String,
+    val titleSource: HomeTitleSource,
+    val categoryBadges: List<PresentationCategory>,
+    /** 「其余 N 个」 when more than three categories are attached; null when all badges fit. */
+    val remainingBadgesText: String?,
+    val hasUnclassified: Boolean,
+    val amountLines: List<HomeAmountLine>,
+    /** The explicit 未加载 / 读取失败 copy when no amount line can be stated; null otherwise. */
+    val amountAbsenceText: String?,
+    val statisticsText: String,
+    val occurredText: String,
+)
+
+/** The row's Android presentation, or `null` under the LEGACY profile (the legacy row renders). */
+internal fun homeRowAndroidPresentationFor(
+    profile: UiPresentationProfile,
+    row: LedgerEntryRow,
+    snapshot: CatalogSnapshotView?,
+    catalog: LedgerCatalog?,
+): HomeRowAndroidPresentation? =
+    if (androidTabPresentation(profile)) homeRowAndroidPresentation(row, snapshot, catalog) else null
+
+/**
+ * The Android home row: consumes A's pure projection ([projectHomeRow]) and keeps its decisions —
+ * title priority, three-badge cap with the remaining count, per-leg amounts, both times.
+ */
+internal fun homeRowAndroidPresentation(
+    row: LedgerEntryRow,
+    snapshot: CatalogSnapshotView?,
+    catalog: LedgerCatalog?,
+): HomeRowAndroidPresentation {
+    val projection: HomeRowProjection = projectHomeRow(row, snapshot, catalog)
+    val amounts = projection.amounts
+    return HomeRowAndroidPresentation(
+        title = projection.title,
+        titleSource = projection.titleSource,
+        categoryBadges = projection.categoryBadges,
+        remainingBadgesText = homeRemainingBadgesText(projection.remainingCategoryCount),
+        hasUnclassified = projection.hasUnclassified,
+        amountLines = (amounts as? HomeAmountProjection.Lines)?.lines.orEmpty(),
+        amountAbsenceText =
+            when (amounts) {
+                HomeAmountProjection.NotLoaded -> presentationValueText(PresentationValue.NotLoaded)
+                HomeAmountProjection.Failed -> presentationValueText(PresentationValue.Failed)
+                is HomeAmountProjection.Lines -> null
+            },
+        statisticsText = projection.times.statistics.text(),
+        occurredText = projection.times.occurred.text(),
+    )
+}
+
+/** One badge's visible text: the stable `#` mark plus the category's display name (path-aware). */
+internal fun homeBadgeText(badge: PresentationCategory): String = "#" + badge.displayName
+
+/** 「其余 N 个」 for the categories beyond the third badge; null when nothing was dropped. */
+internal fun homeRemainingBadgesText(remaining: Int): String? = if (remaining > 0) "其余 $remaining 个" else null
+
+/**
+ * The badge's palette index: A's stable `CategoryId` slot folded onto the existing
+ * `P8Palette.categoryTints`, so one category keeps one colour across screens.
+ */
+internal fun homeBadgeTintSlot(
+    categoryId: CategoryId,
+    slotCount: Int,
+): Int = presentationCategoryTintSlot(categoryId, slotCount)
+
+/**
+ * The home row's TalkBack sentence. It carries the SAME values the row shows — title, every badge
+ * with its path, the remaining count, the 未分类 state and each exact amount with its currency
+ * code — so the announced and the visible values cannot diverge and colour is never the only
+ * carrier of the category fact.
+ */
+internal fun homeRowAndroidContentDescription(presentation: HomeRowAndroidPresentation): String {
+    val parts = ArrayList<String>(presentation.categoryBadges.size + 4)
+    parts.add(presentation.title)
+    if (presentation.categoryBadges.isNotEmpty()) {
+        parts.add(presentation.categoryBadges.joinToString("、", transform = ::homeBadgeText))
+    }
+    presentation.remainingBadgesText?.let(parts::add)
+    if (presentation.hasUnclassified) parts.add(presentationValueText(PresentationValue.Unclassified))
+    parts.add("统计时间 ${presentation.statisticsText}")
+    parts.add("发生时间 ${presentation.occurredText}")
+    if (presentation.amountLines.isEmpty()) {
+        presentation.amountAbsenceText?.let(parts::add)
+    } else {
+        presentation.amountLines.forEach { line -> parts.add("${line.accountName} ${line.amount.text}") }
+    }
+    return parts.joinToString("；")
+}
+
+/**
+ * ACCOUNTS: whether the 账户与分类管理 surface is the independent secondary route. It is a route
+ * only under the Android profile and only while the reducer's add-only flag is set; LEGACY keeps
+ * the pre-B single surface with every management section inline.
+ */
+internal fun accountsCatalogManagementRouteActive(
+    profile: UiPresentationProfile,
+    catalogManagementSurface: Boolean,
+): Boolean = androidTabPresentation(profile) && catalogManagementSurface
+
+/**
+ * Whether the ACCOUNTS surface renders the management sections (add/rename/disable/pin/category/
+ * tag/merchant). On Android those live on the route; the tab's first screen keeps the per-currency
+ * net worth, the lending placeholders, the real asset/liability accounts and the account-flow
+ * entries. LEGACY always renders them where they always were.
+ */
+internal fun accountsShowsManagementSections(
+    profile: UiPresentationProfile,
+    managementRouteActive: Boolean,
+): Boolean = if (androidTabPresentation(profile)) managementRouteActive else true
+
+/**
+ * The analysis page's section decisions. On Android the page leads with the month summary, the
+ * category ranking and the budget; the raw per-kind enumeration and the per-currency income/expense
+ * stack leave the top of the page, an income section with no income is not rendered at all, and the
+ * twelve-month trend and the independent report move behind 更多分析 (existing routes, unchanged
+ * query and period semantics). LEGACY keeps today's inline layout.
+ */
+internal data class AndroidAnalysisLayout(
+    val showsRawSummary: Boolean,
+    val showsExpenseRanking: Boolean,
+    val showsIncomeRegion: Boolean,
+    val keepsTrendInline: Boolean,
+    val keepsReportInline: Boolean,
+    val showsMoreAnalysis: Boolean,
+)
+
+internal fun androidAnalysisLayout(
+    profile: UiPresentationProfile,
+    activity: MonthlyActivity?,
+): AndroidAnalysisLayout =
+    if (androidTabPresentation(profile)) {
+        AndroidAnalysisLayout(
+            showsRawSummary = false,
+            showsExpenseRanking = true,
+            showsIncomeRegion = activityHasIncome(activity),
+            keepsTrendInline = false,
+            keepsReportInline = false,
+            showsMoreAnalysis = true,
+        )
+    } else {
+        AndroidAnalysisLayout(
+            showsRawSummary = true,
+            showsExpenseRanking = true,
+            showsIncomeRegion = true,
+            keepsTrendInline = true,
+            keepsReportInline = true,
+            showsMoreAnalysis = false,
+        )
+    }
+
+/** Whether the month states any ordinary income at all (a real zero is not income). */
+internal fun activityHasIncome(activity: MonthlyActivity?): Boolean {
+    if (activity == null) return false
+    if (activity.incomeCategories.isNotEmpty()) return true
+    return activity.currencies.any { row -> row.ordinaryIncomeMinorUnits != 0L }
+}
+
+/** One exact-table row of a category ranking (always available, even when the bars are refused). */
+internal data class CategoryShareExactRow(
+    val categoryId: CategoryId,
+    val name: String,
+    val amountMinorUnits: Long,
+)
+
+/**
+ * One currency's horizontal ranking. [chartRows] is empty exactly when [failure] is non-null: the
+ * page then renders [exactRows] and the explicit no-chart explanation instead of a zero-height bar
+ * or an empty graphic. A single category is one row at `100.0%`.
+ */
+internal data class AndroidCategoryShareSection(
+    val currency: CurrencyUnit,
+    val chartRows: List<CategoryShareRow>,
+    val exactRows: List<CategoryShareExactRow>,
+    val failure: CategoryShareFailure?,
+    val denominatorMinorUnits: Long,
+) {
+    val rendersBars: Boolean get() = chartRows.isNotEmpty()
+}
+
+/**
+ * The horizontal ranking per currency, over A's [projectCategoryShares]. Only non-negative exact
+ * amounts feed the chart (a refund-heavy category shows its exact signed value in [exactRows] but
+ * never a misleading bar); a currency with no positive contribution has no chart and an explicit
+ * [CategoryShareFailure.ZERO_DENOMINATOR]. Currencies are never mixed or converted.
+ */
+internal fun androidCategoryShareSections(categories: List<MonthlyCategoryTotal>): List<AndroidCategoryShareSection> {
+    val exactByCurrency = LinkedHashMap<CurrencyUnit, MutableList<CategoryShareExactRow>>()
+    for (category in categories) {
+        for (total in category.totals) {
+            val net = total.positiveMinorUnits + total.refundMinorUnits
+            exactByCurrency
+                .getOrPut(total.currency) { ArrayList() }
+                .add(CategoryShareExactRow(category.categoryId, category.categoryName, net))
+        }
+    }
+    return exactByCurrency.map { (currency, exactRows) ->
+        val inputs =
+            exactRows.mapNotNull { row ->
+                row.amountMinorUnits.takeIf { it > 0L }?.let { amount ->
+                    CategoryShareInput(row.categoryId, row.name, amount)
+                }
+            }
+        val projection = if (inputs.isEmpty()) null else projectCategoryShares(inputs)
+        when (projection) {
+            is CategoryShareProjection.Chart ->
+                AndroidCategoryShareSection(
+                    currency = currency,
+                    chartRows = projection.rows,
+                    exactRows = exactRows,
+                    failure = null,
+                    denominatorMinorUnits = projection.denominatorMinorUnits,
+                )
+            is CategoryShareProjection.NoChart ->
+                AndroidCategoryShareSection(currency, emptyList(), exactRows, projection.reason, 0L)
+            // An empty input list is reported as the explicit zero-denominator refusal below.
+            null, CategoryShareProjection.NoCategories ->
+                AndroidCategoryShareSection(currency, emptyList(), exactRows, CategoryShareFailure.ZERO_DENOMINATOR, 0L)
+        }
+    }
+}
+
+/** One ranking row: category name, exact amount with its currency code, and the one-decimal share. */
+internal fun categoryShareRowText(
+    row: CategoryShareRow,
+    currency: CurrencyUnit,
+): String = "${row.name} ${formatMinorUnits(row.amountMinorUnits, currency.precision)} ${currency.code} ${row.percentText()}"
+
+/** One exact-table row: the signed amount stays visible, with no invented percentage. */
+internal fun categoryShareExactRowText(
+    row: CategoryShareExactRow,
+    currency: CurrencyUnit,
+): String = "${row.name} ${formatMinorUnits(row.amountMinorUnits, currency.precision)} ${currency.code}"
+
+/** The explicit explanation shown instead of a chart; the exact table stays above it. */
+internal fun categoryShareNoChartText(failure: CategoryShareFailure): String =
+    when (failure) {
+        CategoryShareFailure.ZERO_DENOMINATOR -> "无法作图：分类金额合计为零。"
+        CategoryShareFailure.NEGATIVE_AMOUNT -> "无法作图：存在负数分类金额。"
+        CategoryShareFailure.OVERFLOW -> "无法作图：金额超出可计算范围。"
+    }
+
+/**
+ * CALENDAR: whether a loaded day states any movement. A day whose axes are all zero and whose
+ * count is zero is a REAL ZERO day (a stated value, not an absence): Android renders its date only.
+ * Zero amounts are dropped from the cell rather than printed as `0.00`.
+ */
+internal fun calendarDayShowsAmounts(day: P806CalendarDayView): Boolean =
+    day.transactionCount > 0 || day.currencies.any { row -> row.netExpenseMinorUnits != 0L || row.ordinaryIncomeMinorUnits != 0L }
+
+/** The cell's per-currency rows: non-zero rows only on Android; every axis currency on LEGACY. */
+internal fun calendarVisibleCurrencyRows(
+    day: P806CalendarDayView,
+    profile: UiPresentationProfile,
+): List<P806CalendarCurrencyView> =
+    if (androidTabPresentation(profile)) {
+        day.currencies.filter { row -> row.netExpenseMinorUnits != 0L || row.ordinaryIncomeMinorUnits != 0L }
+    } else {
+        day.currencies
+    }
+
+/** The cell's count line: hidden on an Android day with no movement, always shown on LEGACY. */
+internal fun calendarDayCountText(
+    day: P806CalendarDayView,
+    profile: UiPresentationProfile,
+): String? =
+    if (androidTabPresentation(profile) && !calendarDayShowsAmounts(day)) {
+        null
+    } else {
+        "${day.transactionCount} 笔"
+    }

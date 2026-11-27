@@ -5560,6 +5560,8 @@ private fun P503AppContent(
                                             onScrollRestored = { dispatch(P503UiEvent.ListScrollRestored) },
                                             onSampleScroll = homeFlowScrollSampler,
                                             onRegisterListState = { homeFlowListState = it },
+                                            catalogSnapshot = current.catalogSnapshot,
+                                            ledgerCatalog = ledger.catalog,
                                             onSelectMonth = ::selectMonth,
                                             // P8-06 batch 4 (D-362 1): 收支日历 renders the entry only
                                             // when the graph wires its read AND the initial month

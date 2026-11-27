@@ -205,6 +205,20 @@ A 批的四项必过检查（`Kotlin tests`、`Android compile`、`Python tests`
 - 保留 `D-301` 的三 Tab 与导入入口；`D-122`/`D-146` 的四 Tab 契约继续处于被取代状态。
 - 不改变账务读写、schema 或导入语义。
 
+#### 7.1.1 B 落地记录
+
+B 在 `LEGACY` profile 之外只改显示与布局，落地落点如下（本小节只记录实现位置，不新增批准内容）：
+
+- 纯决策集中在 `app-ui` 的 `P503LedgerViewPresentation.kt`：`androidTabPresentation`、`homeShowsAccountBalancesTail`、`flowFooterForProfile`（Android 去掉「已到末页」，加载/失败/重试保留）、`homeRowAndroidPresentation`（消费 §4.7 的 `projectHomeRow`）、`homeBadgeText`/`homeRemainingBadgesText`/`homeBadgeTintSlot`（§4.6 的稳定 `CategoryId` 槽位映射到现有 `categoryTints`）、`accountsCatalogManagementRouteActive`/`accountsShowsManagementSections`、`androidAnalysisLayout`、`androidCategoryShareSections`（§4.8 有理数占比）、`calendarDayShowsAmounts`/`calendarVisibleCurrencyRows`/`calendarDayCountText`；预算的短/长口径切换在 `P503BudgetPresentation.kt`。
+- 首页（`P503OverviewScreen.kt`）：Android profile 下每行按备注→单分类→中文业务类型取主标题，`#分类` 角标按 posting 原顺序最多三枚并显示「其余 N 个」，真实资产/负债腿逐腿一行、不合并、不折算；首屏去掉重复的账户余额尾。
+- 账户（`P503CatalogManagementScreen.kt`）：Android 首屏 = 按币种净资产 + 借贷占位 + 资产/负债真实账户与账户流水入口 + 单一「账户与分类管理」入口；管理面（新增/改名/停用/置顶/分类/标签/商家）搬到二级路由，沿用同一 `P503CatalogManagementScreen`、同一目录版本与同一命令语义。
+- 分析（`P503TabShell.kt`）：Android 默认月摘要 + 横向分类排行 + 预算；移除顶部原始枚举与币种堆叠；无收入时不渲染收入分类区；趋势与独立期间报表移入「更多分析」，查询与期间语义不变。
+- 横向占比（`P503LedgerView.kt`）：每行分类名 + 精确金额 + 一位小数占比 + 水平条；单分类恰为 `100.0%`；`NoChart` 只渲染精确表与明确说明，精确表和下钻仍可访问。
+- 日历（`P503CalendarScreen.kt`）：Android 无交易日只显示日期；有交易日显示非零收支与笔数。真实零、读取失败与旧数据/重试仍是各自的面。
+- 导航状态（`P503AppState.kt`/`P503UiEvent.kt`/`P503Reducer.kt`）：`OverviewEmpty.catalogManagementSurface` 与 `OpenCatalogManagement`/`CloseCatalogManagement` 是加性字段与事件；`Back` 先关路由再走 ACCOUNTS→HOME 规则，底部 Tab 点击也离开路由；其余状态由集中守卫吸收，不产生 ISE。
+
+未在本批验证：任何 PNG、语义树或 TalkBack 实跑（E 批）；`profile=presentation` 的屏幕集合与 marker 未因 B 增加。
+
 ### 7.2 C：二级页面
 
 - 详情、搜索、账户流水、报表与日历消费同一投影；发生/统计时间分列。

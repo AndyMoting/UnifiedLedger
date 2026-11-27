@@ -71,11 +71,28 @@ internal fun P503BudgetRegion(
     onOpenBudgetConfig: (BudgetScope) -> Unit,
 ) {
     var pickerOpen by remember { mutableStateOf(false) }
+    // D-369 B (spec section 7.1): an Android month with no configured budget leads with the short
+    // note and the settings entry; the long independent-observation explanation moves behind the
+    // 口径说明 toggle. A configured budget, a read failure and the LEGACY profile keep it visible.
+    val profile = LocalUiPresentationProfile.current
+    val noticeMode = budgetNoticeMode(profile, view)
+    var noticeExpanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Text("预算", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(4.dp))
-        // The frozen independent-observation declaration (spec section 3.2) is always shown.
-        Text(BUDGET_INDEPENDENT_OBSERVATION_NOTICE, style = MaterialTheme.typography.bodySmall)
+        when (noticeMode) {
+            BudgetNoticeMode.SHORT -> {
+                Text(BUDGET_UNCONFIGURED_SHORT_TEXT, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { noticeExpanded = !noticeExpanded }) {
+                    Text(if (noticeExpanded) "收起口径说明" else "口径说明")
+                }
+                if (noticeExpanded) {
+                    Text(BUDGET_INDEPENDENT_OBSERVATION_NOTICE, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            // The frozen independent-observation declaration (spec section 3.2) is always shown.
+            BudgetNoticeMode.FULL -> Text(BUDGET_INDEPENDENT_OBSERVATION_NOTICE, style = MaterialTheme.typography.bodySmall)
+        }
         Spacer(Modifier.height(4.dp))
         val failureColor =
             when (view) {

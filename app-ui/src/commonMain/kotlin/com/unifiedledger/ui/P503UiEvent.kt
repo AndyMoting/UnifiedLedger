@@ -936,6 +936,22 @@ sealed interface P503UiEvent {
     data object OpenImportSurface : P503UiEvent
 
     /**
+     * D-369 B (spec section 7.1): opens the ACCOUNTS tab's 账户与分类管理 secondary route. Effect
+     * only on OverviewEmpty (sets [P503AppState.OverviewEmpty.catalogManagementSurface] and leaves
+     * the tab cursor, the month, every payload and the origin scroll position untouched); absorbed
+     * everywhere else by the central guard in the reducer, so a late or stale dispatch can never
+     * become an ISE (the P8-00 shell family's discipline). The route itself renders the existing
+     * management surface, so no command, catalog-version or form semantics change.
+     */
+    data object OpenCatalogManagement : P503UiEvent
+
+    /**
+     * D-369 B: closes the 账户与分类管理 route back to the ACCOUNTS first screen (the route's own
+     * 返回). Effect only on OverviewEmpty; absorbed everywhere else.
+     */
+    data object CloseCatalogManagement : P503UiEvent
+
+    /**
      * P8-04 i1 (D-11; spec `docs/specs/2026-11-14-p8-04-self-entry-import-design.md`): requests
      * the template download — the import surface's 「获取导入模板」 entry. Effect on OverviewEmpty
      * is the host's template-launch + write (经宿主发起 SAF 保存；不切态 — the reducer state is

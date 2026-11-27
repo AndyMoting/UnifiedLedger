@@ -188,6 +188,7 @@ private fun P806CalendarDayCell(
     sampleScroll: () -> ListScrollPosition,
 ) {
     val palette = LocalP8Palette.current
+    val profile = LocalUiPresentationProfile.current
     val day = cell.day
     val level = day?.let { value -> p806CalendarIntensityLevel(p806CalendarCellExpense(value), monthMaxExpenseMinorUnits) } ?: 0
     // Existing palette colour at a level-derived alpha: an auxiliary tint, never a new colour token
@@ -212,14 +213,20 @@ private fun P806CalendarDayCell(
     ) {
         Text(cell.date.dayOfMonth.toString(), style = MaterialTheme.typography.bodySmall, color = palette.onSurface)
         if (day != null) {
-            day.currencies.forEach { row ->
+            // D-369 B (spec section 7.1): on Android a day with no movement states its date only —
+            // a zero row is a real zero, not an absence, so it is dropped from the cell instead of
+            // printed as 0.00. A day with movement shows its non-zero amounts and its count, and
+            // the LEGACY profile keeps every axis currency plus the count (the pre-B cell).
+            calendarVisibleCurrencyRows(day, profile).forEach { row ->
                 Text(
                     p806CalendarCurrencyText(row),
                     style = MaterialTheme.typography.labelSmall,
                     color = palette.onSurfaceVariant,
                 )
             }
-            Text("${day.transactionCount} 笔", style = MaterialTheme.typography.labelSmall, color = palette.onSurfaceVariant)
+            calendarDayCountText(day, profile)?.let { countText ->
+                Text(countText, style = MaterialTheme.typography.labelSmall, color = palette.onSurfaceVariant)
+            }
         }
     }
 }

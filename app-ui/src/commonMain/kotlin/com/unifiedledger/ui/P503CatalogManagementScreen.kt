@@ -1,5 +1,6 @@
 package com.unifiedledger.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -34,6 +36,7 @@ import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.CatalogItem
 import com.unifiedledger.domain.CategoryKind
+import com.unifiedledger.ui.theme.LocalP8Palette
 
 /**
  * P7-01.D shared management surface (spec section 7.1-7.2): the ACCOUNTS tab's manageable
@@ -76,6 +79,14 @@ fun P503CatalogManagementScreen(
     onScrollRestored: () -> Unit = {},
 ) {
     val snapshot = state.catalogSnapshot
+    // D-369 B (spec section 7.1): under the Android profile the ACCOUNTS tab's first screen keeps
+    // the per-currency net worth, the lending placeholders, the real asset/liability accounts and
+    // their account-flow entries, and the management sections live on the 账户与分类管理 secondary
+    // route. The route flag is reducer-carried ([P503AppState.OverviewEmpty.catalogManagementSurface]);
+    // the LEGACY profile keeps today's single surface (asset region above the same sections).
+    val profile = LocalUiPresentationProfile.current
+    val managementRouteActive = accountsCatalogManagementRouteActive(profile, state.catalogManagementSurface)
+    val showsManagementSections = accountsShowsManagementSections(profile, managementRouteActive)
     // P8-00 b3 (V-5 返回保滚动位): the surface's scroll state is HOISTED here so the sampled
     // position, the host sampler and the restore all refer to the same state object. The restore
     // fires once per arriving position and immediately consumes it (the one-shot consume — a
@@ -97,7 +108,15 @@ fun P503CatalogManagementScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("账户与分类管理", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(
+                if (managementRouteActive) "账户与分类管理" else "账户",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            if (managementRouteActive) {
+                // The route's own 返回 (the system Back closes the same route in the reducer).
+                TextButton(onClick = { onEvent(P503UiEvent.CloseCatalogManagement) }) { Text("返回") }
+            }
             TextButton(onClick = onRefresh) { Text("刷新目录") }
         }
         // Ledger-identity short patch (D-146 entry 12): read-only active-ledger disclosure in the
@@ -144,38 +163,81 @@ fun P503CatalogManagementScreen(
         // pair and the grouped account lists. Purely additive presentation over the same
         // authoritative snapshot × balances the account rows below read; zero semantics change.
         // P8-00 b3 (V-5): the account rows become the account-flow entry when the host wires it.
-        P503AssetSummaryRegion(state, onOpenAccountFlow, sampleListScroll)
-        AccountsSection(
-            accounts = snapshot.manageableAccounts,
-            balances = state.state.balances.associateBy { it.accountId },
-            pinnedTargets = state.pinnedTargets,
-            ledgerId = state.state.ledgerId,
-            onEvent = onEvent,
-        )
-        HorizontalDivider()
-        CategoriesSection(
-            categories = snapshot.categories,
-            kind = CategoryKind.EXPENSE,
-            title = "支出分类",
-            pinnedTargets = state.pinnedTargets,
-            ledgerId = state.state.ledgerId,
-            onEvent = onEvent,
-        )
-        HorizontalDivider()
-        CategoriesSection(
-            categories = snapshot.categories,
-            kind = CategoryKind.INCOME,
-            title = "收入分类",
-            pinnedTargets = state.pinnedTargets,
-            ledgerId = state.state.ledgerId,
-            onEvent = onEvent,
-        )
-        HorizontalDivider()
-        TagMerchantSections(authority = tagMerchantAuthority, onEvent = onEvent)
+        // D-369 B: on the Android route the region stays on the FIRST screen; on the LEGACY profile
+        // it keeps riding above the sections exactly as before.
+        if (!managementRouteActive) {
+            P503AssetSummaryRegion(state, onOpenAccountFlow, sampleListScroll)
+        }
+        if (showsManagementSections) {
+            AccountsSection(
+                accounts = snapshot.manageableAccounts,
+                balances = state.state.balances.associateBy { it.accountId },
+                pinnedTargets = state.pinnedTargets,
+                ledgerId = state.state.ledgerId,
+                onEvent = onEvent,
+            )
+            HorizontalDivider()
+            CategoriesSection(
+                categories = snapshot.categories,
+                kind = CategoryKind.EXPENSE,
+                title = "支出分类",
+                pinnedTargets = state.pinnedTargets,
+                ledgerId = state.state.ledgerId,
+                onEvent = onEvent,
+            )
+            HorizontalDivider()
+            CategoriesSection(
+                categories = snapshot.categories,
+                kind = CategoryKind.INCOME,
+                title = "收入分类",
+                pinnedTargets = state.pinnedTargets,
+                ledgerId = state.state.ledgerId,
+                onEvent = onEvent,
+            )
+            HorizontalDivider()
+            TagMerchantSections(authority = tagMerchantAuthority, onEvent = onEvent)
+        } else {
+            // D-369 B (spec section 7.1): the first screen's single management entry. It opens the
+            // existing surface unchanged (add/rename/disable/pin/category/tag/merchant); the entry
+            // is a real destination (the reducer's add-only route), never a dead row.
+            P503CatalogManagementEntry(onOpen = { onEvent(P503UiEvent.OpenCatalogManagement) })
+        }
         Spacer(Modifier.height(24.dp))
     }
 
     CatalogDialogHost(dialog = state.catalogDialog, onEvent = onEvent, onSubmit = onSubmit)
+}
+
+/**
+ * D-369 B (spec section 7.1): the ACCOUNTS first screen's single 账户与分类管理 entry. It opens the
+ * existing management surface as a secondary route, so add/rename/disable/pin/category/tag/merchant
+ * keep their forms, their catalog version and their command semantics — the entry only moves where
+ * the user finds them. The row is a 48 dp+ target and announces the same sentence it shows.
+ */
+@Composable
+private fun P503CatalogManagementEntry(onOpen: () -> Unit) {
+    val palette = LocalP8Palette.current
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clickable(onClickLabel = "打开账户与分类管理") { onOpen() }
+                .semantics { contentDescription = "账户与分类管理：新增、改名、停用、置顶、分类、标签与商家" }
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("账户与分类管理", style = MaterialTheme.typography.bodyLarge, color = palette.onSurface)
+            Text(
+                "新增、改名、停用、置顶、分类、标签与商家",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.onSurfaceVariant,
+            )
+        }
+        Text("›", style = MaterialTheme.typography.titleMedium, color = palette.onSurfaceVariant)
+    }
+    HorizontalDivider(color = palette.divider)
 }
 
 @Composable
