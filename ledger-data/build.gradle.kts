@@ -93,4 +93,6 @@ tasks.withType<Test>().configureEach {
     System.getProperty("ul.p806.fontscale.seed")?.let { systemProperty("ul.p806.fontscale.seed", it) }
     // P8-07 adds a third writer and property for the shared acceptance seed.
     System.getProperty("ul.p807.shared.seed")?.let { systemProperty("ul.p807.shared.seed", it) }
+    // D-369 E1 adds a fourth writer and property for the presentation evidence seed.
+    System.getProperty("ul.presentation.fontscale.seed")?.let { systemProperty("ul.presentation.fontscale.seed", it) }
 }

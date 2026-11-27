@@ -32,6 +32,7 @@
 2	com.unifiedledger.data.ImportReviewPagedReadEquivalenceTest
 2	com.unifiedledger.data.ImportSpineAlipayYuebaoTransferEndToEndTest
 2	com.unifiedledger.data.ImportSpineWechatEndToEndTest
+2	com.unifiedledger.data.P369PresentationSeedWriterTest
 2	com.unifiedledger.data.P408CorrectionStoreTest
 2	com.unifiedledger.data.P408ProjectionSixKindMaterializationTest
 2	com.unifiedledger.data.P704B4MemberPageReadEquivalenceTest

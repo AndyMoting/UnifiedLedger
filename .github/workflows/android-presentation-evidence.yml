@@ -1,0 +1,181 @@
+# D-369 E1: the presentation evidence sweep (manual, non-blocking, never a PR gate).
+#
+# WHAT ONE GREEN RUN PRODUCES
+# ---------------------------
+# The four combinations plan section 2.3 fixes — light/dark night mode x font_scale 1.0/1.3 — over
+# ONE build and ONE prepared P369 seed, inside ONE managed AVD session. Every combination runs the
+# `presentation` profile of `tools/python/android_fontscale/sampler.py` and writes its own evidence
+# directory `presentation-sweep-<sha>/<ui_mode>-<font_scale>/`: each screen's png plus its
+# uiautomator dump, the REAL TalkBack per-target windows, host.json (profile, ui_mode, font_scale,
+# seed sha256, the best-effort `trace`/`trace_unavailable` record) and the device's TalkBack
+# version. The job then re-derives every combination's gate from the artifacts on disk.
+#
+# ONE SEED IS A HARD REQUIREMENT. The seed contains `Clock.System.now()` and month-relative rows, so
+# two separate builds produce different bytes and the four host.json files' seed.sha256 would no
+# longer describe one ledger. The workflow therefore builds the seed once, before the emulator
+# session, and every combination pushes that same file.
+#
+# TIME BUDGET (E1-F5). Each combination keeps the single-dispatch profile's existing 45-minute
+# capture budget; the sweep's four combinations plus one build therefore need roughly
+# 4x45 + build, so the job allows 240 minutes and the emulator step 210. The seeded number is
+# re-measured rather than assumed: every combination writes `sweep_duration_seconds` into its own
+# host.json (a read-only diagnostic the gate never reads), so the E2 registry can state the
+# measured cost and shrink these bounds only on that evidence.
+#
+# WHAT IT DOES NOT PROVE
+# ----------------------
+# The gate proves only what is mechanically decidable (font scale applied, ui_mode read back, every
+# png is a real image, each screen's marker/required strings are in the tree, the declared
+# previous-screen strings are gone, the visible-only absence criterion of the empty-day calendar,
+# the seed digest, and each ordered TalkBack target window classified as success). "No visual
+# overflow", contrast, 48 dp targets and the per-image review stay human judgements on the artifact.
+# Block B's cross-day reconciliation and technical-collapse screens are not captured here.
+#
+# WHY CLOUD
+# ---------
+# The development host's adb surface belongs to the user's own emulator (D-281), so this chain
+# never boots a local emulator: `tools/ci/android-fontscale.py` refuses to run outside a
+# GitHub-hosted Linux runner, and the first steps bind the run to one exact commit so every APK it
+# installs is the tree the evidence claims.
+name: Android presentation evidence sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact 40-character commit SHA to sample
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One manual sweep per run: a later dispatch must stay tellable apart and must never cancel
+  # evidence already tied to a chosen commit.
+  group: android-presentation-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  presentation-sweep:
+    name: Presentation sweep (2x2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      TZ: Asia/Shanghai
+      LANG: zh_CN.UTF-8
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvmargs=-Xmx2g
+      # The artifact root: one directory per combination, uploaded as one artifact.
+      EVIDENCE_ROOT: presentation-sweep-${{ inputs.expected_sha }}
+      # The seed database stays OUTSIDE every evidence directory: evidence artifacts never carry a
+      # database (the android-scale convention); only its hash is uploaded.
+      SEED_DB: presentation-seed/ledger.db
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+      - name: Assert the checkout is the requested commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - name: Build the debug APK outside the emulator session
+        run: ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebug --warning-mode all
+      - name: Record the APK hash this run installs
+        run: |
+          set -euo pipefail
+          mkdir -p "${EVIDENCE_ROOT}"
+          sha256sum android-app/build/outputs/apk/debug/android-app-debug.apk | tee "${EVIDENCE_ROOT}/host-apk.txt"
+      - name: Build the androidTest APK that hosts the focus probe
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --max-workers=1 :android-app:assembleDebugAndroidTest --warning-mode all
+          test -f android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+          sha256sum android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
+            | tee "${EVIDENCE_ROOT}/host-test-apk.txt"
+      - name: Write the one prepared ledger database
+        # The P369 writer is a jvmTest no-op unless its property names the output; the build script
+        # forwards it to the test JVM (Gradle does not pass -D through by itself).
+        run: |
+          set -euo pipefail
+          mkdir -p presentation-seed
+          ./gradlew --no-daemon --max-workers=1 :ledger-data:jvmTest \
+            --tests 'com.unifiedledger.data.P369PresentationSeedWriterTest' \
+            "-Dul.presentation.fontscale.seed=${PWD}/${SEED_DB}"
+          sha256sum "${SEED_DB}" | tee "${EVIDENCE_ROOT}/host-seed.txt"
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Capture the four combinations in one AVD session
+        timeout-minutes: 210
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          avd-name: ul-presentation
+          profile: pixel_6
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -u
+            failures=0
+            for ui in light dark; do
+              for scale in 1.0 1.3; do
+                python3 tools/ci/android-fontscale.py run \
+                  --evidence "${EVIDENCE_ROOT}/${ui}-${scale}" \
+                  --sha "${EXPECTED_SHA}" \
+                  --profile presentation \
+                  --seed "${SEED_DB}" \
+                  --font-scale "${scale}" \
+                  --ui-mode "${ui}" \
+                  --avd-name ul-presentation \
+                  --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
+                  || failures=1
+              done
+            done
+            exit "${failures}"
+      - name: Re-derive every combination's gate from the evidence on disk
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -u
+          failures=0
+          for ui in light dark; do
+            for scale in 1.0 1.3; do
+              python3 tools/ci/android-fontscale.py gate \
+                --evidence "${EVIDENCE_ROOT}/${ui}-${scale}" \
+                --sha "${EXPECTED_SHA}" \
+                --profile presentation \
+                --seed "${SEED_DB}" \
+                --font-scale "${scale}" \
+                --ui-mode "${ui}" \
+                --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk \
+                || failures=1
+            done
+          done
+          exit "${failures}"
+      - name: Upload the sweep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # D6: the artifact carries the four combinations under one SHA-named root; each
+          # combination directory is named `<ui_mode>-<font_scale>`.
+          name: presentation-sweep-${{ inputs.expected_sha }}
+          path: presentation-sweep-${{ inputs.expected_sha }}
+          retention-days: 30
