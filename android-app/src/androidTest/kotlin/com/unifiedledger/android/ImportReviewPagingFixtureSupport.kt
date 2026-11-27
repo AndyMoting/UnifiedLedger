@@ -290,18 +290,17 @@ private fun pagingFacts(amountMinor: Long) =
 internal fun importReviewPagingPageCount(candidates: Int): Int = (candidates + IMPORT_REVIEW_PAGING_PAGE_SIZE - 1) / IMPORT_REVIEW_PAGING_PAGE_SIZE
 
 /**
- * The rendered kind half of one row's signature, built from this fixture's own facts.
+ * The rendered kind half of one row's signature, restated for this fixture's facts
+ * (`2026-01-02T03:04:05+08:00` = the Shanghai wall clock `2026-01-02T03:04`).
  *
  * The presentation function that produces it (`importCandidateMetaText`) is `internal` to `app-ui`,
  * so an androidTest cannot call it; the frozen copy shape is therefore restated here exactly as
- * `AndroidScaleOracle.ScaleRow.metaText` already restates it for the scale rig. `ordinary_flow` is
- * the `candidate_kind` token the store writes for [ImportRecordKind.ORDINARY_FLOW_SOURCE]
- * (`SqlDelightImportSpineStore`'s kind gate), and the fixture's rows carry no duplicate group, so the
- * folded duplicate status renders `无`.
+ * `AndroidScaleOracle.ScaleRow.metaText` already restates it for the scale rig. D-369 C: the
+ * Android profile renders Chinese business labels and the `Asia/Shanghai` wall clock, with
+ * `ordinary_flow` → 普通收支, `out` → 支出 and `settled` → 交易成功; the fixture's rows carry no
+ * duplicate group, so the folded duplicate status renders `无`.
  */
-private fun expectedKindLine(): String =
-    "类型 ordinary_flow；发生 $IMPORT_REVIEW_PAGING_OCCURRED_AT；方向 $IMPORT_REVIEW_PAGING_DIRECTION_TOKEN；" +
-        "状态 $IMPORT_REVIEW_PAGING_STATUS_TOKEN；重复 无"
+private fun expectedKindLine(): String = "类型 普通收支；发生 2026-01-02T03:04；方向 支出；状态 交易成功；重复 无"
 
 /**
  * Validates one database file and returns the FIRST failure as a readable reason (null = valid).

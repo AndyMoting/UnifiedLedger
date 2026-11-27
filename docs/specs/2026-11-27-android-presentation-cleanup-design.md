@@ -225,8 +225,12 @@ B 在 `LEGACY` profile 之外只改显示与布局，落地落点如下（本小
 ### 7.2 C：二级页面
 
 - 详情、搜索、账户流水、报表与日历消费同一投影；发生/统计时间分列。
-- 分类关联统一为 A 的稳定 `CategoryId` 文本 first-wins：C 批把 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 现有的重复 `posting_account_id` last-wins 与投影对齐；A 不改这四处生产文件，只登记差异（§8 第 7 条）。
+- 分类关联统一为 A 的稳定 `CategoryId` 文本 first-wins：C 批把 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 现有的重复 `posting_account_id` last-wins 与投影对齐；A 不改这四处生产文件，只登记差异（§8 第 7 条）。四处共用同一 first-wins fold，因此重复 `posting_account_id`（目录异常态，产品路径每个 posting 账户只有一条映射）下 Android 与 Desktop 一致取最小 `CategoryId`；这是 `D-369` 明确批准的对齐，除该异常态外 Desktop 的 LEGACY 呈现逐字不变。
+- 搜索与报表下钻的结果行由 B 的共享行组件承接呈现，C 不另做该行的视觉重排；该行沿用 A 的行投影与 B 的共享行组件，呈现 profile 的选择点由 A 提供（`UiPresentationProfile.kt:18` 的 `LocalUiPresentationProfile`，`P503App.kt:333` 默认 `LEGACY` 的参数），C 不重排该行。
+- 恢复确认预览的账本身份（源/目标）与工件 SHA-256 是用户确认「替换哪一份备份」的必需证据，属于恢复确认证据而非普通技术诊断：保持完整可见，不进入技术信息折叠，不省略、不截断。
+- 对账确认面的四要素（外部证据、证据职责、匹配依据、人工决定）保持可见：外部证据显示持久事实（来源时间原文与原始金额，事实不重写），证据 ID 折叠进技术信息；LEGACY 保留旧的 ID 行。收起时正常面看不到 ID，展开后可读完整 ID。审计回看保留其读取模型实际持有的事实（来源证据、职责、匹配依据与人工决定），不新增不存在的字段。
 - 报告与日历的期间、日均与空日口径沿用 `D-343`；本专项只统一呈现，不重开产品口径。
+- 导入回顾面落地（`P503ImportReview.kt` / `P503ImportReviewPresentation.kt`）：ANDROID profile 把候选类型、方向、结算状态、重复处置与逐项处置结果换成中文业务标签（失败行的诊断码进技术信息，正常面给既有零写入文案），发生时间改走 A 的上海墙钟原语，候选/重复候选 ID 与处置原值折叠进共享 `TechnicalInfoSection`；LEGACY 输出逐字不变。`P503SecondaryPresentationTest` 以字面期望覆盖两种 profile 的输出。
 - 技术信息折叠进入二级页面或详情，事实与日志不删除。
 
 ### 7.3 D：widget 与 icon
@@ -260,8 +264,14 @@ D 批落地（2026-11-27）：
 
 1. `profile=presentation` 的八场景屏幕尚未齐全，当前屏幕只覆盖既有面；后续批次补屏与判据。
 2. 分类色板的具体色值未批准，A 只给稳定 `CategoryId` 映射 helper。
-3. 技术信息折叠控件未实现，A 只冻结「事实与日志不删」的契约。
+3. 技术信息折叠控件：A 只冻结「事实与日志不删」的契约；C 已实现交易详情/历史/注释、对账审计与确认、绑定目标账户 ID 的折叠与展开/收起标签；剩余是 E 批在固定候选上取得真实 TalkBack 逐目标窗口证据。
 4. 占比舍入后各行之和可能不等于 `100.0%`；显示精确表并保留一位小数是冻结口径，不做强制配平。
 5. `profile=presentation` 的新导航与 marker 未在设备上实跑；A 只登记配置与计划，不产生或引用任何设备证据。
 6. 多币种占比的图表分母按单一币种；跨币种排序与合并仍不在范围内。
-7. `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍按 `associateBy` last-wins；本批 A 的投影按稳定 id 文本 first-wins，四处生产文件不在 A 修改，统一留给 C 批（不扩大本批修改面）。
+7. A 批登记 `QueryTransactionDetail`、`MonthlyBuckets`、`P806Folds`、`QueryRecycleBin` 四处对重复 `posting_account_id` 仍按 `associateBy` last-wins 的差异（A 的投影按稳定 id 文本 first-wins，四处生产文件不在 A 修改）。C 批已用共享 `categoryByPostingAccountFirstWins` 统一这四处，差异消除；该 fold 即 `D-369` 第 3 条批准的对齐，只影响异常的重复映射，且 Android 与 Desktop 两端一致取最小 `CategoryId`，其余 Desktop 的 LEGACY 输出不变。无遗留的旧差异条目。
+8. C 导入面其余正常面内部值登记为残余，不在 C 继续扩面（`D-369` 边界）：下列位置仍按既有形态显示，改成语义化文案需要产品批准的中文词表，C 不现场发明词汇；其中没有技术信息折叠容器的行，需要先加容器才能把原值移出正常面。本项只登记，不并入任何 PASS。
+   - intake 逐项/整批失败与重复审核 notice 的 `诊断码`/`原因码`（`P503ImportReviewPresentation.kt:451,452,472,505,509`）：诊断码到解释文案需要产品词表，这些面当前没有技术信息容器。
+   - `importPossibleExistingSourceText` 的裸 ISO 发生时间与方向/状态 token（`P503ImportReviewPresentation.kt:705-709`）：方向/状态的中文词表取决于来源候选 kind（该函数未接收该上下文）且未获产品批准，该行也没有技术信息容器。
+   - 批量结果未知项的 `核对候选 <uuid>`（`P503ImportReview.kt:823`）：候选 UUID 到业务标签需要产品词表，该结果行没有技术信息容器。
+   - 重复审核卡的 `类型：<kind token>` 与 `最新状态：<ENUM>`（`P503ImportReview.kt:1256/1257`）：两种 duplicate candidate kind 与状态的中文标签均未获产品批准，该卡没有技术信息容器。
+   - `已处置：<enum>（理由 token：<token>）`（`P503ImportReview.kt:1293`）：处置枚举与理由 token 的中文释义未获产品批准，该行需要先加技术信息容器。

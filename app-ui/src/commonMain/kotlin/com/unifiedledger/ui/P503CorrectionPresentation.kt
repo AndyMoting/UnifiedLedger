@@ -435,8 +435,39 @@ internal fun correctionAccountOptions(snapshot: CatalogSnapshotView): List<Pair<
         .filter { it.kind == com.unifiedledger.domain.AccountKind.ASSET && it.active }
         .map { it.accountId to it.name }
 
-/** One transfer preview line's TalkBack label: the field, its old value, its new value and whether it changed. */
-internal fun transferEditDiffLineContentDescription(line: TransferEditDiffLine): String = "${line.label}，旧值 ${line.oldText}，新值 ${line.newText}${if (line.changed) "，已修改" else "，未修改"}"
+/**
+ * D-369 C: the ONE difference-preview projection of one preview line — the field, its old value, its
+ * new value and whether it changed. The transaction-edit and the transfer-correction previews used
+ * to build the visible sentence and the TalkBack sentence independently (two near-identical
+ * read-aloud functions); both surfaces now read this projection, so the spoken line is derived from
+ * the same fields as the text on screen and cannot drift from it.
+ */
+internal data class CDiffLineProjection(
+    val label: String,
+    val oldText: String,
+    val newText: String,
+    val changed: Boolean,
+) {
+    /** The visible preview line: `字段：旧值 → 新值（已修改）`. */
+    val visibleText: String get() = "$label：$oldText → $newText" + if (changed) "（已修改）" else ""
+
+    /** The TalkBack sentence of the same line, spelled out for speech. */
+    val spokenText: String get() = "$label，旧值 $oldText，新值 $newText" + if (changed) "，已修改" else "，未修改"
+}
+
+internal fun cDiffLineProjection(
+    label: String,
+    oldText: String,
+    newText: String,
+    changed: Boolean,
+): CDiffLineProjection = CDiffLineProjection(label = label, oldText = oldText, newText = newText, changed = changed)
+
+internal fun cDiffLineProjection(line: TransactionEditDiffLine): CDiffLineProjection = cDiffLineProjection(line.label, line.oldText, line.newText, line.changed)
+
+internal fun cDiffLineProjection(line: TransferEditDiffLine): CDiffLineProjection = cDiffLineProjection(line.label, line.oldText, line.newText, line.changed)
+
+/** One transfer-correction preview line's TalkBack label, read from the shared projection. */
+internal fun transferEditDiffLineContentDescription(line: TransferEditDiffLine): String = cDiffLineProjection(line).spokenText
 
 /** The catalog projection the correction screens render their current names from. */
 internal fun CatalogSnapshotView.correctionCategoryNames(): Map<CategoryId, String> = categories.associate { it.categoryId to it.name }

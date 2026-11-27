@@ -762,7 +762,9 @@ internal class AndroidScaleUi(
             }
         }
         val amount = Regex("^[0-9]+\\.[0-9]{2} CNY$")
-        val meta = Regex("类型 ordinary_flow；发生 [0-9T:+\\-]+；方向 out；状态 settled；重复 ")
+        // D-369 C: the Android kind line carries Chinese business labels and the Shanghai wall
+        // clock (the oracle's `ScaleRow.metaText` restates the same shape).
+        val meta = Regex("类型 普通收支；发生 [0-9T:+\\-]+；方向 支出；状态 交易成功；重复 ")
         val roots = ArrayList<AccessibilityNodeInfo>()
         for (text in nodes(root())) {
             if (!text.isVisibleToUser || !amount.matches(text.text?.toString() ?: "")) continue
@@ -797,7 +799,7 @@ internal class AndroidScaleUi(
     private fun signatureOrNull(node: AccessibilityNodeInfo): String? {
         val text = labels(node).joinToString("\n")
         val amount = Regex("[0-9]+\\.[0-9]{2} CNY").find(text)?.value ?: return null
-        val meta = Regex("类型 ordinary_flow；发生 [^\n]+?；方向 out；状态 settled；重复 (?:无|[A-Z_]+)").find(text)?.value ?: return null
+        val meta = Regex("类型 普通收支；发生 [^\n]+?；方向 支出；状态 交易成功；重复 (?:无|[^\n]+)").find(text)?.value ?: return null
         return "$amount|$meta"
     }
 

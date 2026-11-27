@@ -365,6 +365,41 @@ class QueryTransactionDetailTest {
         )
     }
 
+    @Test
+    fun duplicatedPostingAccountMappingResolvesToTheSmallestCategoryId() {
+        // D-369 C: two categories claiming the same posting account used to resolve to the LAST id
+        // installed by `associateBy`; the shared first-wins fold keeps the smallest stable id, so the
+        // detail face, the monthly fold, the report fold and the recycle bin agree.
+        val secondLeafId = CategoryId("category-breakfast-z")
+        val duplicatedCatalog =
+            when (
+                val result =
+                    LedgerCatalog.create(
+                        accounts =
+                            listOf(
+                                Account(assetId, ledgerId, AccountKind.ASSET, cny, ownedByUser = true, realAccount = true, name = "资产-现金"),
+                                Account(expenseId, ledgerId, AccountKind.EXPENSE, cny, ownedByUser = false, realAccount = false, name = "支出-早餐账户"),
+                            ),
+                        categories =
+                            listOf(
+                                Category(foodParentId, ledgerId, parentId = null, postingAccountId = null, active = true, name = "餐饮"),
+                                Category(breakfastId, ledgerId, parentId = foodParentId, postingAccountId = expenseId, active = true, name = "早餐（改名后）"),
+                                Category(secondLeafId, ledgerId, parentId = foodParentId, postingAccountId = expenseId, active = true, name = "早餐（晚到）"),
+                            ),
+                    )
+            ) {
+                is DomainResult.Success -> result.value
+                is DomainResult.Failure -> error("test catalog must be valid")
+            }
+        val detail =
+            assertIs<TransactionDetailResult.Success>(
+                QueryTransactionDetail(EntryDetailPort(rows = listOf(expenseRow())), ledgerId, duplicatedCatalog)
+                    .query(TransactionId("tx-expense")),
+            ).detail
+
+        assertEquals("早餐（改名后）", detail.legs[0].categoryName)
+    }
+
     // --- fixtures -----------------------------------------------------------------------
 
     private fun lendRow() =

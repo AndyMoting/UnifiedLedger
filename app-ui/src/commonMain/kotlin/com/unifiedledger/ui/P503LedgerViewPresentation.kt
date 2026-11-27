@@ -21,15 +21,25 @@ import com.unifiedledger.application.OrdinaryFlowClassification
 import com.unifiedledger.application.P408ReconciliationStatus
 import com.unifiedledger.application.P806CalendarCurrencyView
 import com.unifiedledger.application.P806CalendarDayView
+import com.unifiedledger.application.P806SnapshotFailure
 import com.unifiedledger.application.PresentationCategory
+import com.unifiedledger.application.PresentationTime
+import com.unifiedledger.application.PresentationTimeRole
+import com.unifiedledger.application.PresentationTimes
 import com.unifiedledger.application.PresentationValue
 import com.unifiedledger.application.SelectableMonthsResult
+import com.unifiedledger.application.TransactionAnnotationHistoryEntry
+import com.unifiedledger.application.TransactionDetail
 import com.unifiedledger.application.TransactionDetailLeg
+import com.unifiedledger.application.TransactionDetailResult
 import com.unifiedledger.application.TransactionReconciliationLeg
+import com.unifiedledger.application.TransactionVersionHistoryResult
 import com.unifiedledger.application.occurredPresentationTime
 import com.unifiedledger.application.presentationAmountText
 import com.unifiedledger.application.presentationCategoryTintSlot
+import com.unifiedledger.application.presentationTimes
 import com.unifiedledger.application.presentationValueText
+import com.unifiedledger.application.presentationWallClockText
 import com.unifiedledger.application.projectCategoryShares
 import com.unifiedledger.application.projectHomeRow
 import com.unifiedledger.application.statisticsPresentationTime
@@ -39,6 +49,7 @@ import com.unifiedledger.domain.CategoryId
 import com.unifiedledger.domain.CurrencyUnit
 import com.unifiedledger.domain.LedgerCatalog
 import com.unifiedledger.domain.TransactionKind
+import com.unifiedledger.domain.TransactionVersion
 import kotlinx.datetime.YearMonth
 import kotlin.time.Instant
 
@@ -1001,3 +1012,348 @@ internal fun currentRowAndroidContentDescription(
     header: String,
     amountLines: List<String>,
 ): String = if (amountLines.isEmpty()) header else header + "；" + amountLines.joinToString("；")
+
+// =============================================================================
+// D-369 C: secondary-surface presentation (detail, history, annotations, queue)
+// =============================================================================
+// One pure layer the C batch's secondary screens consume. Each rule here is profile-driven: LEGACY
+// returns the pre-existing text byte-for-byte (Desktop renders the same composition root without
+// naming a profile), ANDROID selects the frozen business language — Chinese business names, the
+// `Asia/Shanghai` wall clock, `带符号金额 + 空格 + 币种代码` and a collapsed 技术信息 area that keeps
+// every identifier, request id and diagnostic code readable instead of dropping it.
+
+/** The business name of a kind: the frozen Chinese name on Android, the enum constant on LEGACY. */
+internal fun cBusinessKindText(
+    kind: TransactionKind,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> kind.name
+        UiPresentationProfile.ANDROID -> transactionKindBusinessName(kind)
+    }
+
+/**
+ * One BUSINESS instant as text, bound to a role the CALLER must name. A single instant carries no
+ * check of its own: naming the role is the caller's obligation, and the pair-level check (occurred
+ * must be OCCURRED, statistics must be STATISTICS) lives in [PresentationTimes]'s `init` for callers
+ * that present both values together. LEGACY keeps the raw instant text it always rendered.
+ */
+internal fun cBusinessTimeText(
+    instant: Instant,
+    role: PresentationTimeRole,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> instant.toString()
+        UiPresentationProfile.ANDROID -> PresentationTime(instant, role).text()
+    }
+
+/** The same rule for an already-role-bound [PresentationTime] (no second role argument exists). */
+internal fun cBusinessTimeText(
+    time: PresentationTime,
+    profile: UiPresentationProfile,
+): String = cBusinessTimeText(time.instant, time.role, profile)
+
+/**
+ * A READ instant (when a payload was read), which is neither a business occurred nor statistics
+ * time. It carries no business role by construction — the surrounding label says 读取时点 — and the
+ * Android branch renders the frozen `Asia/Shanghai` wall clock through the neutral
+ * [presentationWallClockText] formatter, so no OCCURRED role is constructed for a read value.
+ * LEGACY keeps the raw value.
+ */
+internal fun cReadInstantText(
+    instant: Instant,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> instant.toString()
+        UiPresentationProfile.ANDROID -> presentationWallClockText(instant)
+    }
+
+/**
+ * The occurred/statistics pair as one line, each value labelled with its own role. The two roles
+ * never substitute for each other, and the Android branch never prints either as a bare UTC instant.
+ */
+internal fun cPresentationTimesText(
+    times: PresentationTimes,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY ->
+            "发生时间 ${times.occurred.instant} · 统计时间 ${times.statistics.instant}"
+        UiPresentationProfile.ANDROID ->
+            "${times.occurred.role.label} ${times.occurred.text()} · ${times.statistics.role.label} ${times.statistics.text()}"
+    }
+
+/** An exact amount: LEGACY keeps the bare numeric text, ANDROID appends the currency code. */
+internal fun cAmountText(
+    minorUnits: Long,
+    currency: CurrencyUnit,
+    profile: UiPresentationProfile,
+): String = presentationAmountForProfile(minorUnits, currency, profile)
+
+// ------------------------------------------------------------------ 技术信息 (technical area)
+
+internal const val C_TECHNICAL_INFO_HEADER = "技术信息"
+internal const val C_TECHNICAL_INFO_EXPAND_LABEL = "展开技术信息"
+internal const val C_TECHNICAL_INFO_COLLAPSE_LABEL = "收起技术信息"
+
+/**
+ * One row of the collapsed technical area. [value] is the ORIGINAL stored value — never truncated,
+ * abbreviated or hashed; collapsing hides it from the normal rows, it never deletes it.
+ */
+internal data class TechnicalInfoRow(
+    val label: String,
+    val value: String,
+)
+
+/**
+ * The 技术信息 area of one record: every technical fact plus whether the user expanded it.
+ *
+ * [visibleText] is exactly what the screen prints when expanded and empty while collapsed, and
+ * [spokenText] is the TalkBack sentence for the same state, so the announced content matches the
+ * visible content in both states instead of reading a hidden identifier or skipping a shown one.
+ */
+internal data class TechnicalInfoDisclosure(
+    val rows: List<TechnicalInfoRow>,
+    val expanded: Boolean,
+) {
+    val header: String get() = C_TECHNICAL_INFO_HEADER
+
+    val toggleLabel: String get() = if (expanded) C_TECHNICAL_INFO_COLLAPSE_LABEL else C_TECHNICAL_INFO_EXPAND_LABEL
+
+    /** The rows the expanded area prints; empty while collapsed. */
+    val visibleRows: List<TechnicalInfoRow> get() = if (expanded) rows else emptyList()
+
+    fun visibleText(): String =
+        if (expanded) {
+            rows.joinToString("\n") { row -> if (row.value.isBlank()) row.label else "${row.label}：${row.value}" }
+        } else {
+            ""
+        }
+
+    fun spokenText(): String =
+        when {
+            rows.isEmpty() -> "$C_TECHNICAL_INFO_HEADER：无"
+            !expanded -> "$C_TECHNICAL_INFO_HEADER，已收起，共 ${rows.size} 项，$C_TECHNICAL_INFO_EXPAND_LABEL"
+            else ->
+                "$C_TECHNICAL_INFO_HEADER，共 ${rows.size} 项：" +
+                    rows.joinToString("；") { row -> if (row.value.isBlank()) row.label else "${row.label} ${row.value}" }
+        }
+}
+
+internal fun cTechnicalInfoDisclosure(
+    rows: List<TechnicalInfoRow>,
+    expanded: Boolean,
+): TechnicalInfoDisclosure = TechnicalInfoDisclosure(rows = rows, expanded = expanded)
+
+/** The user-facing lines of a transaction detail, in the order the detail card renders them. */
+internal fun cTransactionDetailUserLines(
+    detail: TransactionDetail,
+    profile: UiPresentationProfile,
+): List<String> =
+    listOf(
+        "发生时间：${cBusinessTimeText(detail.occurredAt, PresentationTimeRole.OCCURRED, profile)}",
+        "统计时间：${cBusinessTimeText(detail.statisticsAt, PresentationTimeRole.STATISTICS, profile)}",
+        "备注：${detail.note?.takeIf { note -> note.isNotBlank() } ?: "无"}",
+        "类型：${cBusinessKindText(detail.kind, profile)}",
+    )
+
+/**
+ * The detail's identifiers. They leave the normal rows on the Android profile and stay complete here:
+ * the ledger id, the transaction id, the current financial version id and every posting id.
+ */
+internal fun cTransactionDetailTechnicalRows(detail: TransactionDetail): List<TechnicalInfoRow> =
+    buildList {
+        add(TechnicalInfoRow("账本 ID", detail.ledgerId.value))
+        add(TechnicalInfoRow("交易 ID", detail.transactionId.value))
+        add(TechnicalInfoRow("当前版本 ID", detail.currentVersionId.value))
+        detail.legs.forEach { leg -> add(TechnicalInfoRow("分录 ID", leg.postingId.value)) }
+    }
+
+/** One read-only financial-version line: the business fields first, its internal id in 技术信息. */
+internal fun cTransactionVersionUserLine(
+    version: TransactionVersion,
+    currentVersionId: com.unifiedledger.domain.TransactionVersionId,
+    profile: UiPresentationProfile,
+): String {
+    val marker = if (version.id == currentVersionId) "（当前版本）" else ""
+    val note = version.note ?: "无"
+    return when (profile) {
+        UiPresentationProfile.LEGACY ->
+            "版本 ${version.versionNumber}$marker · 发生 ${version.times.occurredAt} · 统计 ${version.times.statisticsAt} · 备注：$note"
+        UiPresentationProfile.ANDROID -> {
+            val times = presentationTimes(version.times.occurredAt, version.times.statisticsAt)
+            "版本 ${version.versionNumber}$marker · ${cPresentationTimesText(times, profile)} · 备注：$note"
+        }
+    }
+}
+
+internal fun cTransactionVersionTechnicalRows(version: TransactionVersion): List<TechnicalInfoRow> =
+    listOf(
+        TechnicalInfoRow("版本 ID", version.id.value),
+        TechnicalInfoRow("分录集 ID", version.postingSetId.value),
+    )
+
+/**
+ * One annotation-history line: the revision, the audit instant (Shanghai on Android) and that
+ * revision's tags/merchant stay visible; the version the operation saw and the stored request id
+ * move to 技术信息. The user line never prints the raw stored instant on ANDROID, but the original
+ * `createdAt` text is preserved verbatim in [cTransactionAnnotationTechnicalRows] — the stored fact
+ * is folded, never rewritten or dropped.
+ *
+ * An unresolved `merchantId` or tag id is the D-224 user-association fact the audit stored (the
+ * identity the annotation actually referenced), not a diagnostic code: it keeps its original value
+ * rather than being hidden or changed. When the tag resolver has a current name, that current name
+ * is shown; the original association id remains in the stored revision (audit storage), so nothing
+ * has to be added to or deleted from the reference to display it.
+ */
+internal fun cTransactionAnnotationUserLine(
+    entry: TransactionAnnotationHistoryEntry,
+    tagNameOf: ((String) -> String)?,
+    profile: UiPresentationProfile,
+): String {
+    val tags =
+        if (entry.tagIds.isEmpty()) {
+            "无"
+        } else {
+            entry.tagIds.joinToString("、") { tag -> tagNameOf?.invoke(tag.value) ?: tag.value }
+        }
+    val merchant = entry.merchantId?.value ?: "无"
+    val revisionText =
+        when (profile) {
+            UiPresentationProfile.LEGACY -> "修订 ${entry.annotationRevision}（${entry.createdAt}）"
+            UiPresentationProfile.ANDROID ->
+                "修订 ${entry.annotationRevision}（${cStoredAuditText(entry.createdAt, profile)}）"
+        }
+    val sawVersion =
+        when (profile) {
+            UiPresentationProfile.LEGACY -> "· 所见版本 ${entry.observedTransactionVersionId.value}"
+            UiPresentationProfile.ANDROID -> ""
+        }
+    val request = if (profile == UiPresentationProfile.LEGACY) " · 请求 ${entry.requestId}" else ""
+    return "$revisionText$sawVersion$request · 标签：$tags · 商家：$merchant"
+}
+
+/**
+ * The annotation revision's internal identities and its stored audit instant, kept complete behind
+ * 技术信息. 「注释时间（原值）」 is the full original `entry.createdAt` text from the D-224 contract:
+ * the user line may show the Shanghai friendly time, this row keeps the stored value verbatim.
+ */
+internal fun cTransactionAnnotationTechnicalRows(entry: TransactionAnnotationHistoryEntry): List<TechnicalInfoRow> =
+    listOf(
+        TechnicalInfoRow("注释时间（原值）", entry.createdAt),
+        TechnicalInfoRow("所见版本 ID", entry.observedTransactionVersionId.value),
+        TechnicalInfoRow("请求 ID", entry.requestId),
+    )
+
+/**
+ * A stored audit instant TEXT as display text. The audit role is its own: this function never
+ * claims the occurred/statistics business roles — it renders the frozen reporting zone's wall clock
+ * through the neutral [presentationWallClockText] formatter, so no OCCURRED role is constructed for
+ * an audit value. A value that is not a parseable instant is shown verbatim — the stored fact is
+ * never replaced by a guess, and an unparseable value is not silently dropped either.
+ */
+internal fun cStoredAuditText(
+    raw: String,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> raw
+        UiPresentationProfile.ANDROID ->
+            runCatching { Instant.parse(raw.trim()) }.getOrNull()?.let { instant ->
+                presentationWallClockText(instant)
+            } ?: raw
+    }
+
+// ------------------------------------------------------------------ unified failure copy
+
+/** Which secondary surface is asking; the reason codes stay the same, only the wording differs. */
+internal enum class CPresentationSurface {
+    ACCOUNT_FLOW,
+    REPORT,
+    DRILLDOWN,
+    CALENDAR,
+}
+
+/**
+ * The ONE mapping from the stable [P806SnapshotFailure] type to explainable user copy. The secondary
+ * surfaces used to re-implement this `when`; they now delegate here, so a new failure branch is
+ * mapped once (the compiler keeps it exhaustive) and every surface explains it. Each surface keeps
+ * its own frozen wording.
+ */
+internal fun p806SnapshotFailureUserText(
+    failure: P806SnapshotFailure,
+    surface: CPresentationSurface,
+): String =
+    when (failure) {
+        P806SnapshotFailure.Unavailable ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "账户流水读取失败，可点击重试。"
+                CPresentationSurface.REPORT -> "报表读取不可用：请重试。"
+                CPresentationSurface.DRILLDOWN -> "明细读取失败，可点击重试。"
+                CPresentationSurface.CALENDAR -> "日历读取失败，可点击重试。"
+            }
+        P806SnapshotFailure.CatalogVersionMismatch ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "账目目录已更新，请从第一页重试。"
+                CPresentationSurface.REPORT -> "目录版本已变化：请重试。"
+                CPresentationSurface.DRILLDOWN -> "账目目录已更新，请从第一页重试。"
+                CPresentationSurface.CALENDAR -> "账目目录已更新，可点击重试。"
+            }
+        is P806SnapshotFailure.CatalogReference ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "账户目录引用不一致（缺账户 / 跨账本 / 币种不符），不可用。"
+                CPresentationSurface.REPORT ->
+                    "目录引用不一致（缺账户 ${failure.unresolvedAccount}、跨账本 ${failure.crossLedgerAccount}、" +
+                        "币种失配 ${failure.currencyMismatch}）：报表不可用。"
+                CPresentationSurface.DRILLDOWN -> "目录引用不一致（缺账户 / 跨账本 / 币种不符），明细不可用。"
+                CPresentationSurface.CALENDAR -> "目录引用不一致（缺账户 / 跨账本 / 币种不符），日历不可用。"
+            }
+        P806SnapshotFailure.MissingProjection ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "账目缺少统计时间投影，账户流水不可用。"
+                CPresentationSurface.REPORT -> "统计时间投影缺失：报表不可用。"
+                CPresentationSurface.DRILLDOWN -> "账目缺少统计时间投影，明细不可用。"
+                CPresentationSurface.CALENDAR -> "账目缺少统计时间投影，日历不可用。"
+            }
+        P806SnapshotFailure.OccurredAtUnparseable ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "存在无法解析的资金发生时间，账户流水不可用。"
+                CPresentationSurface.REPORT -> "存在无法解析的资金发生时间：报表不可用。"
+                CPresentationSurface.DRILLDOWN -> "存在无法解析的资金发生时间，明细不可用。"
+                CPresentationSurface.CALENDAR -> "存在无法解析的资金发生时间，日历不可用。"
+            }
+        P806SnapshotFailure.InvalidState ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "账户流水数据不一致，不可用。"
+                CPresentationSurface.REPORT -> "报表数据不一致：请重试。"
+                CPresentationSurface.DRILLDOWN -> "明细数据不一致，不可用。"
+                CPresentationSurface.CALENDAR -> "日历数据不一致，不可用。"
+            }
+        P806SnapshotFailure.InvalidWindow ->
+            when (surface) {
+                CPresentationSurface.ACCOUNT_FLOW -> "账户流水时间范围无效，不可用。"
+                CPresentationSurface.REPORT -> "自定义区间的起止日期无效：请检查日期后重试。"
+                CPresentationSurface.DRILLDOWN -> "明细时间范围无效，不可用。"
+                CPresentationSurface.CALENDAR -> "日历时间范围无效，不可用。"
+            }
+    }
+
+/** The detail read's typed outcomes as explainable copy; the stable result type is unchanged. */
+internal fun transactionDetailFailureText(result: TransactionDetailResult): String =
+    when (result) {
+        is TransactionDetailResult.Success -> ""
+        TransactionDetailResult.NotFound -> "交易不存在或不在当前账本。"
+        TransactionDetailResult.InvalidState -> "交易数据不一致，无法展示详情。"
+        TransactionDetailResult.Unavailable -> "无法读取交易详情（本地数据库不可用）。"
+    }
+
+/** The version-history read's typed outcomes as explainable copy. */
+internal fun transactionVersionHistoryFailureText(result: TransactionVersionHistoryResult): String =
+    when (result) {
+        is TransactionVersionHistoryResult.Success -> ""
+        TransactionVersionHistoryResult.NotFound -> "版本历史不可用：交易不存在或不在当前账本。"
+        TransactionVersionHistoryResult.InvalidState -> "版本历史不可用：交易数据不一致。"
+        TransactionVersionHistoryResult.Unavailable -> "无法读取版本历史（本地数据库不可用）。"
+    }

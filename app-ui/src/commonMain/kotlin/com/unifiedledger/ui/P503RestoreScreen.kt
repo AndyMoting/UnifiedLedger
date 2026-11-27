@@ -104,7 +104,14 @@ internal fun P503RestoreScreen(
             Spacer(Modifier.height(12.dp))
             Text(RESTORE_REPLACE_WARNING, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(4.dp))
-            for (line in restorePreviewLines(summary)) {
+            // D-369 C: the preview lines read the composition's presentation profile. LEGACY keeps
+            // the UTC preflight timestamp verbatim (Desktop's root never names a profile); ANDROID
+            // shows the same instant as an Asia/Shanghai wall clock. Every preview field — container
+            // format/size, schema versions, both ledger identities, artifact digest, the three check
+            // results, the replace counts and the preflight time — is still rendered here; nothing is
+            // omitted or shortened, and a failed preflight keeps its typed error face above.
+            val presentationProfile = LocalUiPresentationProfile.current
+            for (line in restorePreviewLines(summary, presentationProfile)) {
                 Text(line, style = MaterialTheme.typography.bodyMedium)
             }
             Spacer(Modifier.height(12.dp))

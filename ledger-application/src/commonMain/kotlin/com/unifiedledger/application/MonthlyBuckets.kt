@@ -1,5 +1,6 @@
 package com.unifiedledger.application
 
+import com.unifiedledger.domain.AccountId
 import com.unifiedledger.domain.AccountKind
 import com.unifiedledger.domain.Category
 import com.unifiedledger.domain.CategoryId
@@ -16,6 +17,20 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.yearMonth
 import kotlin.time.Instant
+
+/**
+ * D-369 C: the one category association every read face now shares. Categories claiming the same
+ * `posting_account_id` are ordered by their stable [CategoryId] text, and the SMALLEST id wins —
+ * explicit first-wins, matching [projectCategories]. The previous `sortedBy(...).associateBy(...)`
+ * installed the LAST candidate, so a duplicated mapping resolved to the largest id instead.
+ */
+internal fun categoryByPostingAccountFirstWins(categories: List<Category>): Map<AccountId, Category> {
+    val byPostingAccount = LinkedHashMap<AccountId, Category>()
+    for (category in categories.filter { it.postingAccountId != null }.sortedBy { it.id.value }) {
+        byPostingAccount.putIfAbsent(requireNotNull(category.postingAccountId), category)
+    }
+    return byPostingAccount
+}
 
 /**
  * P7-03.B frozen month bucketing (R-Q06-2, spec section 4.2.1). The reporting time zone
@@ -142,11 +157,7 @@ object MonthlyBuckets {
     ): Map<YearMonth, MonthlyActivity> {
         val accountsById = catalog.accounts.associateBy { it.id }
         val categoriesById = catalog.categories.associateBy { it.id }
-        val leafCategoryByPostingAccount =
-            catalog.categories
-                .filter { it.postingAccountId != null }
-                .sortedBy { it.id.value }
-                .associateBy { requireNotNull(it.postingAccountId) }
+        val leafCategoryByPostingAccount = categoryByPostingAccountFirstWins(catalog.categories)
         val activityCurrencies =
             (ledgerActivityCurrencies.orEmpty() + activityCurrenciesOf(rows))
                 .distinct()

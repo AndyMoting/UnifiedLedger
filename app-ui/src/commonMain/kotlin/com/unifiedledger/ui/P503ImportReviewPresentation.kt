@@ -20,8 +20,10 @@ import com.unifiedledger.application.ImportReviewRow
 import com.unifiedledger.application.ImportReviewRowsPageResult
 import com.unifiedledger.application.ManualExpenseAmountFormatError
 import com.unifiedledger.application.ParseManualExpenseAmount
+import com.unifiedledger.application.PresentationTimeRole
 import com.unifiedledger.application.SelfEntryMatchBasis
 import com.unifiedledger.domain.CurrencyUnit
+import kotlin.time.Instant
 
 // P7-04.C pure presentation decisions (D-146; spec sections 3.3.1/4.5/4.6/6.4, P704SPEC-12).
 // The composables in P503ImportReview.kt stay thin renderers; every load-bearing decision —
@@ -271,8 +273,34 @@ internal fun importCandidateAmountText(row: ImportReviewRow): String {
     }
 }
 
-/** The metadata line of one candidate row: kind, occurrence time, direction/status tokens. */
-internal fun importCandidateMetaText(row: ImportReviewRow): String {
+/**
+ * The metadata line of one candidate row under a presentation profile.
+ *
+ * LEGACY is the frozen line byte for byte: the raw kind token, the stored ISO text and the raw
+ * direction/status tokens plus the duplicate enum name. ANDROID renders the same facts as Chinese
+ * business labels — the candidate kind, the `Asia/Shanghai` wall clock (no bare ISO instant), the
+ * direction under the kind's own vocabulary (转入/转出 for a transfer, 收入/支出 otherwise), the
+ * normalized settled status and the duplicate disposition — while an unknown persisted token is
+ * echoed verbatim instead of being invented into a label.
+ */
+internal fun importCandidateMetaText(
+    row: ImportReviewRow,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> importCandidateMetaLegacyText(row)
+        UiPresentationProfile.ANDROID -> {
+            val parts = mutableListOf("类型 ${importCandidateKindLabel(row)}")
+            row.occurredAt?.let { parts += "发生 ${importOccurredAtText(it, profile)}" }
+            row.directionToken?.let { parts += "方向 ${importDirectionLabel(row.candidateKind, it)}" }
+            row.statusToken?.let { parts += "状态 ${importStatusLabel(it)}" }
+            parts += "重复 ${row.duplicateStatus?.let(::importDuplicateStatusLabel) ?: "无"}"
+            parts.joinToString("；")
+        }
+    }
+
+/** The pre-D-369 metadata line, kept verbatim for the desktop (LEGACY) profile. */
+private fun importCandidateMetaLegacyText(row: ImportReviewRow): String {
     val parts = mutableListOf("类型 ${row.candidateKind}")
     row.occurredAt?.let { parts += "发生 $it" }
     row.directionToken?.let { parts += "方向 $it" }
@@ -280,6 +308,81 @@ internal fun importCandidateMetaText(row: ImportReviewRow): String {
     parts += "重复 ${row.duplicateStatus?.name ?: "无"}"
     return parts.joinToString("；")
 }
+
+/**
+ * One persisted import timestamp as display text under a profile. LEGACY keeps the stored ISO text
+ * verbatim; ANDROID parses it and renders the `Asia/Shanghai` business wall clock through the A
+ * batch primitive ([cBusinessTimeText]), never a bare UTC instant. A value that is not a parseable
+ * instant is echoed verbatim — the stored fact is never replaced by a guess.
+ */
+internal fun importOccurredAtText(
+    raw: String,
+    profile: UiPresentationProfile,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> raw
+        UiPresentationProfile.ANDROID ->
+            runCatching { Instant.parse(raw.trim()) }.getOrNull()?.let { instant ->
+                cBusinessTimeText(instant, PresentationTimeRole.OCCURRED, profile)
+            } ?: raw
+    }
+
+/**
+ * The Chinese business label of one persisted candidate kind token (the store's `candidate_kind`
+ * vocabulary derived from `ImportRecordKind`). A credit-expense source whose stored payment profile
+ * is the refund variant says so; every other token keeps its kind. An unknown token is echoed
+ * verbatim rather than silently relabelled.
+ */
+internal fun importCandidateKindLabel(row: ImportReviewRow): String =
+    when (row.candidateKind) {
+        "ordinary_flow" -> "普通收支"
+        "transfer_flow" -> "转账"
+        "transfer_flow_missing_leg" -> "转账（缺少对方腿）"
+        "credit_expense" -> if (row.paymentProfileVariant == "credit_expense_refund") "信用退款" else "信用消费"
+        "credit_repayment" -> "信用还款"
+        "mixed_payment" -> "混合支付"
+        else -> row.candidateKind
+    }
+
+/**
+ * The Chinese business label of one source direction token under the candidate's own kind. A
+ * transfer's `in`/`out` is 转入/转出; every other kind's `in`/`out` is 收入/支出 (the product's
+ * existing income/expense vocabulary). An unknown token is echoed verbatim.
+ */
+internal fun importDirectionLabel(
+    candidateKind: String,
+    token: String,
+): String =
+    when (token) {
+        "in" -> if (candidateKind.startsWith("transfer_flow")) "转入" else "收入"
+        "out" -> if (candidateKind.startsWith("transfer_flow")) "转出" else "支出"
+        else -> token
+    }
+
+/**
+ * The Chinese label of the normalized source status token. `settled` is the frozen value every
+ * parser normalizes a successful transaction to, and its source-token meaning is 交易成功; any
+ * other token is echoed verbatim.
+ */
+internal fun importStatusLabel(token: String): String =
+    when (token) {
+        "settled" -> "交易成功"
+        else -> token
+    }
+
+/**
+ * The Chinese business label of one folded duplicate disposition. The blocking and review labels
+ * reuse the classification groups' frozen copy; the two retained verdicts state the reviewer's own
+ * decision. The `when` is exhaustive, so a new [ImportDuplicateStatus] must choose its label.
+ */
+internal fun importDuplicateStatusLabel(status: ImportDuplicateStatus): String =
+    when (status) {
+        ImportDuplicateStatus.DEFERRED -> "疑似重复——待审核"
+        ImportDuplicateStatus.CONFIRMED_DUPLICATE -> "重复已确认——阻断"
+        ImportDuplicateStatus.CONFIRMED_DISTINCT -> "已确认不重复"
+        ImportDuplicateStatus.DISMISSED_LOOKALIKE -> "已忽略相似"
+        ImportDuplicateStatus.REJECTED -> "已拒绝"
+    }
 
 // ------------------------------------------------------------------ format capability matrix
 
@@ -839,8 +942,34 @@ internal fun groupCardCollapseRowsText(): String = "收起成员行"
  */
 internal fun groupCardCollapseRowsDescription(): String = "收起组成员行：回到默认打开形态"
 
-/** The subject-candidate copy of one flattened card item. */
-internal fun groupDispositionItemCandidateText(state: ImportDuplicateGroupItemState): String = "候选 ${state.item.candidateId.value}"
+/**
+ * The subject-candidate copy of one flattened card item under a presentation profile.
+ *
+ * LEGACY keeps the frozen raw identifier line. ANDROID names the candidate by its 1-based position
+ * in the whole group instead, so the normal rows carry no raw id; the id itself stays complete in
+ * the item's 技术信息 area ([groupDispositionItemTechnicalRows]), never deleted.
+ */
+internal fun groupDispositionItemCandidateText(
+    state: ImportDuplicateGroupItemState,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String =
+    when (profile) {
+        UiPresentationProfile.LEGACY -> "候选 ${state.item.candidateId.value}"
+        UiPresentationProfile.ANDROID -> candidateOrdinalLabel(state.ordinal)
+    }
+
+/** The ANDROID subject label of a candidate: its whole-group ordinal, else the bare noun. */
+internal fun candidateOrdinalLabel(ordinal: Int): String = if (ordinal > 0) "候选第 $ordinal 项" else "候选"
+
+/**
+ * One flattened card item's identifiers, kept complete behind 技术信息 on ANDROID: the subject
+ * candidate and the duplicate candidate the per-item review targets. Both are original values.
+ */
+internal fun groupDispositionItemTechnicalRows(state: ImportDuplicateGroupItemState): List<TechnicalInfoRow> =
+    listOf(
+        TechnicalInfoRow("候选 ID", state.item.candidateId.value),
+        TechnicalInfoRow("重复候选 ID", state.item.duplicateCandidateId.value),
+    )
 
 // ------------------------------------------------------------------ comparison disclosure (A-VIS)
 
@@ -953,17 +1082,36 @@ internal fun groupDispositionItemComparisonToggleText(expanded: Boolean): String
  * The `contentDescription` of one item's comparison disclosure control (J4): names the acted-on
  * candidate and the 1-based ordinal of the comparison inside the open card, because one subject
  * candidate can contribute several duplicate rows to the same card.
+ *
+ * LEGACY keeps the frozen raw-id sentence. ANDROID names the candidate by its group ordinal (the
+ * same subject the visible line uses), so the normal accessibility face carries no raw identifier
+ * while the id stays readable in 技术信息.
  */
 internal fun groupDispositionItemComparisonToggleDescription(
     expanded: Boolean,
     candidateId: ImportCandidateId,
     itemOrdinal: Int,
-): String =
-    if (expanded) {
-        "收起候选 ${candidateId.value} 的第 $itemOrdinal 条比较信息"
+    groupOrdinal: Int = 0,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String {
+    val subject =
+        when (profile) {
+            UiPresentationProfile.LEGACY -> "候选 ${candidateId.value}"
+            UiPresentationProfile.ANDROID -> candidateOrdinalLabel(groupOrdinal)
+        }
+    // The separator is part of the copy per profile: after the Latin id LEGACY needs the frozen
+    // space before 的, while the ANDROID subject already ends in the Chinese noun 项 and takes none.
+    val separator =
+        when (profile) {
+            UiPresentationProfile.LEGACY -> " "
+            UiPresentationProfile.ANDROID -> ""
+        }
+    return if (expanded) {
+        "收起$subject${separator}的第 $itemOrdinal 条比较信息"
     } else {
-        "展开候选 ${candidateId.value} 的第 $itemOrdinal 条比较信息"
+        "展开$subject${separator}的第 $itemOrdinal 条比较信息"
     }
+}
 
 /**
  * The visible label of the card-level switch (J1, R1). The parameter names the CURRENT state
@@ -978,12 +1126,43 @@ internal fun groupDispositionComparisonBatchToggleDescription(
     itemCount: Int,
 ): String = if (collapsedAll) "展开全部比较信息（共 $itemCount 条）" else "收起全部比较信息（共 $itemCount 条）"
 
-/** The per-item outcome copy of one flattened card item (待处置 / 已标记 / 失败, frozen verbatim). */
-internal fun groupDispositionItemOutcomeText(state: ImportDuplicateGroupItemState): String =
+/**
+ * The per-item outcome copy of one flattened card item under a presentation profile.
+ *
+ * LEGACY keeps the frozen 待处置 / 已标记 / 失败 lines verbatim, including the raw disposition
+ * name and the diagnostic code. ANDROID renders the recorded disposition with the same Chinese
+ * vocabulary the classification groups use, and replaces the rejection's diagnostic code with the
+ * existing explainable zero-write copy; the raw value stays readable in 技术信息
+ * ([groupDispositionItemOutcomeTechnicalRows]).
+ */
+internal fun groupDispositionItemOutcomeText(
+    state: ImportDuplicateGroupItemState,
+    profile: UiPresentationProfile = UiPresentationProfile.LEGACY,
+): String =
     when (val outcome = state.outcome) {
         null -> "待处置"
-        is ImportDuplicateGroupItemResult.Reviewed -> "已标记：${outcome.outcome.name}"
-        is ImportDuplicateGroupItemResult.Rejected -> "失败（${outcome.code}）"
+        is ImportDuplicateGroupItemResult.Reviewed ->
+            when (profile) {
+                UiPresentationProfile.LEGACY -> "已标记：${outcome.outcome.name}"
+                UiPresentationProfile.ANDROID -> "已标记：${importDuplicateStatusLabel(outcome.outcome)}"
+            }
+        is ImportDuplicateGroupItemResult.Rejected ->
+            when (profile) {
+                UiPresentationProfile.LEGACY -> "失败（${outcome.code}）"
+                UiPresentationProfile.ANDROID -> "失败：重复审核未通过，未写入任何记录。"
+            }
+    }
+
+/**
+ * The raw outcome fact of one flattened card item, kept complete behind 技术信息 on ANDROID once
+ * the normal face stops printing it: the persisted disposition name or the rejection's diagnostic
+ * code. A still-pending item (待处置) recorded nothing, so it contributes no row.
+ */
+internal fun groupDispositionItemOutcomeTechnicalRows(state: ImportDuplicateGroupItemState): List<TechnicalInfoRow> =
+    when (val outcome = state.outcome) {
+        null -> emptyList()
+        is ImportDuplicateGroupItemResult.Reviewed -> listOf(TechnicalInfoRow("处置结果（原值）", outcome.outcome.name))
+        is ImportDuplicateGroupItemResult.Rejected -> listOf(TechnicalInfoRow("诊断码", outcome.code))
     }
 
 // ------------------------------------------------------------------ overview render model (FOUND-P704-D01-01)

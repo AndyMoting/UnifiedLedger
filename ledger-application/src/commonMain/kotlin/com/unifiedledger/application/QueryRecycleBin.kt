@@ -91,11 +91,7 @@ class QueryRecycleBin(
     private val catalog: LedgerCatalog,
 ) {
     private val accountsById = catalog.accounts.associateBy { it.id }
-    private val categoryByPostingAccount =
-        catalog.categories
-            .filter { it.postingAccountId != null }
-            .sortedBy { it.id.value }
-            .associateBy { requireNotNull(it.postingAccountId) }
+    private val categoryByPostingAccount = categoryByPostingAccountFirstWins(catalog.categories)
 
     fun query(): RecycleBinResult {
         val rows =

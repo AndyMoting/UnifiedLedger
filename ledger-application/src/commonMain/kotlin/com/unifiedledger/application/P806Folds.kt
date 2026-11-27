@@ -116,11 +116,7 @@ object P806Folds {
         catalog: LedgerCatalog,
     ) {
         private val accountsById = catalog.accounts.associateBy { it.id }
-        private val leafByPostingAccount: Map<AccountId, Category> =
-            catalog.categories
-                .filter { it.postingAccountId != null }
-                .sortedBy { it.id.value }
-                .associateBy { requireNotNull(it.postingAccountId) }
+        private val leafByPostingAccount: Map<AccountId, Category> = categoryByPostingAccountFirstWins(catalog.categories)
         private val categoriesById = catalog.categories.associateBy { it.id }
 
         val income = mutableMapOf<CurrencyUnit, Long>()
