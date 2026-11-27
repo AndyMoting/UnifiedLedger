@@ -306,7 +306,42 @@ PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT = ("0.00", "共 0 笔")
 PRESENTATION_MANAGEMENT_MARKER = "新建一级分类"
 PRESENTATION_MANAGEMENT_TITLE = "账户与分类管理"
 PRESENTATION_MANAGEMENT_ABSENT = P8_00_ASSET_TARGET
-PRESENTATION_MANAGEMENT_REQUIRED = ("餐饮", "交通", "日用品", "差旅")
+# - The management route's account rows (E2d): AccountsSection renders one Text per account as
+#   `name（kind）` (P503CatalogManagementScreen.kt:286-290) and the P369 seed names the four rows
+#   (P369PresentationSeedWriterTest.kt:739-745). The route opens at the TOP of its list in every
+#   combination of run 46058888914 (the 账户与分类管理 title sits at y=340 at 1.3 and y=349 at 1.0),
+#   so all four rows are in the window at capture. Only the LAST TWO rows are required: the marker
+#   ScrollStep can stop up to one swipe (a third of the 2400 px window) higher than the two observed
+#   stops, which would put 对账样本账户 above the top bar while 跨日界样本账户 and 默认支付账户
+#   (681 px and 382 px above the marker at 1.3) stay inside the window.
+PRESENTATION_MANAGEMENT_ACCOUNTS = ("跨日界样本账户", "默认支付账户")
+# - The seeded expense groups, in the order the route RENDERS them. The seed lists 餐饮,交通,日用品,
+#   差旅 (P369PresentationSeedWriterTest.kt:659-668), but CatalogProjection.kt:69 sorts each tree
+#   level by (parentId, name) and UTF-16 puts 交通 < 差旅 < 日用品 < 餐饮. The forward-only scroll
+#   steps and the two-frame split depend on the rendered order, never on the seed's list order.
+PRESENTATION_CATEGORY_TRANSPORT = "交通"
+PRESENTATION_CATEGORY_TRAVEL = "差旅"
+PRESENTATION_CATEGORY_DAILY = "日用品"
+PRESENTATION_CATEGORY_FOOD = "餐饮"
+PRESENTATION_MANAGEMENT_CATEGORIES = (
+    PRESENTATION_CATEGORY_TRANSPORT,
+    PRESENTATION_CATEGORY_TRAVEL,
+    PRESENTATION_CATEGORY_DAILY,
+    PRESENTATION_CATEGORY_FOOD,
+)
+# The leaf path rows one step BELOW each frame's required block: LeafRow renders
+# `groupName / childName` (P503CatalogManagementScreen.kt:408-411), and the seed's children give
+# 差旅/机票 for the first two groups and 餐饮/午餐 (午餐 sorts before 早餐) for the last two.
+PRESENTATION_CATEGORY_TRAVEL_FLIGHT = "差旅 / 机票"
+PRESENTATION_CATEGORY_FOOD_LUNCH = "餐饮 / 午餐"
+# The D7 management page's whole capture set (the accounts screen plus the two category viewports).
+# The gate requires every stem, so deleting one frame cannot silently shrink the evidence back to a
+# screen whose `required` names only the groups that happened to fit in its viewport.
+PRESENTATION_MANAGEMENT_STEMS = (
+    "presentation-catalog-management",
+    "presentation-catalog-categories-upper",
+    "presentation-catalog-categories-lower",
+)
 PRESENTATION_ACCOUNT_FLOW_REQUIRED = ("CNY 12.34", f"{SEEDED_ACCOUNT_NAME} 12.34 CNY")
 PRESENTATION_RECONCILIATION_REQUIRED = (SEEDED_TRANSFER_NOTE, "12.34 CNY")
 
@@ -1754,10 +1789,14 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 # (P503App.kt passes the sampled OverviewEmpty.originListScroll back to the screen), which leaves
 # 总借入 ABOVE the viewport where a forward-only ScrollStep can never reach it. For the same
 # reachability reason every screen whose speech target is not guaranteed above the fold scrolls to
-# that exact target before the speech pass: 未核对 1 条 on the queue, 总借入 on ACCOUNTS, and
-# 新建一级分类 on the management route. That last target is the on-screen category button because
-# the route reuses the entry tap's scroll offset, so its 账户与分类管理 title is not guaranteed to be
-# inside the window; the cost is that the speech target and the screenshot marker become one literal.
+# that exact target before the speech pass: 未核对 1 条 on the queue and 总借入 on ACCOUNTS. The
+# management route scrolls to its 新建一级分类 button instead, and that step is what puts the account
+# row the screen actually SPEAKS (跨日界样本账户) inside the frame. The speech target is that account
+# row, not the scrolled-to marker: the route opens at the top of its list (all four rows are in the
+# frame), so the TalkBack limb proves a DATA row's announcement instead of repeating the screenshot
+# marker. The route's two category frames speak their group names (差旅, 餐饮) for the same reason.
+# Leaf paths (`差旅 / 机票`) stay out of every speech target: TalkBack's reading of the `/` is
+# unverified, while each required literal is a plain word the fragments carry verbatim.
 #
 # System Back walks the captured surfaces: from the USD detail it returns the retained HOME overview
 # (P503Reducer.kt:2107-2109), from the reconciliation queue it returns the carried account flow whole
@@ -1788,6 +1827,29 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 #   `presentation-catalog-management` keeps its two Backs: they leave the WINDOW queue the same way
 #   and land on the ACCOUNTS list restored at the window row — the last account row — with the
 #   management entry below it, so its forward ScrollStep still reaches it.
+#
+# E2d splits the management page into three frames because ONE viewport cannot carry the whole
+# category tree. The route is a plain verticalScroll Column (P503CatalogManagementScreen.kt:104-106),
+# so every row is composed, but the accessibility dump the `required` strings are checked against
+# carries only the rows that intersect the scroll viewport: in run 46058888914 the 1.3 dump ends at
+# the 支出分类 header, whose node is clipped at the dock's top edge (y=2133), and holds NO 交通 row
+# although the dump's window node still reports [0,0][1080,2400]. A row behind the dock is therefore
+# absent evidence, not present-but-clipped.
+# - The viewport is ~1858 px tall at 1.3 (top bar bottom 275 .. dock top 2133), and each group row
+#   and leaf row owns one 126 px TextButton row (measured on the account rows of the same dump:
+#   node (42,907)-(194,1033)). Four groups plus the seed's six leaves are ten such rows, i.e.
+#   1260 px of buttons alone before any text line or padding, so the four group rows and the leaf
+#   rows that sit between them cannot share one frame.
+# - `presentation-catalog-categories-upper` scrolls to `差旅 / 机票` — the leaf directly BELOW the
+#   差旅 group — and requires 交通 + 差旅 + that leaf. The forward swipe stops the moment its target
+#   first appears in the dump, so the target lands at the dock edge and the two group rows ABOVE it
+#   stay in the window.
+# - `presentation-catalog-categories-lower` scrolls to `餐饮 / 午餐` — the 餐饮 group's first leaf,
+#   午餐 sorting before 早餐 — and requires 日用品 + 餐饮 + that leaf; 日用品 is one group above.
+#   Both stops leave the block above the target inside the window even if a stop lands a whole
+#   swipe earlier than the two observed ones (the marker at y=1933 at 1.0 and y=2069 at 1.3). The
+#   accounts screen keeps the route guard and now names the two account rows it films, so deleting
+#   either category frame can never quietly drop a seeded group name from the evidence.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -1937,8 +1999,39 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         ),
         PRESENTATION_MANAGEMENT_MARKER,
         absent=(PRESENTATION_MANAGEMENT_ABSENT,),
-        required=PRESENTATION_MANAGEMENT_REQUIRED,
-        speech=(SpeechCheck(PRESENTATION_MANAGEMENT_MARKER, (PRESENTATION_MANAGEMENT_MARKER,)),),
+        required=PRESENTATION_MANAGEMENT_ACCOUNTS,
+        speech=(
+            SpeechCheck(
+                PRESENTATION_MANAGEMENT_ACCOUNTS[0],
+                (PRESENTATION_MANAGEMENT_ACCOUNTS[0],),
+            ),
+        ),
+    ),
+    # E2d: the two category frames, each anchored on the leaf row directly below the two group names
+    # it requires (the block comment above the table derives the viewport geometry).
+    Screen(
+        "presentation-catalog-categories-upper",
+        (ScrollStep(PRESENTATION_CATEGORY_TRAVEL_FLIGHT),),
+        PRESENTATION_CATEGORY_TRAVEL_FLIGHT,
+        absent=(PRESENTATION_MANAGEMENT_ABSENT,),
+        required=(
+            PRESENTATION_CATEGORY_TRANSPORT,
+            PRESENTATION_CATEGORY_TRAVEL,
+            PRESENTATION_CATEGORY_TRAVEL_FLIGHT,
+        ),
+        speech=(SpeechCheck(PRESENTATION_CATEGORY_TRAVEL, (PRESENTATION_CATEGORY_TRAVEL,)),),
+    ),
+    Screen(
+        "presentation-catalog-categories-lower",
+        (ScrollStep(PRESENTATION_CATEGORY_FOOD_LUNCH),),
+        PRESENTATION_CATEGORY_FOOD_LUNCH,
+        absent=(PRESENTATION_MANAGEMENT_ABSENT,),
+        required=(
+            PRESENTATION_CATEGORY_DAILY,
+            PRESENTATION_CATEGORY_FOOD,
+            PRESENTATION_CATEGORY_FOOD_LUNCH,
+        ),
+        speech=(SpeechCheck(PRESENTATION_CATEGORY_FOOD, (PRESENTATION_CATEGORY_FOOD,)),),
     ),
     Screen(
         "presentation-analysis",
@@ -2360,12 +2453,13 @@ def gate_evidence_plan_problems(
 
     Plan section 2.4 asks the mapping to be asserted rather than trusted: every scenario name is
     accounted for exactly once and in the plan's order, every scenario resolves to at least one
-    stem of this profile's screen table, no stem stands for two scenarios, and the management
-    screen D7 adds is present. There is no deferred branch: a scenario that names a stem this
-    profile does not capture is red, so dropping a screen can never quietly leave a scenario
-    unproven. A non-presentation profile has no mapping to check. The parameters default to the
-    module constants so the unit test can feed synthetic tables without touching the real
-    configuration.
+    stem of this profile's screen table, no stem stands for two scenarios, and every stem of the
+    D7 management page's capture set ([PRESENTATION_MANAGEMENT_STEMS]) is present — the accounts
+    frame plus the two category viewports the page cannot fit into one frame. There is no deferred
+    branch: a scenario that names a stem this profile does not capture is red, so dropping a screen
+    can never quietly leave a scenario unproven. A non-presentation profile has no mapping to
+    check. The parameters default to the module constants so the unit test can feed synthetic
+    tables without touching the real configuration.
     """
     if profile_name != PRESENTATION_PROFILE_NAME:
         return []
@@ -2390,8 +2484,9 @@ def gate_evidence_plan_problems(
             owner[stem] = name
             if stem not in stems:
                 problems.append(f"scenario {name!r} maps {stem!r}, which this profile does not capture")
-    if "presentation-catalog-management" not in stems:
-        problems.append("the D7 management screen stem presentation-catalog-management is absent")
+    for stem in PRESENTATION_MANAGEMENT_STEMS:
+        if stem not in stems:
+            problems.append(f"the D7 management screen stem {stem} is absent")
     return problems
 
 
