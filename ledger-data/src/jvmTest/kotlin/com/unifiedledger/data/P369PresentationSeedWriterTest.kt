@@ -735,15 +735,19 @@ class P369PresentationSeedWriterTest {
                         .monthStart(MonthlyBuckets.currentMonth(LedgerClock { SEED_NOW }))
                         .toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE)
                         .date
-                currentMonthStart.minus(1, DateTimeUnit.DAY).withDayOfMonth(15)
+                // kotlinx.datetime's LocalDate has no java.time-style withDayOfMonth; it is built
+                // from its own year/month/day fields (the LocalDate(year, Month, day) constructor
+                // precedent is P806CalendarRead.kt:193).
+                val lastDayOfPreviousMonth = currentMonthStart.minus(1, DateTimeUnit.DAY)
+                LocalDate(lastDayOfPreviousMonth.year, lastDayOfPreviousMonth.month, 15)
             }
 
         val USD_EXPENSE_OCCURRED_AT: Instant =
-            LocalDateTime(PREVIOUS_MONTH_15.year, PREVIOUS_MONTH_15.monthNumber, 15, 9, 0)
+            LocalDateTime(PREVIOUS_MONTH_15.year, PREVIOUS_MONTH_15.month.ordinal + 1, 15, 9, 0)
                 .toInstant(MonthlyBuckets.REPORT_TIME_ZONE)
 
         val MULTI_CATEGORY_INSTANT: Instant =
-            LocalDateTime(PREVIOUS_MONTH_15.year, PREVIOUS_MONTH_15.monthNumber, 15, 10, 0)
+            LocalDateTime(PREVIOUS_MONTH_15.year, PREVIOUS_MONTH_15.month.ordinal + 1, 15, 10, 0)
                 .toInstant(MonthlyBuckets.REPORT_TIME_ZONE)
 
         val ORDINARY_EXPENSE =
