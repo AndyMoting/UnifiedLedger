@@ -31,7 +31,9 @@ from android_fontscale.sampler import (
     PRESENTATION_SCENARIO_STEMS,
     PRESENTATION_SCREENS,
     PROFILES,
+    RECONCILIATION_TITLE,
     SEEDED_ACCOUNT_NAME,
+    SEEDED_QUEUE_MARKER,
     Sampler,
     SampleError,
     ScrollStep,
@@ -55,9 +57,9 @@ PRESENTATION_STEMS = [
     "presentation-detail",
     "presentation-multiple-categories",
     "presentation-multi-currency",
+    "presentation-asset",
     "presentation-account-flow",
     "presentation-reconciliation",
-    "presentation-asset",
     "presentation-catalog-management",
     "presentation-analysis",
     "presentation-calendar-empty",
@@ -142,6 +144,32 @@ class PresentationProfileTests(unittest.TestCase):
         management_steps = by_stem["presentation-catalog-management"].steps
         management_tap = management_steps.index(TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True))
         self.assertIn(ScrollStep(PRESENTATION_MANAGEMENT_TITLE), management_steps[:management_tap])
+        # The route inherits the entry-tap offset, so its title can be above the viewport; the
+        # on-screen category button is the speech target and is scrolled to after the route opens.
+        self.assertEqual(ScrollStep(PRESENTATION_MANAGEMENT_MARKER), management_steps[-1])
+        self.assertEqual(
+            (PRESENTATION_MANAGEMENT_MARKER,),
+            tuple(check.target for check in by_stem["presentation-catalog-management"].speech),
+        )
+        # I3: a real TalkBack target must be IN the window, so the two screens whose speech target
+        # can sit below the fold scroll to the exact target before the speech pass.
+        self.assertEqual(
+            (TapStep("账户"), ScrollStep(P8_00_ASSET_TARGET)),
+            by_stem["presentation-asset"].steps,
+        )
+        self.assertEqual(
+            (TapStep(RECONCILIATION_TITLE), ScrollStep(SEEDED_QUEUE_MARKER)),
+            by_stem["presentation-reconciliation"].steps,
+        )
+        # The ACCOUNTS first screen must be filmed from a FRESH top: after the account-flow Back the
+        # list restores to the tapped account row, which puts 总借入 above the viewport where a
+        # forward-only ScrollStep cannot reach it.
+        self.assertLess(stems.index("presentation-asset"), stems.index("presentation-account-flow"))
+        # I4: the USD detail's absent proves it left the HOME list, not merely the multi-category row.
+        self.assertEqual(
+            (PRESENTATION_HOME_COUNT, PRESENTATION_MULTI_CATEGORY_REMAINING),
+            by_stem["presentation-multi-currency"].absent,
+        )
 
     def test_non_android_profiles_keep_the_default_analysis_steps(self):
         # The presentation/profile path must not leak the extra toggle into a screen set that never

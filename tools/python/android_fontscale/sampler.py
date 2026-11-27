@@ -174,8 +174,8 @@ P8_00_ASSET_TARGET = "总借入"
 #   transfer's row on the result face — the 结果行 the design gate names, addressed by the note its
 #   composed description carries (the note literal is owned by the seed writer, like 早餐 below).
 #   That description lists every posting line of the row (flowRowContentDescription,
-#   P503LedgerViewPresentation.kt:405-421), each one as `<account> <signed value> <code>`
-#   (:431-437), and the design gate requires 金额逐项核对正负号、数值与币种
+#   P503LedgerViewPresentation.kt:440-457), each one as `<account> <signed value> <code>`
+#   (:523-529), and the design gate requires 金额逐项核对正负号、数值与币种
 #   (docs/specs/2026-11-22-p8-07-stage-acceptance-design.md:71). The seed writer fixes the transfer
 #   at 1_234 minor units out of the default payment account (P801FontscaleSeedWriterTest.kt:504,
 #   :318-330) in CNY/2 (CatalogManagementUseCases.kt:21, :30), so its two legs announce
@@ -266,23 +266,25 @@ PRESENTATION_DEFERRED_SCENARIOS: tuple[str, ...] = (
     "technical-details",
 )
 
-# E1 presentation profile's production literals, each copied from the source the device renders:
+# E1 presentation profile's production literals, each copied from the source the device renders
+# (line numbers re-verified against the post-C-batch main after the D-369 secondary-presentation
+# merge):
 # - `流水 · 共 N 笔` is the HOME flow header (P503OverviewScreen.kt:207); the P369 seed carries six
 #   transactions, so N is six.
 # - Each detail screen's marker is the Success-only 账目信息 row `备注：<note>`
-#   (P503LedgerView.kt:593), and its note is the seed's own literal (P369PresentationSeedWriterTest).
+#   (P503LedgerView.kt:622), and its note is the seed's own literal (P369PresentationSeedWriterTest).
 # - The expense headline is `-<amount> <code>` for the two-leg EXPENSE shape
-#   (P503LedgerView.kt:739-756, the EXPENSE branch at :748-749), which is exactly the 8.88 CNY and
+#   (P503LedgerView.kt:799-816, the EXPENSE branch at :808-809), which is exactly the 8.88 CNY and
 #   100.00 USD rows.
-# - `其余 N 个` is the home row's badge-cap copy (P503LedgerViewPresentation.kt:727); the cap is
-#   MAX_HOME_CATEGORY_BADGES = 3 in ledger-application's PresentationProjection.kt:435, so the
+# - `其余 N 个` is the home row's badge-cap copy (P503LedgerViewPresentation.kt:738); the cap is
+#   MAX_HOME_CATEGORY_BADGES = 3 in ledger-application's PresentationProjection.kt:446, so the
 #   four-category seed row shows three badges and `其余 1 个`.
-# - The ranking row text is categoryShareRowText (P503LedgerViewPresentation.kt:938-941):
+# - The ranking row text is categoryShareRowText (P503LedgerViewPresentation.kt:949-952):
 #   `<category> <amount> <code> <tenths>%`. The current month has exactly one level-1 expense
 #   category (餐饮) at 8.88 CNY, i.e. a single 100.0% row.
-# - `该月暂无收支。` is the calendar's READY_EMPTY copy (P503CalendarScreen.kt:135); the two `‹`
+# - `该月暂无收支。` is the calendar's READY_EMPTY copy (P503CalendarScreen.kt:139); the two `‹`
 #   month steps land on the month before the seed's last-month rows, where every cell is a real
-#   zero. calendarDayShowsAmounts (P503LedgerViewPresentation.kt:956) then renders the date only,
+#   zero. calendarDayShowsAmounts (P503LedgerViewPresentation.kt:967) then renders the date only,
 #   while the cell's contentDescription still spells the zeros (P806CalendarPresentation.kt:122-130)
 #   — the reason this screen alone uses `visible_absent`.
 # - `新建一级分类` is the management route's category button (P503CatalogManagementScreen.kt:343);
@@ -1682,11 +1684,22 @@ REFUND_SCREENS: tuple[Screen, ...] = (
 # back): slot 1 the 8.88 expense (now), slot 2 the transfer (now - 1 day), slot 3 the multi-category
 # expense (last month 15th 10:00), slot 4 the USD expense (last month 15th 09:00). 10:00 sorts ABOVE
 # 09:00, so the multi-category screen MUST precede the multi-currency one; reversing them would leave
-# the multi-category row above the restored viewport and unreachable. After the four home rows every
-# screen leaves HOME through a bottom tab. The system Back from the account flow returns to the
-# ACCOUNTS tab (P503Reducer.kt:2335 returns the preserved overview, whose selectedTab is ACCOUNTS),
-# and Back from the management route closes only the route (P503Reducer.kt:2056-2064), which is what
-# the asset/management steps rely on.
+# the multi-category row above the restored viewport and unreachable.
+#
+# The ACCOUNTS first screen is captured BEFORE the account-flow round trip on purpose: it opens from
+# HOME with a fresh scroll at the top, so the forward-only step can reach 总借入 (the lending-card
+# pair, P503AssetsScreen.kt:215) and the TalkBack focus target is on screen. Capturing
+# it after the flow's Back would restore the accounts list to the tapped account row instead
+# (P503App.kt passes the sampled OverviewEmpty.originListScroll back to the screen), which leaves
+# 总借入 ABOVE the viewport where a forward-only ScrollStep can never reach it. For the same
+# reachability reason every screen whose speech target is not guaranteed above the fold scrolls to
+# that exact target before the speech pass: 未核对 1 条 on the queue, 总借入 on ACCOUNTS, and
+# 新建一级分类 on the management route — the route inherits the scroll offset of the entry tap, so
+# its title can sit above the viewport and the on-screen category button is the honest target.
+#
+# System Back from the account flow returns to the ACCOUNTS tab (P503Reducer.kt:2335 returns the
+# preserved overview, whose selectedTab is ACCOUNTS), and Back from the management route closes only
+# the route (P503Reducer.kt:2056-2065), which is what the management steps rely on.
 PRESENTATION_SCREENS: tuple[Screen, ...] = (
     Screen(
         "presentation-home",
@@ -1737,41 +1750,47 @@ PRESENTATION_SCREENS: tuple[Screen, ...] = (
         "presentation-multi-currency",
         (ScrollStep(PRESENTATION_MULTI_CURRENCY_NOTE), TapStep(PRESENTATION_MULTI_CURRENCY_NOTE, contains=True)),
         PRESENTATION_MULTI_CURRENCY_MARKER,
-        absent=(PRESENTATION_MULTI_CATEGORY_REMAINING,),
+        absent=(PRESENTATION_HOME_COUNT, PRESENTATION_MULTI_CATEGORY_REMAINING),
         required=(PRESENTATION_MULTI_CURRENCY_AMOUNT,),
         speech=(SpeechCheck(PRESENTATION_MULTI_CURRENCY_NOTE, (PRESENTATION_MULTI_CURRENCY_NOTE,)),),
     ),
     Screen(
-        "presentation-account-flow",
-        (BACK, TapStep("账户"), ScrollStep(SEEDED_ACCOUNT_NAME), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
-        ACCOUNT_FLOW_HEADER,
+        "presentation-asset",
+        (TapStep("账户"), ScrollStep(P8_00_ASSET_TARGET)),
+        P8_00_ASSET_TARGET,
         absent=(PRESENTATION_MULTI_CURRENCY_MARKER,),
+        required=(SEEDED_ACCOUNT_NAME,),
+        speech=(SpeechCheck(P8_00_ASSET_TARGET, (P8_00_ASSET_TARGET,)),),
+    ),
+    Screen(
+        "presentation-account-flow",
+        (ScrollStep(SEEDED_ACCOUNT_NAME), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
+        ACCOUNT_FLOW_HEADER,
+        absent=(P8_00_ASSET_TARGET,),
         required=PRESENTATION_ACCOUNT_FLOW_REQUIRED,
         speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
     ),
     Screen(
         "presentation-reconciliation",
-        (TapStep(RECONCILIATION_TITLE),),
+        (TapStep(RECONCILIATION_TITLE), ScrollStep(SEEDED_QUEUE_MARKER)),
         SEEDED_QUEUE_MARKER,
         absent=(ACCOUNT_FLOW_HEADER,),
         required=PRESENTATION_RECONCILIATION_REQUIRED,
         speech=(SpeechCheck(SEEDED_QUEUE_MARKER, (SEEDED_QUEUE_MARKER,)),),
     ),
     Screen(
-        "presentation-asset",
-        (BACK, BACK),
-        P8_00_ASSET_TARGET,
-        absent=(SEEDED_QUEUE_MARKER,),
-        required=(SEEDED_ACCOUNT_NAME,),
-        speech=(SpeechCheck(P8_00_ASSET_TARGET, (P8_00_ASSET_TARGET,)),),
-    ),
-    Screen(
         "presentation-catalog-management",
-        (ScrollStep(PRESENTATION_MANAGEMENT_TITLE), TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True)),
+        (
+            BACK,
+            BACK,
+            ScrollStep(PRESENTATION_MANAGEMENT_TITLE),
+            TapStep(PRESENTATION_MANAGEMENT_TITLE, contains=True),
+            ScrollStep(PRESENTATION_MANAGEMENT_MARKER),
+        ),
         PRESENTATION_MANAGEMENT_MARKER,
         absent=(PRESENTATION_MANAGEMENT_ABSENT,),
         required=PRESENTATION_MANAGEMENT_REQUIRED,
-        speech=(SpeechCheck(PRESENTATION_MANAGEMENT_TITLE, (PRESENTATION_MANAGEMENT_TITLE,)),),
+        speech=(SpeechCheck(PRESENTATION_MANAGEMENT_MARKER, (PRESENTATION_MANAGEMENT_MARKER,)),),
     ),
     Screen(
         "presentation-analysis",
