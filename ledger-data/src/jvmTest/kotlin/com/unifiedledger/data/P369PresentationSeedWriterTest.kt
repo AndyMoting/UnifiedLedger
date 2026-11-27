@@ -491,6 +491,7 @@ class P369PresentationSeedWriterTest {
                 ORDINARY_EXPENSE.occurredAt.toLocalDateTime(MonthlyBuckets.REPORT_TIME_ZONE).date,
                 activeDays.single().date,
             )
+
             // The empty-day screen walks TWO calendar months back (`‹` twice): last month must hold
             // the two ordinary rows (both on the 15th), and the month before it must be fully empty.
             fun calendarFor(month: YearMonth): P806CalendarSnapshot =
