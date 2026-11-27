@@ -19,6 +19,11 @@ sample; the device legs run here against a hosted AVD at the requested `system f
 - `profile=refund` (the P8-03 V-14 leg): the same seeded database, whose confirmed manual expense
   is the selectable original, drives the refund-receipt entry (type radio + candidate read) and
   its confirmation page at the requested scale;
+- `profile=presentation` (D-369 A, prepared): an independent target over the shared P8-01 seed that
+  captures the foundation contract's current surfaces in either platform `ui_mode` (light default,
+  dark opt-in) and records REAL TalkBack on its speech screens. `PRESENTATION_EVIDENCE_PLAN` names
+  the eight future presentation scenarios; A prepares that configuration and never cites these
+  frames as an accepted presentation result;
 - `profile=p806` (the P8-06 batch 6 V-12 leg): an independent anonymous seed of two fixed expenses
   on one clock-relative day, driving the ANALYSIS report region (plus a second scrolled frame that
   shows the natural-day statement in full), the calendar day cell and that day's drilldown rows at
@@ -215,6 +220,37 @@ P806_REPORT_LAST_SUCCESS_CAPTION = "以下为最近一次成功载荷（旧数�
 P806_CALENDAR_TITLE = "收支日历"
 P806_DRILLDOWN_TITLE = "报表明细"
 P806_REPORT_BALANCE_LABEL = "结余"
+
+# D-369 A presentation rig configuration. `ui_mode` names the platform night-mode state the run
+# applies before launch and records in host.json; light is the default every existing profile
+# already ran under (a hosted AVD boots in light), so adding the switch leaves their evidence
+# unchanged. The presentation profile is an independent dispatch target: it captures the current
+# surfaces the foundation contract renders and records the planned future scenario set, but A never
+# claims these frames as an accepted presentation result.
+UI_MODES: tuple[str, ...] = ("light", "dark")
+DEFAULT_UI_MODE = "light"
+PRESENTATION_PROFILE_NAME = "presentation"
+# The future evidence plan the later B/C/D batches fill with screen entries. The gate never reads
+# this tuple; it is the configuration anchor that keeps the eight scenarios named in one place.
+PRESENTATION_EVIDENCE_PLAN: tuple[str, ...] = (
+    "ordinary-expense",
+    "multiple-categories",
+    "transfer",
+    "multi-currency",
+    "empty-day",
+    "single-category-ranking",
+    "cross-day-reconciliation",
+    "technical-details",
+)
+
+
+def ui_mode_night_value(ui_mode: str) -> str:
+    """The `cmd uimode night` value for a supported mode; an unknown mode is a loud failure."""
+    if ui_mode == "light":
+        return "no"
+    if ui_mode == "dark":
+        return "yes"
+    raise SampleError(f"unknown ui_mode {ui_mode!r}; expected one of {list(UI_MODES)}")
 
 # The D-292 behavioural evidence: real TalkBack emits this VERBOSE log line with the spoken
 # fragment text. Only TalkBack's own line can satisfy the speech limb; the focus probe supplies the
@@ -1508,6 +1544,73 @@ REFUND_SCREENS: tuple[Screen, ...] = (
     ),
 )
 
+# D-369 A presentation profile: the foundation contract's current surfaces over the same shared
+# P8-01 seed (one transfer plus one confirmed expense), captured in either ui_mode. The stems name
+# the surface, not a future feature: a frame is only ever evidence for what the product actually
+# renders. `PRESENTATION_EVIDENCE_PLAN` names the future scenarios (multi-category, multi-currency,
+# empty day, ranking, technical collapse) that later batches add once their surfaces exist; this
+# profile's gate can never be read as an accepted presentation result.
+PRESENTATION_SCREENS: tuple[Screen, ...] = (
+    Screen(
+        "presentation-home",
+        (),
+        SEEDED_HOME_COUNT,
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+    ),
+    Screen(
+        "presentation-detail",
+        (TapStep(SEEDED_TRANSFER_NOTE, contains=True),),
+        SEEDED_DETAIL_MARKER,
+        absent=(SEEDED_HOME_COUNT,),
+        speech=(SpeechCheck(SEEDED_TRANSFER_NOTE, (SEEDED_TRANSFER_NOTE,)),),
+    ),
+    Screen(
+        "presentation-search-results",
+        (
+            BACK,
+            TapStep("搜索账目", contains=True),
+            TapStep("提交搜索"),
+        ),
+        SEARCH_RESULTS_MARKER,
+        absent=(SEARCH_GUIDE_MARKER, SEEDED_HOME_COUNT),
+        speech=(
+            SpeechCheck(
+                SEEDED_TRANSFER_NOTE,
+                (SEEDED_TRANSFER_NOTE, P8_02_RESULT_DEBIT, P8_02_RESULT_CREDIT),
+            ),
+        ),
+    ),
+    Screen(
+        "presentation-account-flow",
+        (BACK, TapStep("账户"), TapStep(SEEDED_ACCOUNT_NAME, contains=True)),
+        ACCOUNT_FLOW_HEADER,
+        absent=(SEARCH_RESULTS_MARKER,),
+    ),
+    Screen(
+        "presentation-reconciliation",
+        (TapStep(RECONCILIATION_TITLE),),
+        SEEDED_QUEUE_MARKER,
+        absent=(ACCOUNT_FLOW_HEADER,),
+    ),
+    Screen(
+        "presentation-asset",
+        (BACK, BACK, TapStep("账户")),
+        P8_00_ASSET_TARGET,
+    ),
+    Screen(
+        "presentation-analysis",
+        (TapStep("分析"),),
+        P806_REPORT_TITLE,
+        absent=(SEEDED_HOME_COUNT,),
+    ),
+    Screen(
+        "presentation-calendar",
+        (TapStep("首页"), TapStep(P806_CALENDAR_TITLE)),
+        P806_CALENDAR_TITLE,
+        absent=(P806_REPORT_TITLE,),
+    ),
+)
+
 @dataclass(frozen=True)
 class P806SeedFacts:
     """The exact facts the `p806` profile's seed carries, derived from the seed database.
@@ -1824,6 +1927,15 @@ PROFILES: dict[str, Profile] = {
     # The screens are placeholders here: run/gate replace them with `p806_screens` built from the
     # pushed seed, so a static literal can never drift out of the evidence.
     "p806": Profile("p806", SEEDED_HOME_COUNT, P806_SCREENS, seeded=True, talkback=True),
+    # D-369 A: the presentation profile reuses the shared P8-01 seed and adds the ui_mode switch;
+    # it is an independent target, not a replacement for any existing profile.
+    PRESENTATION_PROFILE_NAME: Profile(
+        PRESENTATION_PROFILE_NAME,
+        SEEDED_HOME_COUNT,
+        PRESENTATION_SCREENS,
+        seeded=True,
+        talkback=True,
+    ),
 }
 
 DYNAMIC_PROFILES = frozenset({"p806"})
@@ -1889,6 +2001,9 @@ class Sampler:
     evidence: Path
     font_scale: float
     avd_name: str
+    # D-369 A: the platform night-mode state applied before launch and recorded in host.json. The
+    # default keeps the hosted AVD's boot state (light) every existing profile already ran under.
+    ui_mode: str = DEFAULT_UI_MODE
     screenshots: list[str] = field(default_factory=list)
     dumps: list[str] = field(default_factory=list)
     # Monotonic id for the probe's host-command channel: every focus command needs a fresh value,
@@ -2738,6 +2853,21 @@ class Sampler:
             raise SampleError(f"font_scale did not take effect: asked {self.font_scale}, read {observed}")
         return observed
 
+    def apply_ui_mode(self) -> str:
+        """Apply and read back the requested light/dark platform mode (D-369 A)."""
+        value = ui_mode_night_value(self.ui_mode)
+        self.adb("shell", "cmd", "uimode", "night", value)
+        # The platform re-reads the mode on the next configuration change; restart the app so the
+        # first launch frame already renders the requested scheme.
+        self.adb("shell", "am", "force-stop", APP_PACKAGE)
+        time.sleep(2)
+        observed_raw = self.adb("shell", "cmd", "uimode", "night").strip().lower()
+        observed = "yes" if "yes" in observed_raw else "no" if "no" in observed_raw else observed_raw
+        expected = "yes" if value == "yes" else "no"
+        if observed != expected:
+            raise SampleError(f"ui_mode {self.ui_mode!r} did not take effect: `cmd uimode night` read {observed!r}")
+        return self.ui_mode
+
     def seed(self, seed_path: str) -> str:
         """Replace the app's ledger with the prepared database (the seeded profile only).
 
@@ -3196,6 +3326,7 @@ def run(args: argparse.Namespace) -> int:
         evidence=evidence,
         font_scale=args.font_scale,
         avd_name=args.avd_name,
+        ui_mode=args.ui_mode,
     )
     sampler.require_owned_avd()
     # The notification prompt is an Android Accessibility Suite behavior that appears whenever
@@ -3212,6 +3343,7 @@ def run(args: argparse.Namespace) -> int:
 
     sampler.adb("shell", "mkdir", "-p", Sampler.DUMP_DIR, best_effort=True)
     applied = sampler.apply_font_scale()
+    applied_ui_mode = sampler.apply_ui_mode()
     sampler.adb("install", "-r", args.apk, timeout=180)
     talkback_capability: dict[str, object] | None = None
     talkback_log_level: dict[str, object] | None = None
@@ -3303,6 +3435,7 @@ def run(args: argparse.Namespace) -> int:
         "profile": profile.name,
         "avd_name": args.avd_name,
         "font_scale": applied,
+        "ui_mode": applied_ui_mode,
         "screens": [screen.stem for screen in screens],
         "screenshots": sampler.screenshots,
         "dumps": sampler.dumps,
@@ -3727,6 +3860,9 @@ def gate(args: argparse.Namespace) -> int:
     applied = host.get("font_scale")
     if not isinstance(applied, (int, float)) or abs(float(applied) - args.font_scale) > 0.001:
         problems.append(f"font_scale {applied!r} is not the requested {args.font_scale:g}")
+    recorded_ui_mode = host.get("ui_mode")
+    if recorded_ui_mode != args.ui_mode:
+        problems.append(f"ui_mode {recorded_ui_mode!r} is not the requested {args.ui_mode!r}")
     for screen in screens:
         shot = evidence / f"{screen.stem}.png"
         tree = evidence / f"{screen.stem}.xml"
@@ -3783,6 +3919,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--font-scale", type=float, default=1.3)
+    parser.add_argument(
+        "--ui-mode",
+        choices=UI_MODES,
+        default=DEFAULT_UI_MODE,
+        help="platform night-mode state applied before launch and recorded in host.json (D-369 A)",
+    )
     parser.add_argument("--avd-name", default="ul-fontscale")
     parser.add_argument("--apk", default="android-app/build/outputs/apk/debug/android-app-debug.apk")
     parser.add_argument(

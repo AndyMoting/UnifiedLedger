@@ -100,6 +100,8 @@ commit handoff 后的异常采用 snapshot-aware resolution：resolver 输入 le
 
 `D-343`（P8-06）登记报表与下钻的**设计**边界（设计已批准；批 a 读面已实现（PR #400 squash = `d029a30e`），查询版本自证与 facade 只读访问器基础批已落地（PR #404 squash = `0facb7f`）；账户流水换读源批已落地（PR #407 squash = `577fd39a`，`app-ui` 账户面已改读账户分录分页与同快照计数），报表/日历呈现、typed `returnTo` 批 2（搜索面往返）与设备证据尚未交付）：读取仍经既有 `LedgerCurrentStateReadPort` 上的复合 typed 快照方法（默认 fail-loud、每请求一次读事务、带 `expectedCatalogVersion`），不新增公开端口、不把账户读挂到对账端口；普通收支判定、日均与当地时间日桶换算留在 `ledger-application`（唯一判定点 + 纯函数），`ledger-data` 只新增 SELECT-only 命名查询、不承载 kind 白名单或符号折叠；`app-ui` 只消费 application 层类型与只读载荷状态（显式六态，缺载荷不渲染成零）；账户资金流水主行按该决定批准的局部显示例外呈现「资金发生日期」，其他面仍按账目统计时间。该边界不改变模块职责划分；实施批另需独立审查与云端 CI 证据。具体契约见 `docs/specs/2026-11-16-p8-06-report-drilldown-design.md`。
 
+`D-369`（Android 呈现专项，A 契约与呈现基座）新增纯显示投影边界：`ledger-application` 只消费既有读模型与目录快照，输出中文业务类型、`Asia/Shanghai` 业务时间、精确金额与币种代码、分类稳定 ID/当前名/层级路径、首页标题与角标决策、真实腿汇总与有理数占比；投影不读 SQL、不写账本、不改 `LedgerEntryRow` 字段、不改 schema 或迁移。`app-ui` 以 `LocalUiPresentationProfile` 下传呈现 profile，`P503App` 默认 `LEGACY` 保持既有输出，Android 组合根显式传 `ANDROID`，桌面组合根不传；同一屏幕只切换纯显示决策，不复制 UI。字号机的 `profile=presentation` 与 `ui_mode` 只是后续设备取证配置，A 不声称界面已通过。具体契约见 `docs/specs/2026-11-27-android-presentation-cleanup-design.md`。
+
 ## 正式数据流
 
 ### 手工入口
