@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  D-369 D adaptive launcher monochrome layer (spec section 7.3). The system tints this layer for
+  themed icons (Android 13+), so it is a single-colour silhouette with the SAME geometry as the
+  visible foreground: the themed icon and the normal icon stay the same mark. No background is
+  drawn here — the system supplies the tint and the mask.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M36,38 L36,70 M44,41 L70,41 M44,54 L70,54 M44,67 L58,67"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round" />
+</vector>

@@ -1,7 +1,9 @@
 package com.unifiedledger.android
 
+import com.unifiedledger.application.PresentationSummaryLabel
 import com.unifiedledger.application.WidgetMonthlySnapshot
 import com.unifiedledger.application.WidgetMonthlySnapshotStatus
+import com.unifiedledger.application.presentationAmountText
 import com.unifiedledger.ui.WidgetSnapshotOutcome
 import kotlinx.datetime.YearMonth
 
@@ -122,8 +124,11 @@ internal fun widgetStatusText(outcome: WidgetSnapshotOutcome): String =
 /**
  * The amount lines of one snapshot under [config]. EMPTY when the setting is hidden (the privacy
  * default) or the snapshot carries no amounts — an unavailable snapshot has nothing to format, so a
- * failure can never be rendered as `0.00`. The three lines are formatted from the exact minor units
- * with integer arithmetic only (no binary floating point).
+ * failure can never be rendered as `0.00`. The three lines are the shared presentation projection
+ * (`presentationAmountText`, `PresentationSummaryLabel`): exact minor units, precision 0..18,
+ * `Long.MIN_VALUE` rendered from its own decimal text, and the frozen `普通收入`／
+ * `净支出（含退款）`／`结余` vocabulary. D-369 D deleted this reader's private formatter and labels so
+ * the widget can never drift from the screens.
  */
 internal fun widgetAmountLines(
     snapshot: WidgetMonthlySnapshot?,
@@ -131,11 +136,10 @@ internal fun widgetAmountLines(
 ): List<String> {
     if (!config.showAmounts) return emptyList()
     val amounts = snapshot?.amounts ?: return emptyList()
-    val precision = amounts.currency.precision
     return listOf(
-        "$WIDGET_LABEL_INCOME ${formatWidgetMinorUnits(amounts.ordinaryIncomeMinorUnits, precision)} ${amounts.currency.code}",
-        "$WIDGET_LABEL_NET_EXPENSE ${formatWidgetMinorUnits(amounts.netExpenseMinorUnits, precision)} ${amounts.currency.code}",
-        "$WIDGET_LABEL_BALANCE ${formatWidgetMinorUnits(amounts.balanceMinorUnits, precision)} ${amounts.currency.code}",
+        "${PresentationSummaryLabel.ORDINARY_INCOME.text} ${presentationAmountText(amounts.ordinaryIncomeMinorUnits, amounts.currency)}",
+        "${PresentationSummaryLabel.NET_EXPENSE.text} ${presentationAmountText(amounts.netExpenseMinorUnits, amounts.currency)}",
+        "${PresentationSummaryLabel.BALANCE.text} ${presentationAmountText(amounts.balanceMinorUnits, amounts.currency)}",
     )
 }
 
@@ -162,30 +166,6 @@ internal data class WidgetRenderRequest(
     val revision: Long,
 )
 
-/**
- * Integer-only minor-unit display formatting (the `formatMinorUnits` convention). No binary floating
- * point is ever involved; this is a display projection of the exact integer amount, never money
- * arithmetic. Kept local because app-ui's formatter is module-internal and the widget payload must
- * stay assertable on the plain JVM.
- */
-private fun formatWidgetMinorUnits(
-    minorUnits: Long,
-    precision: Int,
-): String {
-    require(precision in 0..18) { "currency precision must be in 0..18" }
-    val sign = if (minorUnits < 0L) "-" else ""
-    val magnitude =
-        when {
-            minorUnits == Long.MIN_VALUE -> Long.MAX_VALUE
-            minorUnits < 0L -> -minorUnits
-            else -> minorUnits
-        }
-    val digits = magnitude.toString()
-    if (precision == 0) return sign + digits
-    val padded = digits.padStart(precision + 1, '0')
-    return sign + padded.substring(0, padded.length - precision) + "." + padded.substring(padded.length - precision)
-}
-
 internal const val WIDGET_LINE_SEPARATOR: String = "\n"
 internal const val WIDGET_STATUS_AVAILABLE: String = "本月收支"
 internal const val WIDGET_STATUS_INVALID: String = "数据不一致，打开应用查看"
@@ -199,6 +179,3 @@ internal const val WIDGET_UPDATED_PREFIX: String = "更新于 "
  * already took. Amount-free, so it is shown in both the hidden and the visible state.
  */
 internal const val WIDGET_HOST_NOTICE: String = "桌面与锁屏由系统控制；隐藏金额不能撤回已产生的截图"
-internal const val WIDGET_LABEL_INCOME: String = "收入"
-internal const val WIDGET_LABEL_NET_EXPENSE: String = "净支出"
-internal const val WIDGET_LABEL_BALANCE: String = "结余"

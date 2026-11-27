@@ -2,7 +2,7 @@
 
 状态：approved
 
-批准：2026-11-27，`D-369`。本规格是 Android 呈现专项的唯一设计来源；A 批只冻结契约与呈现基座，不实现主 Tab、二级页面、widget/图标。规格中的 B–E 只是后续批次的范围契约，不是实施授权。
+批准：2026-11-27，`D-369`。本规格是 Android 呈现专项的唯一设计来源；A 批只交付契约与呈现基座。用户已批准 B–E 按本规格分轨实施：各批独立评审、验证、CI 与合并，不得把后续批次范围混入 A。
 
 ## 1. 结论
 
@@ -215,8 +215,14 @@ A 批的四项必过检查（`Kotlin tests`、`Android compile`、`Python tests`
 ### 7.3 D：widget 与 icon
 
 - widget 只消费既有只读投影与平台暴露的数据，不读 database handle，不在 widget 进程写正式账本。
-- 图标与色块按稳定 `CategoryId` 的确定性映射；同一分类跨屏幕同色。
+- 分类色块按稳定 `CategoryId` 的确定性映射由 B 批完成、D 不实现；同一分类跨屏幕同色。D 的图标底色沿用现有浅色 accent 色值并保持不改。
 - 不因 widget 引入新的账务状态或跨币种合并。
+
+D 批落地（2026-11-27）：
+
+- **widget 消费共享投影。** `LedgerWidgetSnapshotReader` 的三行金额改为 `presentationAmountText` + `PresentationSummaryLabel`：文本固定为「带符号金额 + 空格 + 币种代码」，precision 0..18，`Long.MIN_VALUE` 从其自身十进制文本渲染（precision 2 时为 `-92233720368547758.08 CNY`），不再取绝对值后夹到 `Long.MAX_VALUE`；标签统一为 `普通收入`／`净支出（含退款）`／`结余`。该文件的私有 formatter 与私有标签常量已删除，widget 已与共享显示投影同源；屏幕侧同源待 B/C 落地。RemoteViews 结构、进程 owner、generation/月份/revision 丢弃与隐藏金额路径均未改动；widget 仍不读 database handle、不写正式账本。
+- **项目自有 adaptive launcher icon。** 三层 XML：P8 浅色 accent `#2B5FCB` 蓝底（color 资源）、白色账本/统一流水前景（单一描边 vector，108dp 画布，端点距画布中心不超过 30dp，6dp 圆头描边再外扩 3dp，因此整体落在 66dp 直径的遮罩安全区内）、同几何 monochrome 层供系统主题图标取色；`mipmap-anydpi-v26/ic_launcher.xml` 与 `ic_launcher_round.xml` 装配这三层，manifest 的 `android:icon`／`android:roundIcon` 指向它们。minSdk 34 高于 adaptive icon 的 API 26 门槛，因此不需要密度 PNG 回退；没有引入图标库、图像依赖或任何复制资产。label、动态 shortcut 与 widget 入口不变。依据：[自适应图标官方设计指南](https://developer.android.com/develop/ui/views/launch/icon_design_adaptive)。
+- **验证边界。** `LedgerWidgetSnapshotReaderTest` 断言精确金额（含 `Long.MIN_VALUE`）、precision 0、统一词汇与「私有 formatter 已删除」；`LauncherIconResourceTest` 断言 manifest 图标属性、三层资源闭合、前景与 monochrome 几何一致且落在安全区、无栅格或图标库依赖。两者都是 JVM/资源解析断言；OEM launcher 的遮罩视觉与真实桌面渲染未在设备上实测，其证据留给 E 批。
 
 ### 7.4 E：验收与收口
 
@@ -228,7 +234,7 @@ A 批的四项必过检查（`Kotlin tests`、`Android compile`、`Python tests`
 
 非目标：
 
-- 不实现 B/C/D 的任何界面；不新增主 Tab、二级页面、widget 或图标。
+- A 不实现 B–E 的界面或平台面；B–E 按各自批次交付，不得越出各批边界。
 - 不改 SQL、driver、schema、迁移、账务写入或对账语义。
 - 不做跨币种折算、预算、提醒、同步或 AI。
 - 不重判 `P8-00`～`P8-07` 的任何既有结论；不追溯改写旧批次披露。

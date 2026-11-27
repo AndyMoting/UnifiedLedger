@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  D-369 D launcher icon background (spec section 7.3). The P8 light accent blue (#2B5FCB, the
+  approved P8-00 accent token rendered in app-ui/theme/P8Tokens.kt) is the whole background layer:
+  a flat field, so no launcher mask can clip a gradient or a background motif.
+-->
+<resources>
+    <color name="ic_launcher_background">#FF2B5FCB</color>
+</resources>

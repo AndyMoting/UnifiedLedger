@@ -92,6 +92,80 @@ class LedgerWidgetSnapshotReaderTest {
     }
 
     @Test
+    fun theVisibleLinesUseTheFrozenSummaryVocabularyAndTheExactSignedAmountText() {
+        // D-369 D (spec sections 4.3/4.4): the widget is one more consumer of the SAME projection —
+        // the unified summary labels and "signed amount + space + currency code", never a private
+        // vocabulary. Ordinary income stays "普通收入" (not the old "收入").
+        val snapshot = snapshot(ordinaryIncome = 123_456L, netExpense = -78_900L, balance = 202_356L)
+        val state = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden().withAmounts(true), 5, 7)
+        assertContentEquals(
+            listOf(
+                "普通收入 1234.56 CNY",
+                "净支出（含退款） -789.00 CNY",
+                "结余 2023.56 CNY",
+            ),
+            state.amountLines,
+        )
+    }
+
+    @Test
+    fun theMinimumLongAmountIsRenderedFromItsOwnDecimalTextInsteadOfAClampedApproximation() {
+        // D-369 D: `Long.MIN_VALUE` must not be negated or clamped. The deleted private formatter
+        // clamped the magnitude to `Long.MAX_VALUE`, which rendered "-92233720368547758.07"; the
+        // shared projection renders the exact "...58.08".
+        val snapshot = snapshot(ordinaryIncome = Long.MIN_VALUE, netExpense = Long.MIN_VALUE, balance = Long.MIN_VALUE)
+        val state = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden().withAmounts(true), 5, 7)
+        assertContentEquals(
+            listOf(
+                "普通收入 -92233720368547758.08 CNY",
+                "净支出（含退款） -92233720368547758.08 CNY",
+                "结余 -92233720368547758.08 CNY",
+            ),
+            state.amountLines,
+        )
+        assertFalse(state.amountLines.any { it.contains("-92233720368547758.07") }, "the clamped approximation must be gone")
+    }
+
+    @Test
+    fun theWidgetRendersPrecisionZeroThroughTheSameProjection() {
+        // The shared projection owns precision 0..18, so the widget no longer carries its own
+        // precision handling; JPY (precision 0) renders with no decimal point at all.
+        val jpy = CurrencyUnit("JPY", 0)
+        val snapshot =
+            WidgetMonthlySnapshot.available(
+                ledgerId = ledgerId,
+                month = march,
+                generation = 4,
+                catalogVersion = 9L,
+                amounts = WidgetMonthlyAmounts(jpy, 87L, -5L, 92L),
+                asOf = Instant.parse("2026-03-20T05:00:00Z"),
+            )
+        val state = widgetViewState(march, WidgetSnapshotOutcome.Read(snapshot), LedgerWidgetConfig.hidden().withAmounts(true), 5, 7)
+        assertContentEquals(
+            listOf(
+                "普通收入 87 JPY",
+                "净支出（含退款） -5 JPY",
+                "结余 92 JPY",
+            ),
+            state.amountLines,
+        )
+    }
+
+    @Test
+    fun theWidgetReaderKeepsNoPrivateAmountFormatterOrLabelVocabulary() {
+        // D-369 D source pin: the duplicate formatter and the private label constants are deleted,
+        // and the shared projection is what the reader calls. A re-introduced private formatter or
+        // a second label vocabulary turns this test RED before the behaviour assertions drift.
+        val source = repositoryFile("android-app/src/main/kotlin/com/unifiedledger/android/LedgerWidgetSnapshotReader.kt").toFile().readText()
+        assertTrue(source.contains("import com.unifiedledger.application.PresentationSummaryLabel"), "the widget must import the shared summary labels")
+        assertTrue(source.contains("import com.unifiedledger.application.presentationAmountText"), "the widget must import the shared exact amount projection")
+        assertTrue(source.contains("PresentationSummaryLabel.ORDINARY_INCOME.text"), "the widget must consume the shared ordinary-income label")
+        assertTrue(source.contains("presentationAmountText("), "the widget must format through the shared projection")
+        assertFalse(source.contains("formatWidgetMinorUnits"), "the private duplicate formatter must not come back")
+        assertFalse(source.contains("WIDGET_LABEL_"), "the private label constants must not come back")
+    }
+
+    @Test
     fun everyNonAvailableOutcomeRendersExplicitCopyAndNeverAZero() {
         // P709-A05/A06 intent (spec sections 6.4): a failure must never be rendered as a value. Each
         // non-available status has explicit copy, and the amount lines stay empty whatever the

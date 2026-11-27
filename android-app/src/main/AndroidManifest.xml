@@ -4,9 +4,19 @@
       P7-09 09.0 (spec section 6.3; D-225 Q19 P1): the process-scoped runtime owner holder lives
       on the Application subclass, so the whole process shares one owner/active graph.
     -->
+    <!--
+      D-369 D launcher icon (spec section 7.3): the app ships its own adaptive icon — P8-blue
+      background plus a white ledger/unified-flow foreground and a monochrome themed-icon layer —
+      instead of the platform default. `roundIcon` points at the round adaptive icon; the launcher
+      chooses the mask, so both files carry the same three layers. No icon library or raster image
+      is introduced. The label, the MAIN/LAUNCHER activity entry, the share filter, the dynamic
+      shortcuts and the widget receiver below are unchanged by this batch.
+    -->
     <application
         android:name=".UnifiedLedgerApplication"
+        android:icon="@mipmap/ic_launcher"
         android:label="UnifiedLedger"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.UnifiedLedger">
         <activity
             android:name=".MainActivity"
