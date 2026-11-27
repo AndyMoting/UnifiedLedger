@@ -300,8 +300,7 @@ internal fun importReviewPagingPageCount(candidates: Int): Int = (candidates + I
  * `ordinary_flow` → 普通收支, `out` → 支出 and `settled` → 交易成功; the fixture's rows carry no
  * duplicate group, so the folded duplicate status renders `无`.
  */
-private fun expectedKindLine(): String =
-    "类型 普通收支；发生 2026-01-02T03:04；方向 支出；状态 交易成功；重复 无"
+private fun expectedKindLine(): String = "类型 普通收支；发生 2026-01-02T03:04；方向 支出；状态 交易成功；重复 无"
 
 /**
  * Validates one database file and returns the FIRST failure as a readable reason (null = valid).

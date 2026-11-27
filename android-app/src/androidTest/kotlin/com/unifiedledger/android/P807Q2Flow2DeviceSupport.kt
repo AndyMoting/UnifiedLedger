@@ -1314,6 +1314,14 @@ internal class P807Q2Flow2Ui(
         /** The decision form waits for the cached catalog snapshot to land (`P503ImportReview.kt:984-1009`). */
         const val DECISION_FORM_TIMEOUT_MILLIS = 60_000L
 
+        /**
+         * The generic node/text wait of this file's own steps. The flow-1 rig keeps its
+         * `NODE_TIMEOUT_MILLIS` in that file's companion, so this flow restates the same 60_000 ms
+         * bound locally instead of reaching across files (the flow-3 rig follows the same
+         * per-file convention).
+         */
+        const val NODE_TIMEOUT_MILLIS = 60_000L
+
         /** How long a button may take to appear / report enabled after its enabling event. */
         const val ENABLED_TIMEOUT_MILLIS = 30_000L
 
@@ -1332,8 +1340,7 @@ internal class P807Q2Flow2Ui(
  * `PresentationProjection.kt:78-85`); a value that is not a parseable instant is echoed verbatim,
  * so the stored fact is never replaced by a guess.
  */
-internal fun p807Q2Flow2StoredAuditText(raw: String): String =
-    runCatching { Instant.parse(raw.trim()) }.getOrNull()?.let(::presentationWallClockText) ?: raw
+internal fun p807Q2Flow2StoredAuditText(raw: String): String = runCatching { Instant.parse(raw.trim()) }.getOrNull()?.let(::presentationWallClockText) ?: raw
 
 /**
  * The status-history line of one `posting_reconciliation_history` entry, mirroring the ANDROID
