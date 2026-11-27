@@ -383,10 +383,13 @@ private fun ReconciliationBindSection(
         )
         if (presentationProfile == UiPresentationProfile.ANDROID) {
             // The raw target account id stays readable behind 技术信息 whether or not the visible
-            // line could name the account — the identity is never deleted.
-            val targetTechRows = reconciliationTargetAccountTechnicalRows(state.accountId?.value)
-            if (targetTechRows.isNotEmpty()) {
-                TechnicalInfoSection(rows = targetTechRows, toggleKey = state.accountId)
+            // line could name the account — the identity is never deleted. An empty row list
+            // renders no technical area at all.
+            state.accountId?.let { accountId ->
+                val targetTechRows = reconciliationTargetAccountTechnicalRows(accountId.value)
+                if (targetTechRows.isNotEmpty()) {
+                    TechnicalInfoSection(rows = targetTechRows, toggleKey = accountId)
+                }
             }
         }
         when (val bindable = state.bindableEvidence) {

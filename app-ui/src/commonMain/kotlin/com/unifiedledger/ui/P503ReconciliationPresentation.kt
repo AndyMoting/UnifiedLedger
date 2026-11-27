@@ -346,7 +346,7 @@ internal fun reconciliationProposalEvidenceText(proposal: P801CandidateProposal)
  * persisted evidence FACTS instead — the stored source time text and the raw amount — so the user
  * can judge the match without reading an opaque id; the id itself stays complete in 技术信息
  * ([reconciliationConfirmTechnicalRows]). The facts are echoed verbatim: no display rule rewrites
- * the source time or the raw amount (spec section 2.5).
+ * the source time or the raw amount (D-369 设计 §7.2).
  */
 internal fun reconciliationConfirmEvidenceLine(
     proposal: P801CandidateProposal,
@@ -358,7 +358,7 @@ internal fun reconciliationConfirmEvidenceLine(
     }
 
 /**
- * The confirm block's visible lines in the surface's order: the four elements of spec section 2.5
+ * The confirm block's visible lines in the surface's order: the four elements of D-369 设计 §7.2
  * (外部证据、证据职责、匹配依据、人工决定) plus the matcher's natural-day distance. The evidence
  * line follows [reconciliationConfirmEvidenceLine] (facts on ANDROID, the raw id on LEGACY); the
  * responsibility, match basis and decision stay visible under both profiles.
