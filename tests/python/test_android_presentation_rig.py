@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from android_fontscale.sampler import (
+    ACCOUNT_FLOW_HEADER,
     BACK,
     BackStep,
     DEFAULT_UI_MODE,
@@ -16,14 +17,26 @@ from android_fontscale.sampler import (
     PRESENTATION_CALENDAR_EMPTY_MARKER,
     PRESENTATION_CALENDAR_EMPTY_TITLE,
     PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT,
-    PRESENTATION_DEFERRED_SCENARIOS,
+    PRESENTATION_CROSS_DAY_ACCOUNT,
+    PRESENTATION_CROSS_DAY_AMOUNT_B,
+    PRESENTATION_CROSS_DAY_DATE_A,
+    PRESENTATION_CROSS_DAY_DATE_B,
+    PRESENTATION_CROSS_DAY_NOTE_B,
+    PRESENTATION_CROSS_DAY_QUEUE_COUNT,
+    PRESENTATION_CROSS_DAY_ROW_A,
+    PRESENTATION_CROSS_DAY_ROW_B,
+    PRESENTATION_CROSS_DAY_UTC_ERROR,
     PRESENTATION_EVIDENCE_PLAN,
     PRESENTATION_HOME_COUNT,
     PRESENTATION_MANAGEMENT_ABSENT,
     PRESENTATION_MANAGEMENT_MARKER,
     PRESENTATION_MANAGEMENT_TITLE,
+    PRESENTATION_MULTI_CATEGORY_LEDGER_ID,
     PRESENTATION_MULTI_CATEGORY_NOTE,
+    PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID,
     PRESENTATION_MULTI_CATEGORY_REMAINING,
+    PRESENTATION_MULTI_CATEGORY_TRANSACTION_ID,
+    PRESENTATION_MULTI_CATEGORY_VERSION_ID,
     PRESENTATION_MULTI_CURRENCY_MARKER,
     PRESENTATION_MULTI_CURRENCY_NOTE,
     PRESENTATION_PROFILE_NAME,
@@ -31,6 +44,11 @@ from android_fontscale.sampler import (
     PRESENTATION_RANKING_TEXT,
     PRESENTATION_SCENARIO_STEMS,
     PRESENTATION_SCREENS,
+    PRESENTATION_TECHNICAL_COLLAPSED,
+    PRESENTATION_TECHNICAL_EXPANDED,
+    PRESENTATION_TECHNICAL_EXPAND_LABEL,
+    PRESENTATION_TECHNICAL_HEADER,
+    PRESENTATION_TECHNICAL_ROW_COUNT,
     PROFILES,
     RECONCILIATION_TITLE,
     SEEDED_ACCOUNT_NAME,
@@ -56,11 +74,14 @@ PRESENTATION_STEMS = [
     "presentation-search-results",
     "presentation-ordinary-expense",
     "presentation-detail",
+    "presentation-technical-collapsed",
+    "presentation-technical-expanded",
     "presentation-multiple-categories",
     "presentation-multi-currency",
     "presentation-asset",
     "presentation-account-flow",
     "presentation-reconciliation",
+    "presentation-reconciliation-cross-day",
     "presentation-catalog-management",
     "presentation-analysis",
     "presentation-calendar-empty",
@@ -218,35 +239,47 @@ class PresentationProfileTests(unittest.TestCase):
             PRESENTATION_EVIDENCE_PLAN,
         )
 
-    def test_scenario_mapping_covers_the_implemented_stems_and_defers_two(self):
+    def test_every_plan_scenario_resolves_to_a_captured_screen(self):
+        # E2's eight-scenario contract: every plan scenario resolves to at least one screen of THIS
+        # profile, every mapped stem is captured, no stem stands for two scenarios, and the mapping
+        # names the plan in its own order. There is no deferred list any more, so this assertion is
+        # the one place the "all eight are captured" claim lives.
         captured = {screen.stem for screen in PRESENTATION_SCREENS}
         mapped: list[str] = []
         for name, stems in PRESENTATION_SCENARIO_STEMS:
             self.assertTrue(stems, name)
+            self.assertTrue(set(stems) <= captured, name)
             mapped.extend(stems)
-            if name in PRESENTATION_DEFERRED_SCENARIOS:
-                self.assertFalse(captured & set(stems), name)
-            else:
-                self.assertTrue(set(stems) <= captured, name)
-        # One stem never stands for two scenarios.
         self.assertEqual(len(mapped), len(set(mapped)))
-        self.assertEqual(["cross-day-reconciliation", "technical-details"], list(PRESENTATION_DEFERRED_SCENARIOS))
-        self.assertIn(PRESENTATION_MANAGEMENT_MARKER, {screen.marker for screen in PRESENTATION_SCREENS})
-        self.assertIn("presentation-catalog-management", captured)
+        self.assertEqual(list(PRESENTATION_EVIDENCE_PLAN), [name for name, _ in PRESENTATION_SCENARIO_STEMS])
         self.assertEqual([], gate_evidence_plan_problems(PRESENTATION_PROFILE_NAME))
         self.assertEqual([], gate_evidence_plan_problems("seeded"))
+        # The anti-regression core: dropping the screen(s) of ANY one scenario turns the gate red, so
+        # a later edit cannot quietly shrink the evidence set back to six or seven scenarios.
+        for name, stems in PRESENTATION_SCENARIO_STEMS:
+            remaining = tuple(screen for screen in PRESENTATION_SCREENS if screen.stem not in stems)
+            self.assertTrue(
+                gate_evidence_plan_problems(PRESENTATION_PROFILE_NAME, screens=remaining),
+                name,
+            )
+        self.assertIn(PRESENTATION_MANAGEMENT_MARKER, {screen.marker for screen in PRESENTATION_SCREENS})
+        self.assertIn("presentation-catalog-management", captured)
 
     def test_evidence_plan_gate_rejects_a_broken_mapping(self):
-        screens = (Screen("presentation-home", (), PRESENTATION_HOME_COUNT),)
+        screens = (
+            Screen("presentation-home", (), PRESENTATION_HOME_COUNT),
+            # The technical stem is captured by a synthetic table entry so the `complete` case below
+            # can isolate the management-screen problem; the gate reads stems, never captures.
+            Screen("presentation-technical-collapsed", (), "x"),
+        )
         plan = ("ordinary-expense", "technical-details")
 
-        def problems(scenario_stems, deferred=("technical-details",)):
+        def problems(scenario_stems):
             return gate_evidence_plan_problems(
                 PRESENTATION_PROFILE_NAME,
                 screens=screens,
                 evidence_plan=plan,
                 scenario_stems=scenario_stems,
-                deferred=deferred,
             )
 
         complete = (
@@ -258,18 +291,19 @@ class PresentationProfileTests(unittest.TestCase):
             ["the D7 management screen stem presentation-catalog-management is absent"],
             problems(complete),
         )
-        # A mapped stem the profile does not capture is red.
+        # A mapped stem the profile does not capture is red. This is the branch that replaced the E1
+        # deferred list: a scenario can no longer be excused by declaring it deferred.
         uncaptured = (
             ("ordinary-expense", ("presentation-ordinary-expense",)),
             ("technical-details", ("presentation-technical-collapsed",)),
         )
         self.assertTrue(any("does not capture" in problem for problem in problems(uncaptured)))
-        # A deferred scenario that already names a captured stem is red.
-        deferred_captured = (
+        # One captured stem standing for two scenarios is red.
+        shared = (
             ("ordinary-expense", ("presentation-home",)),
-            ("technical-details", ("presentation-home",)),
+            ("technical-details", ("presentation-technical-collapsed", "presentation-home")),
         )
-        self.assertTrue(any("already maps captured stem" in problem for problem in problems(deferred_captured)))
+        self.assertTrue(any("is mapped to both" in problem for problem in problems(shared)))
         # A scenario the plan names but the mapping omits is red.
         incomplete = (("ordinary-expense", ("presentation-home",)),)
         self.assertTrue(any("PRESENTATION_EVIDENCE_PLAN names" in problem for problem in problems(incomplete)))
@@ -317,9 +351,9 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertTrue(gate_profile_problems(swapped, PRESENTATION_PROFILE_NAME))
 
     def test_every_presentation_screen_carries_a_real_talkback_target(self):
-        # Plan section 2.2 requires each screen to declare marker, absent, required and speech, and
-        # Block B's deferred screens are the only ones absent. Every current screen therefore
-        # carries all four, and every speech target names its required literal.
+        # Plan section 2.2 requires each screen to declare marker, absent, required and speech. E2
+        # captures all eight scenarios, so every screen — including the cross-day queue and both
+        # technical states — carries all four, and every speech target names its required literal.
         for screen in PRESENTATION_SCREENS:
             self.assertTrue(screen.marker, screen.stem)
             self.assertTrue(screen.absent, screen.stem)
@@ -347,6 +381,106 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertEqual(
             PRESENTATION_CALENDAR_EMPTY_VISIBLE_ABSENT,
             by_stem["presentation-calendar-empty"].visible_absent,
+        )
+
+    def test_cross_day_rows_print_the_shanghai_day_and_veto_the_utc_day(self):
+        # The two 2020 transfers share ONE UTC day (01-15) and straddle the Shanghai midnight, so
+        # the queue must print 01-15 for A and 01-16 for B. Both full row lines are pinned from the
+        # production formatter (reconciliationQueueRowText over the seed's fixed instants), and the
+        # negative marker is B's line under the OLD UTC bucket — 01-15 with B's own note — so a
+        # regression to the stored-date rendering reds the capture instead of passing it.
+        cross_day = next(screen for screen in PRESENTATION_SCREENS if screen.stem == "presentation-reconciliation-cross-day")
+        self.assertEqual(PRESENTATION_CROSS_DAY_ROW_B, cross_day.marker)
+        self.assertEqual(
+            (PRESENTATION_CROSS_DAY_QUEUE_COUNT, PRESENTATION_CROSS_DAY_ROW_A),
+            cross_day.required,
+        )
+        self.assertEqual((PRESENTATION_CROSS_DAY_UTC_ERROR, ACCOUNT_FLOW_HEADER), cross_day.absent)
+        # The two rows are the SAME note shape under DIFFERENT natural days, and the veto names B's
+        # note under A's day — the precise shape the old UTC bucket produced.
+        self.assertNotEqual(PRESENTATION_CROSS_DAY_DATE_A, PRESENTATION_CROSS_DAY_DATE_B)
+        self.assertTrue(PRESENTATION_CROSS_DAY_ROW_A.startswith(f"{PRESENTATION_CROSS_DAY_DATE_A} · "))
+        self.assertTrue(PRESENTATION_CROSS_DAY_ROW_B.startswith(f"{PRESENTATION_CROSS_DAY_DATE_B} · "))
+        self.assertEqual(
+            f"{PRESENTATION_CROSS_DAY_DATE_A} · {PRESENTATION_CROSS_DAY_NOTE_B}",
+            PRESENTATION_CROSS_DAY_UTC_ERROR,
+        )
+        # The speech window is the row's OWN text node, and its required facts are the same day,
+        # note and exact amount the marker carries.
+        self.assertEqual((PRESENTATION_CROSS_DAY_ROW_B,), tuple(check.target for check in cross_day.speech))
+        self.assertEqual(
+            (PRESENTATION_CROSS_DAY_DATE_B, PRESENTATION_CROSS_DAY_NOTE_B, PRESENTATION_CROSS_DAY_AMOUNT_B),
+            cross_day.speech[0].required,
+        )
+        # The row is scrolled to EXACTLY: a marker merely present in a scrollable tree would not put
+        # the speech target inside the window, which is the failure a missing ScrollStep produces.
+        self.assertEqual(ScrollStep(PRESENTATION_CROSS_DAY_ROW_B), cross_day.steps[-1])
+        self.assertEqual((BACK, BACK), cross_day.steps[:2])
+        # The queue is reached through the WINDOW account row: the forward-only scroll must address
+        # that seeded account by name, and the tap must be preceded by it (its row can sit far below
+        # the restored list position).
+        self.assertIn(ScrollStep(PRESENTATION_CROSS_DAY_ACCOUNT), cross_day.steps)
+        self.assertLess(
+            cross_day.steps.index(ScrollStep(PRESENTATION_CROSS_DAY_ACCOUNT)),
+            cross_day.steps.index(TapStep(PRESENTATION_CROSS_DAY_ACCOUNT, contains=True)),
+        )
+
+    def test_the_technical_disclosure_is_collapsed_by_default_then_expanded(self):
+        # spokenText() (P503LedgerViewPresentation.kt:1135-1142) is the toggle's one content
+        # description in both states, so each state is a distinct announcement a screen can pin.
+        by_stem = {screen.stem: screen for screen in PRESENTATION_SCREENS}
+        collapsed = by_stem["presentation-technical-collapsed"]
+        expanded = by_stem["presentation-technical-expanded"]
+        # Collapsed: the default state, with no tap on the toggle before the capture, and the
+        # transaction id the normal rows never print named as an absence.
+        self.assertEqual(PRESENTATION_TECHNICAL_COLLAPSED, collapsed.marker)
+        self.assertIn("已收起", collapsed.marker)
+        self.assertIn(PRESENTATION_TECHNICAL_EXPAND_LABEL, collapsed.marker)
+        self.assertNotIn(PRESENTATION_MULTI_CATEGORY_TRANSACTION_ID, collapsed.marker)
+        self.assertFalse(
+            any(isinstance(step, TapStep) and step.target == PRESENTATION_TECHNICAL_COLLAPSED for step in collapsed.steps)
+        )
+        self.assertIn(PRESENTATION_MULTI_CATEGORY_TRANSACTION_ID, collapsed.absent)
+        self.assertEqual((PRESENTATION_TECHNICAL_EXPAND_LABEL,), collapsed.required)
+        self.assertEqual(
+            ScrollStep(PRESENTATION_TECHNICAL_COLLAPSED, 8),
+            collapsed.steps[-1],
+        )
+        # Expanded: the SAME toggle after exactly one tap, its marker the expanded announcement
+        # prefix and the collapsed sentence now absent (a missed tap leaves it in place).
+        self.assertEqual((TapStep(PRESENTATION_TECHNICAL_COLLAPSED),), expanded.steps)
+        self.assertEqual(PRESENTATION_TECHNICAL_EXPANDED, expanded.marker)
+        self.assertEqual((PRESENTATION_TECHNICAL_COLLAPSED,), expanded.absent)
+        self.assertEqual(
+            (
+                PRESENTATION_MULTI_CATEGORY_LEDGER_ID,
+                PRESENTATION_MULTI_CATEGORY_VERSION_ID,
+                PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID,
+            ),
+            expanded.required,
+        )
+        # The row count is the page's own: three detail ids plus the seed's five posting ids. A drift
+        # in either direction changes the announcement and reds the marker, never passes silently.
+        self.assertEqual(3 + 5, PRESENTATION_TECHNICAL_ROW_COUNT)
+        self.assertIn(f"共 {PRESENTATION_TECHNICAL_ROW_COUNT} 项", PRESENTATION_TECHNICAL_COLLAPSED)
+        self.assertIn(
+            f"{PRESENTATION_TECHNICAL_HEADER}，共 {PRESENTATION_TECHNICAL_ROW_COUNT} 项：",
+            PRESENTATION_TECHNICAL_EXPANDED,
+        )
+        # The spoken limb covers both directions of the control: the collapsed announcement names
+        # the expand affordance, the expanded one speaks the full original values.
+        self.assertEqual(
+            (PRESENTATION_TECHNICAL_COLLAPSED,),
+            tuple(check.target for check in collapsed.speech),
+        )
+        self.assertEqual((PRESENTATION_TECHNICAL_EXPAND_LABEL,), collapsed.speech[0].required)
+        self.assertEqual(
+            (PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID,),
+            tuple(check.target for check in expanded.speech),
+        )
+        self.assertEqual(
+            (PRESENTATION_MULTI_CATEGORY_VERSION_ID, PRESENTATION_MULTI_CATEGORY_PAYMENT_POSTING_ID),
+            expanded.speech[0].required,
         )
 
 
