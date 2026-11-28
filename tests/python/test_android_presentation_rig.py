@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
+import json
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from android_fontscale import sampler as sampler_module
 from android_fontscale.sampler import (
     ACCOUNT_FLOW_HEADER,
     BACK,
@@ -1508,6 +1513,182 @@ class TalkbackWindowBegan(unittest.TestCase):
         lost_window, lost_problem = isolate_talkback_window(_artifact(*lost["lines"]), 1)
         self.assertEqual([], lost_window)
         self.assertEqual(lost["problem"], lost_problem)
+
+
+class HostProvenanceChannel(unittest.TestCase):
+    """E2: the on-host diagnostic channel, and the provenance a gate reads back.
+
+    Five decision branches: (a) the hosted runner records `cloud`, (b) both local factors admit
+    `local-diagnostic`, (c) one factor alone keeps today's refusal word for word, (d) GitHub
+    Actions never relabels its own output, (e) the gate fails closed on a `local-diagnostic`
+    artifact before any per-screen criterion runs. The remaining tests carry those decisions into
+    the CLI and the `host.json` stamp.
+    """
+
+    SHA = "a" * 40
+    # Every environment key the decision reads; "" is the absent state, which is also what CI must
+    # never leak into these cases (the whole point is that the decision reads only these keys).
+    ENVIRONMENT_KEYS = (
+        "GITHUB_ACTIONS",
+        "RUNNER_ENVIRONMENT",
+        "RUNNER_OS",
+        sampler_module.LOCAL_DIAGNOSTIC_ENV,
+    )
+    HOSTED_LINUX = {
+        "GITHUB_ACTIONS": "true",
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "RUNNER_OS": "Linux",
+    }
+
+    def environment(self, **overrides: str) -> object:
+        return mock.patch.dict(
+            os.environ, {**{key: "" for key in self.ENVIRONMENT_KEYS}, **overrides}
+        )
+
+    def gate(self, evidence: Path, provenance: object) -> tuple[int, str, mock.Mock, mock.Mock]:
+        """Write one host.json and run the real gate entry; the criteria are stubbed out."""
+        evidence.mkdir(parents=True, exist_ok=True)
+        host: dict[str, object] = {"sha": self.SHA, "profile": "presentation"}
+        if provenance is not None:
+            host["provenance"] = provenance
+        (evidence / "host.json").write_text(json.dumps(host), encoding="utf-8")
+        criteria = mock.Mock(return_value=[])
+        plan = mock.Mock(return_value=[])
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(sampler_module, "gate_profile_problems", criteria),
+            mock.patch.object(sampler_module, "gate_evidence_plan_problems", plan),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = sampler_module.main(
+                [
+                    "gate",
+                    "--evidence",
+                    str(evidence),
+                    "--sha",
+                    self.SHA,
+                    "--profile",
+                    PRESENTATION_PROFILE_NAME,
+                ]
+            )
+        return code, stderr.getvalue(), criteria, plan
+
+    def test_a_hosted_linux_runner_records_cloud(self) -> None:
+        with self.environment(**self.HOSTED_LINUX):
+            self.assertEqual("cloud", sampler_module.resolve_provenance("cloud", False))
+
+    def test_both_factors_admit_a_local_diagnostic(self) -> None:
+        with self.environment(**{sampler_module.LOCAL_DIAGNOSTIC_ENV: "1"}):
+            self.assertEqual(
+                "local-diagnostic", sampler_module.resolve_provenance("local-diagnostic", True)
+            )
+
+    def test_one_factor_alone_keeps_todays_refusal_word_for_word(self) -> None:
+        with self.environment():
+            with self.assertRaises(SampleError) as cloud_guard:
+                sampler_module.require_cloud_runner()
+            for flag, variable in ((True, False), (False, True)):
+                with self.subTest(flag=flag, variable=variable):
+                    with self.environment(
+                        **({sampler_module.LOCAL_DIAGNOSTIC_ENV: "1"} if variable else {})
+                    ):
+                        with self.assertRaises(SampleError) as refused:
+                            sampler_module.resolve_provenance("local-diagnostic", flag)
+                    # The same guard, so the text cannot drift from the default path's.
+                    self.assertEqual(str(cloud_guard.exception), str(refused.exception))
+                    self.assertIn(
+                        "this rig only runs on a GitHub-hosted Linux runner",
+                        str(refused.exception),
+                    )
+
+    def test_github_actions_refuses_to_relabel_its_own_output(self) -> None:
+        with self.environment(
+            **self.HOSTED_LINUX, **{sampler_module.LOCAL_DIAGNOSTIC_ENV: "1"}
+        ):
+            with self.assertRaises(SampleError) as refused:
+                sampler_module.resolve_provenance("local-diagnostic", True)
+        message = str(refused.exception)
+        self.assertIn("GitHub Actions", message)
+        self.assertIn("diagnostic", message)
+        # Not the runner-triple refusal: the run is on a hosted runner and still says no.
+        self.assertNotIn("only runs on a GitHub-hosted Linux runner", message)
+
+    def test_the_gate_fails_closed_on_a_local_diagnostic_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            code, stderr, criteria, plan = self.gate(Path(temp), "local-diagnostic")
+        self.assertEqual(1, code)
+        self.assertIn("local diagnostic", stderr)
+        self.assertIn("not device evidence", stderr)
+        # No criterion ran, so a later per-screen problem cannot make it look judged.
+        criteria.assert_not_called()
+        plan.assert_not_called()
+        self.assertNotIn("screenshot missing", stderr)
+
+    def test_a_cloud_artifact_reaches_the_criteria(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            code, stderr, criteria, plan = self.gate(Path(temp), "cloud")
+        # Not a pass: the two stubbed criterion functions return no problems, but the host.json
+        # lacks font_scale and ui_mode and the directory has no screenshots, so the unstubbed
+        # checks still fail it. What this case proves is that the provenance branch did not fire.
+        self.assertEqual(1, code)
+        self.assertNotIn("local diagnostic", stderr)
+        criteria.assert_called_once()
+        plan.assert_called_once()
+
+    def test_an_artifact_without_the_key_keeps_todays_judging(self) -> None:
+        # Deliberate: the provenance rule rejects only an explicit `local-diagnostic`, so evidence
+        # captured before the key existed is judged exactly as before. Recorded as a residual.
+        with tempfile.TemporaryDirectory() as temp:
+            _code, stderr, criteria, plan = self.gate(Path(temp), None)
+        self.assertNotIn("local diagnostic", stderr)
+        criteria.assert_called_once()
+        plan.assert_called_once()
+
+    def test_the_cli_carries_both_factors_into_the_run_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.object(sampler_module, "run", return_value=0) as run:
+                self.assertEqual(
+                    0,
+                    sampler_module.main(
+                        [
+                            "run",
+                            "--evidence",
+                            temp,
+                            "--sha",
+                            self.SHA,
+                            "--provenance",
+                            "local-diagnostic",
+                            "--diagnostic-opt-in",
+                        ]
+                    ),
+                )
+        args = run.call_args[0][0]
+        self.assertEqual("local-diagnostic", args.provenance)
+        self.assertTrue(args.diagnostic_opt_in)
+
+    def test_the_cli_defaults_to_the_cloud_provenance_without_the_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.object(sampler_module, "run", return_value=0) as run:
+                sampler_module.main(["run", "--evidence", temp, "--sha", self.SHA])
+        args = run.call_args[0][0]
+        self.assertEqual("cloud", args.provenance)
+        self.assertFalse(args.diagnostic_opt_in)
+
+    def test_run_stamps_the_decided_provenance_at_the_top_level_of_host_json(self) -> None:
+        # The stamp sits inside run(), which needs a device: this guard is the one that goes red if
+        # the key is dropped, or wired to anything but the decision's own return value.
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "tools"
+            / "python"
+            / "android_fontscale"
+            / "sampler.py"
+        ).read_text(encoding="utf-8")
+        body = source[source.index("def run(") : source.index("def gate_seed_problems(")]
+        self.assertIn(
+            "provenance = resolve_provenance(args.provenance, args.diagnostic_opt_in)", body
+        )
+        self.assertIn('"provenance": provenance', body)
 
 
 if __name__ == "__main__":

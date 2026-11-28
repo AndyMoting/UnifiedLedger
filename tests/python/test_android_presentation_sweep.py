@@ -163,6 +163,8 @@ class ForwardedArguments(SweepCase):
             "ul-presentation",
             "--test-apk",
             TEST_APK,
+            "--provenance",
+            "cloud",
         ]
         self.assertEqual(expected, sweep.fontscale_argv(self.config(), "dark", "1.3"))
 
@@ -363,6 +365,34 @@ class CommandLine(SweepCase):
         self.assertEqual("presentation", recorded.calls[0][recorded.calls[0].index("--profile") + 1])
         self.assertTrue((self.root / "sweep.json").is_file())
 
+    def test_the_provenance_flag_reaches_all_four_combinations(self) -> None:
+        # A hardcoded class inside `fontscale_argv` would still pass the literal-argv test, whose
+        # config is the default; this one is deliberately not the default and reads the value back
+        # off every dispatched call, so the CLI value has to survive the whole chain.
+        recorded = Recorded()
+        with patch.object(sweep, "execute", recorded), contextlib.redirect_stdout(io.StringIO()):
+            code = sweep.main(
+                [
+                    "run",
+                    "--evidence-root",
+                    str(self.root),
+                    "--sha",
+                    SHA,
+                    "--seed",
+                    SEED,
+                    "--test-apk",
+                    TEST_APK,
+                    "--provenance",
+                    "local-diagnostic",
+                ]
+            )
+        self.assertEqual(0, code)
+        self.assertEqual(4, len(recorded.calls))
+        self.assertEqual(
+            {"local-diagnostic"},
+            {argv[argv.index("--provenance") + 1] for argv in recorded.calls},
+        )
+
     def test_an_unknown_subcommand_is_rejected_before_any_combination_runs(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
@@ -393,6 +423,7 @@ class WorkflowEntry(unittest.TestCase):
             '--seed "${SEED_DB}"',
             "--avd-name ul-presentation",
             f"--test-apk {TEST_APK}",
+            "--provenance cloud",
         ):
             self.assertIn(flag, script)
 
@@ -405,7 +436,12 @@ class WorkflowEntry(unittest.TestCase):
                     stripped,
                 )
                 self.assertFalse(stripped.endswith("\\"))
-                for flag in ('--evidence-root "${EVIDENCE_ROOT}"', '--sha "${EXPECTED_SHA}"'):
+                for flag in (
+                    '--evidence-root "${EVIDENCE_ROOT}"',
+                    '--sha "${EXPECTED_SHA}"',
+                    # Same value as the capture line: one provenance per sweep, never two.
+                    "--provenance cloud",
+                ):
                     self.assertIn(flag, stripped)
                 return
         raise AssertionError("the gate step does not call the sweep script")

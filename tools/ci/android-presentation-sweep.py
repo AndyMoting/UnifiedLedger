@@ -73,6 +73,7 @@ class SweepConfig:
     seed: str
     avd_name: str
     test_apk: str
+    provenance: str = "cloud"
 
 
 def evidence_dir(config: SweepConfig, ui_mode: str, font_scale: str) -> Path:
@@ -102,6 +103,8 @@ def fontscale_argv(config: SweepConfig, ui_mode: str, font_scale: str) -> list[s
         config.avd_name,
         "--test-apk",
         config.test_apk,
+        "--provenance",
+        config.provenance,
     ]
 
 
@@ -189,6 +192,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", default="", help="the prepared ledger database both steps share")
     parser.add_argument("--avd-name", default="ul-presentation")
     parser.add_argument(
+        "--provenance",
+        choices=("cloud", "local-diagnostic"),
+        default="cloud",
+        help=(
+            "what every combination stamps into its host.json: `cloud` for the "
+            "GitHub-hosted Linux rig, `local-diagnostic` for the on-host channel "
+            "(which `gate` refuses). Explicit, never left to a default: the "
+            "workflow passes `cloud` on both of its lines"
+        ),
+    )
+    parser.add_argument(
         "--test-apk",
         default="android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk",
         help="the androidTest APK that hosts the D-292 focus probe",
@@ -202,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             avd_name=args.avd_name,
             test_apk=args.test_apk,
+            provenance=args.provenance,
         )
     )
 

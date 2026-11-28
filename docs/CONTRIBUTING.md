@@ -204,6 +204,19 @@ gh workflow run android-presentation-evidence.yml --ref <branch> -f expected_sha
 
 朗读通路在「启用 TalkBack 成功」与「发第一条命令」之间有一道**有界就绪门**（P8-07 批 D r4）：以 1 s 间隔最多等 90 s，直到该档自己的 logcat 窗口里出现 TalkBack 自身的 `Speaking fragment`，判据是「TalkBack 已开口」而非某个英文字面（启动播报按设备语言发音），超时即失败并写明已等秒数、读取次数与该窗口尾部（`talkback-readiness-<屏幕>.txt`），不静默继续。通知弹窗因此在两处处置：启用绑定期的那次守卫留在 `enable_talkback` 内，仍先于就绪门、位置不变，但只**尽力而为**（P8-07 批 D r6）：3 次手势仍未关掉时只把 `closed=false`、`guard_failures` 与该次失败的手势序列写进 `notification-dialog-bind-<屏幕>.txt`（`permission-dialog-gesture.txt` 是每次守卫调用都整体覆盖的共享记录），不再判死整屏；判红的权威是就绪门之后那次 settle——它与绑定期守卫用同一个弹窗身份判据重读面板，排在朗读屏第一条命令之前并有界重复：每屏最多 4 轮、间隔 2/4/6 s，直到连续 2 次读不到该提示，清了几次与第几轮之后不再出现写进 `notification-dialog-<屏幕>.txt`，4 轮后仍出现即由该屏判红，消息写明轮数与 2/4/6 s 递增间隔，且绝不把命令送进它抢走的窗口。日志级别路由同样有界重试（r6）：点开 `Log output level` 行、选 `VERBOSE`、确认这一步最多 3 次，每次强制重新读树、重新点，并把点到的节点坐标、该帧里有无 `VERBOSE` 条目与本次 `outcome` 落在 `talkback-prefs-level-<轮次>.xml`/`.txt`（每个结局都写，不只成功的那次）；3 次仍失败才按原口径判红，`gate` 的 `status=success` 且 `value=VERBOSE` 判据不变。命令层面只在两类瞬态下重试一次 `focus-result accepted=false`——弹窗刚被清掉，或 TalkBack 在本屏内才刚就绪——重试是带新命令 ID 的又一次完整命令（朗读窗口不切段，产物记 `# retry=1 previous-command: <首个命令 ID>`），重试后仍被拒才落 `未取得`；三类失败判据、`gate` 的既有条目与 p806 档的口径都不因这三道门放宽。
 
+同一 rig 的呈现档另有**本地诊断**通道（仅诊断，不构成验收证据）：启用要求**两个因素同时存在**——命令行 `--diagnostic-opt-in` 与该进程环境里的 `UL_RIG_LOCAL_DIAGNOSTIC=1`，缺任一仍按今天的方式拒绝（`this rig only runs on a GitHub-hosted Linux runner …`）；`GITHUB_ACTIONS=true` 时即使两个开关都给也拒绝，云端结果不得被标成诊断。`run` 在 `host.json` 顶层写 `provenance`：云端写 `cloud`，本地诊断写 `local-diagnostic`；`gate` 读到 `local-diagnostic` 立即失败（`a local diagnostic is not device evidence`），不再跑任何逐屏判据。调用示例（先按 `unifiedledger-harness` skill 的 MuMu 共存协议，用隔离端口 5038 的 adb 起一个本会话拥有并核实过的 AVD，跑前卸载本包重置设备状态）：
+
+```powershell
+$env:ANDROID_ADB_SERVER_PORT="5038"
+$env:UL_RIG_LOCAL_DIAGNOSTIC="1"
+$env:PYTHONPATH="tools\python"
+python tools\ci\android-fontscale.py run --evidence local\artifacts\presentation-light-1.0 --sha <完整40位SHA> --profile presentation --seed <种子库路径> --font-scale 1.0 --ui-mode light --avd-name <本会话 AVD 名> --test-apk <androidTest APK 路径> --provenance local-diagnostic --diagnostic-opt-in
+```
+
+该通道只用于缩短诊断回路：验收仍是云端 sweep 在精确 SHA 上的通过，本地产物的 `gate` 必然为红。
+
+本通道与 `android-scale` 通道的差别在命名与开关数：那边由 `tools/ci/android-scale-run.py` 在 `host.json` 写 `authority` 并只认一个 `--local-diagnostic` 开关（云端省略该键，任何出现的值都被拒），这边由 `tools/ci/android-fontscale.py` 与其 sweep 写 `provenance` 并要求命令行开关加环境变量两个因素，两条通道不合并（统一会改动已落盘产物的语义），各自只适用于本节的脚本。`gate` 只在读到明确的 `local-diagnostic` 时拒绝：缺 `provenance` 键的 `host.json` 只可能是本通道建立之前的产物（云端 sweep 的两处调用现在都显式写 `cloud`），它们仍按既有逐屏判据判定，以便重放旧证据做诊断。
+
 ### 本地诊断通道（D-216，仅诊断，不是验收）
 
 云端 `maximum` 长测仍是唯一验收权威，但每次失败要等 20–40 分钟的云往返。D-216 开放一条**显式 opt-in** 的本地诊断通道：默认关闭，关闭时 host 驱动器行为与今日逐字节相同（非托管 runner 环境仍直接报 `this driver is CI-only; local devices are forbidden`）；只有显式传 `--local-diagnostic` 才跳过托管 runner 环境三元组检查。该通道**不**替代验收，本地证据不得作为验收证据。

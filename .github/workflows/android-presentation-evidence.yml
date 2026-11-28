@@ -140,14 +140,14 @@ jobs:
           # "done")`, exit 2), and no capture line ever ran. A `run:` block is one script — that
           # run's gate loop worked — but the four combinations must share this one AVD session,
           # so the loop lives in tools/ci/android-presentation-sweep.py instead.
-          script: python3 tools/ci/android-presentation-sweep.py run --evidence-root "${EVIDENCE_ROOT}" --sha "${EXPECTED_SHA}" --seed "${SEED_DB}" --avd-name ul-presentation --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+          script: python3 tools/ci/android-presentation-sweep.py run --evidence-root "${EVIDENCE_ROOT}" --sha "${EXPECTED_SHA}" --seed "${SEED_DB}" --avd-name ul-presentation --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --provenance cloud
       - name: Re-derive every combination's gate from the evidence on disk
         if: always()
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         # The same script and the same four combinations as the capture: one definition, so the
         # gate can never judge a different set than the sweep recorded.
-        run: python3 tools/ci/android-presentation-sweep.py gate --evidence-root "${EVIDENCE_ROOT}" --sha "${EXPECTED_SHA}" --seed "${SEED_DB}" --avd-name ul-presentation --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk
+        run: python3 tools/ci/android-presentation-sweep.py gate --evidence-root "${EVIDENCE_ROOT}" --sha "${EXPECTED_SHA}" --seed "${SEED_DB}" --avd-name ul-presentation --test-apk android-app/build/outputs/apk/androidTest/debug/android-app-debug-androidTest.apk --provenance cloud
       - name: Upload the sweep evidence
         if: always()
         uses: actions/upload-artifact@v4

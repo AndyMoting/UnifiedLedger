@@ -4030,6 +4030,15 @@ class Sampler:
         raise SampleError(f"unknown step {step!r}")
 
 
+# What a host.json declares about where its evidence came from (D-369 E2). `cloud` is the only
+# class a gate accepts as device evidence; `local-diagnostic` is the on-host channel the user
+# authorized for diagnosis, and `gate` refuses it outright. Both factors below open that channel.
+CLOUD_PROVENANCE = "cloud"
+LOCAL_DIAGNOSTIC_PROVENANCE = "local-diagnostic"
+PROVENANCES: tuple[str, ...] = (CLOUD_PROVENANCE, LOCAL_DIAGNOSTIC_PROVENANCE)
+LOCAL_DIAGNOSTIC_ENV = "UL_RIG_LOCAL_DIAGNOSTIC"
+
+
 def require_cloud_runner() -> None:
     triple = (
         os.environ.get("GITHUB_ACTIONS"),
@@ -4044,8 +4053,33 @@ def require_cloud_runner() -> None:
         )
 
 
+def resolve_provenance(provenance: str, diagnostic_opt_in: bool) -> str:
+    """Decide which provenance this run may claim, or refuse it.
+
+    `cloud` keeps today's single requirement, the GitHub-hosted Linux triple. The
+    `local-diagnostic` channel needs BOTH factors — `--diagnostic-opt-in` and
+    `UL_RIG_LOCAL_DIAGNOSTIC=1` — and is refused under GitHub Actions before the factors are even
+    read, so a cloud result can never be relabelled a diagnostic. With one factor missing the
+    refusal is `require_cloud_runner`'s own, word for word, so the default path is unchanged.
+    """
+    if provenance == CLOUD_PROVENANCE:
+        require_cloud_runner()
+        return CLOUD_PROVENANCE
+    if provenance not in PROVENANCES:
+        raise SampleError(f"unknown provenance {provenance!r}; expected one of {PROVENANCES}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        raise SampleError(
+            "a local diagnostic never runs under GitHub Actions (GITHUB_ACTIONS=true): the cloud "
+            "sweep is the only path that produces device evidence, so this run will not stamp a "
+            "cloud result as a diagnostic"
+        )
+    if not diagnostic_opt_in or os.environ.get(LOCAL_DIAGNOSTIC_ENV) != "1":
+        require_cloud_runner()
+    return LOCAL_DIAGNOSTIC_PROVENANCE
+
+
 def run(args: argparse.Namespace) -> int:
-    require_cloud_runner()
+    provenance = resolve_provenance(args.provenance, args.diagnostic_opt_in)
     profile = profile_by_name(args.profile)
     if profile.seeded and not args.seed:
         raise SampleError(f"profile {profile.name!r} needs --seed <path to the prepared ledger database>")
@@ -4181,6 +4215,8 @@ def run(args: argparse.Namespace) -> int:
         return {"path": str(path), "sha256": sha256_file(Path(path))}
 
     host = {
+        # The artifact's own class, for `gate` to read back; never re-derived from the environment.
+        "provenance": provenance,
         "sha": args.sha,
         "profile": profile.name,
         "avd_name": args.avd_name,
@@ -4612,6 +4648,15 @@ def gate(args: argparse.Namespace) -> int:
         print("gate: host.json is missing — the run produced no evidence", file=sys.stderr)
         return 1
     host = json.loads(host_path.read_text(encoding="utf-8"))
+    if host.get("provenance") == LOCAL_DIAGNOSTIC_PROVENANCE:
+        # Fail closed and early: a local diagnostic exists for the on-host loop only, so no
+        # per-screen criterion below may run and no pass may be assembled out of one.
+        print(
+            "gate: host.json records provenance 'local-diagnostic' — a local diagnostic is not "
+            "device evidence; re-capture on the GitHub-hosted Linux rig",
+            file=sys.stderr,
+        )
+        return 1
     problems: list[str] = gate_profile_problems(host, profile.name)
     problems.extend(gate_evidence_plan_problems(profile.name))
     if host.get("sha") != args.sha:
@@ -4676,6 +4721,24 @@ def main(argv: list[str] | None = None) -> int:
         help="platform night-mode state applied before launch and recorded in host.json (D-369 A)",
     )
     parser.add_argument("--avd-name", default="ul-fontscale")
+    parser.add_argument(
+        "--provenance",
+        choices=PROVENANCES,
+        default=CLOUD_PROVENANCE,
+        help=(
+            "what `run` stamps into host.json: `cloud` for the GitHub-hosted Linux rig, "
+            "`local-diagnostic` for the on-host diagnostic channel (which `gate` refuses). "
+            "`gate` ignores this flag and reads the artifact's own value"
+        ),
+    )
+    parser.add_argument(
+        "--diagnostic-opt-in",
+        action="store_true",
+        help=(
+            "the first of the two local-diagnostic factors; it also needs "
+            f"{LOCAL_DIAGNOSTIC_ENV}=1, and GitHub Actions refuses the channel outright"
+        ),
+    )
     parser.add_argument("--apk", default="android-app/build/outputs/apk/debug/android-app-debug.apk")
     parser.add_argument(
         "--test-apk",
