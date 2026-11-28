@@ -1488,7 +1488,8 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
     def test_a_window_that_began_but_never_ended_is_reissued_once(self) -> None:
         # D-369 E2g supersedes E2f's "never ended is deterministic" ruling: run 46088630336's
         # light-1.3 windows opened, carried only TalkBack's startup announcement and never closed,
-        # while the warmed dark-1.3 combination spoke the same targets. One whole reissue under a
+        # while the last dark-1.3 combination (device long since booted) spoke the same targets.
+        # Nothing here relies on the removed speech warm-up. One whole reissue under a
         # fresh id is allowed; the second window speaks and decides the check.
         windows = [
             _probe_window(command_id=1, target=self.TARGET, stopped="focus-result"),
