@@ -10,6 +10,7 @@ from unittest import mock
 
 from android_fontscale.sampler import (
     ACCOUNT_FLOW_HEADER,
+    APP_PACKAGE,
     BACK,
     BackStep,
     DEFAULT_UI_MODE,
@@ -72,21 +73,28 @@ from android_fontscale.sampler import (
     TALKBACK_COMMAND_ATTEMPTS,
     TALKBACK_FOCUS_RETRY_BUDGET,
     TALKBACK_LOST_COMMAND_RETRY_BUDGET,
+    TALKBACK_NEVER_ENDED_RETRY_BUDGET,
     TALKBACK_SILENT_RETRY_BUDGET,
     TapStep,
+    UI_MODE_READBACK_ATTEMPTS,
+    UI_MODE_READBACK_INTERVAL_S,
     UI_MODES,
     gate_evidence_plan_problems,
     gate_profile_problems,
     gate_ui_mode_problems,
     isolate_talkback_window,
     marker_problems,
+    profile_by_name,
     screen_problems,
     speech_fragments,
     talkback_check_verdict,
     talkback_lost_command_retry_reason,
+    talkback_never_ended_retry_reason,
     talkback_readiness,
     talkback_silent_retry_reason,
     talkback_window_began,
+    talkback_window_never_ended,
+    ui_mode_apply_and_readback,
     ui_mode_night_value,
     ui_mode_readback_problem,
     visible_absent_problems,
@@ -560,6 +568,82 @@ class PresentationProfileTests(unittest.TestCase):
         self.assertTrue(gate_ui_mode_problems({}, "light"))
         self.assertTrue(gate_ui_mode_problems({"ui_mode": "dark"}, "light"))
 
+
+# The failure run 46088630336 (`light-1.0`, the first combination, exit 1 after 6.3 s) printed,
+# verbatim below its `run: ` prefix. It is the ui_mode readback check, not a TalkBack verdict, and it
+# is the whole reason the readback is retried; the console line is the only artifact that run left
+# (it produced no evidence directory).
+_SWEEP5_UI_MODE_FAILURE = (
+    "ui_mode 'light' did not take effect: `cmd uimode night` did not report exactly one "
+    "'Night mode: no' line"
+)
+
+
+class UiModeReadbackRetry(unittest.TestCase):
+    """D-369 E2g: a boot-time unsettled `cmd uimode night` readback earns a bounded retry.
+
+    The first combination of run 46088630336 began 6.3 s after the AVD booted and died inside this
+    check, before any screen. A readback that reports no unique `Night mode: no` line there is a
+    system service still starting, so the write and its readback are re-attempted; the bound and
+    the final message stay exactly as the single attempt had them.
+    """
+
+    def test_a_boot_transient_readback_is_retried_until_it_is_unique(self):
+        answers = iter(["", "Night mode: no\n"])
+        applied: list[int] = []
+        slept: list[float] = []
+        mode = ui_mode_apply_and_readback(
+            lambda: applied.append(1),
+            lambda: next(answers),
+            "light",
+            sleep=slept.append,
+        )
+        self.assertEqual("light", mode)
+        # The write is re-issued with the second attempt: a booting service can lose it too.
+        self.assertEqual(2, len(applied))
+        self.assertEqual([UI_MODE_READBACK_INTERVAL_S], slept)
+
+    def test_a_multi_line_readback_is_also_a_retried_transient(self):
+        answers = iter(["Night mode: no (cached)\n", "Night mode: no\n"])
+        self.assertEqual(
+            "light",
+            ui_mode_apply_and_readback(
+                lambda: None, lambda: next(answers), "light", sleep=lambda _seconds: None
+            ),
+        )
+
+    def test_three_bad_readbacks_fail_with_the_unchanged_message(self):
+        raws = ["", "Unknown command: uimode", "Night mode: yes\n"]
+        answers = iter(raws)
+        applied: list[int] = []
+        slept: list[float] = []
+        with self.assertRaises(SampleError) as caught:
+            ui_mode_apply_and_readback(
+                lambda: applied.append(1), lambda: next(answers), "light", sleep=slept.append
+            )
+        message = str(caught.exception)
+        self.assertEqual(
+            f"ui_mode 'light' did not take effect: {ui_mode_readback_problem(raws[-1], 'light')}",
+            message,
+        )
+        # The run's own opening line is what a red still reports.
+        self.assertTrue(message.startswith(_SWEEP5_UI_MODE_FAILURE), message)
+        self.assertEqual(UI_MODE_READBACK_ATTEMPTS, len(applied))
+        self.assertEqual([UI_MODE_READBACK_INTERVAL_S] * (UI_MODE_READBACK_ATTEMPTS - 1), slept)
+
+    def test_a_unique_first_readback_needs_no_second_attempt(self):
+        applied: list[int] = []
+        self.assertEqual(
+            "dark",
+            ui_mode_apply_and_readback(
+                lambda: applied.append(1),
+                lambda: "Night mode: yes\n",
+                "dark",
+                sleep=lambda _seconds: self.fail("a passing readback must not sleep"),
+            ),
+        )
+        self.assertEqual(1, len(applied))
+
     def test_gate_accepts_a_presentation_host_and_rejects_a_swapped_profile(self):
         expected = [screen.stem for screen in PRESENTATION_SCREENS]
         host = {"profile": PRESENTATION_PROFILE_NAME, "screens": expected}
@@ -885,6 +969,27 @@ _LIGHT_SILENT_WINDOW = (
     "I/ULA11Y  ( 4733): speech-window-begin id=17",
     "I/ULA11Y  ( 4733): focus-result id=17 found=true accepted=true source=action",
     "I/ULA11Y  ( 4733): speech-window-end id=17",
+)
+
+
+# `light-1.3/talkback-presentation-catalog-categories-middle.txt` (command 15, run 46088630336):
+# VERBATIM lines 8, 212, 235, 236, 237, 239 and 446 — the command, its found target, the begin and
+# accepted focus stages, then TalkBack's own startup announcement, with no `speech-window-end`. The
+# probe's second `command … id=15` row (a mid-window rebind re-runs the same value, artifact lines
+# 187/188) is elided: it is the same defect the reissue targets, but this fixture pins the pure
+# opened-never-closed shape that stage rows alone define.
+_SWEEP5_NEVER_ENDED = (
+    'I/ULA11Y  ( 5639): command action=focus id=15 needle64=5pel55So5ZOB target="日用品"',
+    'I/ULA11Y  ( 5639): target id=15 found=true visible=true bounds=[42,1724][206,1804] '
+    'text="日用品" desc="" text64="5pel55So5ZOB" desc64="" actions=0x20340 clickable=false '
+    "scrollable=false",
+    "I/ULA11Y  ( 5639): focus-before id=15 found=false reason=focus-none",
+    "I/ULA11Y  ( 5639): focus-target id=15 target=none reason=no-focusable-ancestor "
+    "focusNodeBounds=[42,1724][206,1804]",
+    "I/ULA11Y  ( 5639): speech-window-begin id=15",
+    "I/ULA11Y  ( 5639): focus-result id=15 found=true accepted=true source=action",
+    'V/talkback: SpeechControllerImpl( 9852): Speaking fragment text="TalkBack on", '
+    "utteranceId=talkback_0, TtsSpan=null, locale=null, event=null",
 )
 
 
@@ -1220,10 +1325,16 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
             speech=(SpeechCheck(self.TARGET, (self.TARGET,)),),
         )
 
-    def _drive(self, windows: list[dict[str, object]]) -> tuple[dict[str, object], list[int], str]:
+    def _drive(
+        self,
+        windows: list[dict[str, object]],
+        *,
+        start_sequence: int = 0,
+    ) -> tuple[dict[str, object], list[int], str]:
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp)
             sampler = self._RetrySampler(evidence, windows)
+            sampler.talkback_sequence = start_sequence
             record = sampler.p806_talkback_screen(self._screen(), target_screenshots=False)
             artifact = (evidence / "talkback-presentation-catalog-categories-middle.txt").read_text(
                 encoding="utf-8"
@@ -1245,7 +1356,8 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         self.assertEqual(1, TALKBACK_FOCUS_RETRY_BUDGET)
         self.assertEqual(1, TALKBACK_SILENT_RETRY_BUDGET)
         self.assertEqual(1, TALKBACK_LOST_COMMAND_RETRY_BUDGET)
-        self.assertEqual(4, TALKBACK_COMMAND_ATTEMPTS)
+        self.assertEqual(1, TALKBACK_NEVER_ENDED_RETRY_BUDGET)
+        self.assertEqual(5, TALKBACK_COMMAND_ATTEMPTS)
         self.assertEqual(1, artifact.count("# retry=1"))
         self.assertEqual(1, artifact.count("# retry=2"))
         self.assertIn("# retry=1 previous-command: 1 reason: TalkBack only finished starting", artifact)
@@ -1353,15 +1465,90 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         self.assertEqual("not-obtained", record["status"])
         self.assertEqual(2, record["checks"][0]["command_id"])
 
-    def test_a_window_that_began_but_never_ended_is_reported_red(self) -> None:
-        # The probe logged its command and its found target, then the window never closed. That is
-        # deterministic (the target is not on the screen or the window is broken), so it gets no
-        # further 75 s poll.
-        windows = [_probe_window(command_id=1, target=self.TARGET, stopped="focus-result")]
+    def test_all_four_transients_can_fire_in_one_check(self) -> None:
+        # Lost -> refused -> silent -> opened-but-never-closed -> spoken: one reissue per named
+        # transient, and the cap admits all four while the verdict still comes from the last window.
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET, stopped="nothing"),
+            _probe_window(command_id=2, target=self.TARGET, accepted=False),
+            _probe_window(command_id=3, target=self.TARGET),
+            _probe_window(command_id=4, target=self.TARGET, stopped="focus-result"),
+            _probe_window(command_id=5, target=self.TARGET, fragments=(self.TARGET,)),
+        ]
         record, focus_ids, artifact = self._drive(windows)
-        self.assertEqual([1], focus_ids)
-        self.assertNotIn("# retry=", artifact)
+        self.assertEqual([1, 2, 3, 4, 5], focus_ids)
+        self.assertEqual(4, artifact.count("# retry="))
+        self.assertIn("never reached the probe", artifact)
+        self.assertIn("TalkBack only finished starting", artifact)
+        self.assertIn("produced no utterance", artifact)
+        self.assertIn("began but never ended", artifact)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(5, record["checks"][0]["command_id"])
+
+    def test_a_window_that_began_but_never_ended_is_reissued_once(self) -> None:
+        # D-369 E2g supersedes E2f's "never ended is deterministic" ruling: run 46088630336's
+        # light-1.3 windows opened, carried only TalkBack's startup announcement and never closed,
+        # while the last dark-1.3 combination (device long since booted) spoke the same targets.
+        # Nothing here relies on the removed speech warm-up. One whole reissue under a
+        # fresh id is allowed; the second window speaks and decides the check.
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET, stopped="focus-result"),
+            _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
+        ]
+        record, focus_ids, artifact = self._drive(windows)
+        self.assertEqual([1, 2], focus_ids)
+        self.assertIn("# retry=1 previous-command: 1", artifact)
+        self.assertIn("began but never ended", artifact)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(2, record["checks"][0]["command_id"])
+        self.assertEqual(
+            "success", talkback_check_verdict(artifact, 2, self.TARGET, (self.TARGET,))[0]
+        )
+
+    def test_a_second_never_ended_window_still_fails_red(self) -> None:
+        windows = [
+            _probe_window(command_id=1, target=self.TARGET, stopped="focus-result"),
+            _probe_window(command_id=2, target=self.TARGET, stopped="focus-result"),
+        ]
+        record, focus_ids, artifact = self._drive(windows)
+        self.assertEqual([1, 2], focus_ids)
+        self.assertEqual(1, artifact.count("# retry="))
         self.assertEqual("not-obtained", record["status"])
+        self.assertEqual(2, record["checks"][0]["command_id"])
+        self.assertEqual(
+            "not-obtained", talkback_check_verdict(artifact, 2, self.TARGET, (self.TARGET,))[0]
+        )
+
+    def test_the_real_sweep5_never_ended_window_is_reissued_and_its_successor_decides(self) -> None:
+        # The command-15 fixture is VERBATIM from run 46088630336's light-1.3 middle artifact: the
+        # window opened and only TalkBack's own "TalkBack on" was spoken inside it. The reissue under
+        # id 16 speaks the target, and both the host record and the artifact derive that successor.
+        windows = [
+            {
+                "id": 15,
+                "target": self.TARGET,
+                "began": True,
+                "completed": False,
+                "accepted": True,
+                "problem": "command id=15's speech window never ended",
+                "lines": list(_SWEEP5_NEVER_ENDED),
+            },
+            _probe_window(command_id=16, target=self.TARGET, fragments=(self.TARGET,)),
+        ]
+        record, focus_ids, artifact = self._drive(windows, start_sequence=14)
+        self.assertEqual([15, 16], focus_ids)
+        self.assertIn("# retry=1 previous-command: 15", artifact)
+        self.assertIn("began but never ended", artifact)
+        self.assertEqual("success", record["status"])
+        self.assertEqual(16, record["checks"][0]["command_id"])
+        self.assertEqual(
+            "success", talkback_check_verdict(artifact, 16, self.TARGET, (self.TARGET,))[0]
+        )
+        # The first window itself is still red in isolation: the reissue earns a new window, it
+        # never relabels the old one.
+        self.assertEqual(
+            "not-obtained", talkback_check_verdict(artifact, 15, self.TARGET, (self.TARGET,))[0]
+        )
 
     def test_a_structurally_broken_window_is_reported_red(self) -> None:
         # The artifact itself carries a duplicated begin stage, so the window is structurally
@@ -1387,14 +1574,157 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         self.assertEqual("success", record["status"])
 
 
+class TalkbackFailureStage(unittest.TestCase):
+    """The `# <stage> failed:` line names the gate that actually failed.
+
+    An enable failure keeps the old `# enable failed:` label, while the readiness wait, the prompt
+    settle and the speech pass each name their own stage: a failure AFTER a successful enable is
+    never recorded as an enable failure.
+    """
+
+    TARGET = "日用品"
+
+    class _StageSampler(TalkbackSilentWindowRetry._RetrySampler):
+        def __init__(
+            self,
+            evidence: Path,
+            *,
+            enable: dict[str, object] | None = None,
+            ready_error: str = "",
+            settle: dict[str, object] | None = None,
+            windows: list[dict[str, object]] | None = None,
+            screenshot_error: str = "",
+        ) -> None:
+            super().__init__(evidence, windows or [])
+            self.enable = (
+                dict(enable)
+                if enable is not None
+                else {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": "talkback-enabled-presentation-home.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+            )
+            self.ready_error = ready_error
+            self.settle = (
+                dict(settle)
+                if settle is not None
+                else {"clears": 0, "quiet_after_round": 2}
+            )
+            self.screenshot_error = screenshot_error
+
+        def enable_talkback(self, stem: str) -> dict[str, object]:
+            return dict(self.enable)
+
+        def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+            if self.ready_error:
+                raise SampleError(self.ready_error)
+            return {"status": "ready", "waited_s": 0.0, "polls": 1, "fragments": 1}
+
+        def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+            return dict(self.settle)
+
+        def screenshot(self, stem: str) -> Path:
+            raise SampleError(self.screenshot_error)
+
+    def _drive(
+        self,
+        *,
+        enable: dict[str, object] | None = None,
+        ready_error: str = "",
+        settle: dict[str, object] | None = None,
+        windows: list[dict[str, object]] | None = None,
+        screenshot_error: str = "",
+        target_screenshots: bool = False,
+    ) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            sampler = self._StageSampler(
+                evidence,
+                enable=enable,
+                ready_error=ready_error,
+                settle=settle,
+                windows=windows,
+                screenshot_error=screenshot_error,
+            )
+            sampler.p806_talkback_screen(
+                Screen(
+                    "presentation-home",
+                    (),
+                    PRESENTATION_CATEGORY_DAILY,
+                    speech=(SpeechCheck(self.TARGET, (self.TARGET,)),),
+                ),
+                target_screenshots=target_screenshots,
+            )
+            return (evidence / "talkback-presentation-home.txt").read_text(encoding="utf-8")
+
+    def test_a_failed_enable_keeps_the_enable_label(self) -> None:
+        artifact = self._drive(
+            enable={
+                "status": "not-obtained",
+                "enabled_components": [],
+                "enabled_services_file": "talkback-enabled-presentation-home.txt",
+                "talkback_bound": False,
+                "reason": "the device ships no TalkBack service",
+            }
+        )
+        self.assertIn("# enable failed: the device ships no TalkBack service", artifact)
+        self.assertNotIn("# readiness failed:", artifact)
+        self.assertNotIn("# speech failed:", artifact)
+
+    def test_a_readiness_timeout_is_a_readiness_failure_not_an_enable_failure(self) -> None:
+        artifact = self._drive(ready_error="TalkBack never spoke inside 90s")
+        self.assertIn("# enable: success", artifact)
+        self.assertIn("# readiness failed: TalkBack never spoke inside 90s", artifact)
+        self.assertNotIn("# enable failed:", artifact)
+        self.assertNotIn("# speech failed:", artifact)
+
+    def test_a_prompt_that_outlives_the_settle_names_its_own_gate(self) -> None:
+        artifact = self._drive(
+            settle={
+                "clears": 0,
+                "quiet_after_round": None,
+                "reason": "the last round still rendered the prompt",
+                "artifact": "notification-dialog-presentation-home.txt",
+            }
+        )
+        self.assertIn("# enable: success", artifact)
+        self.assertIn(
+            "# notification-prompt failed: the Accessibility Suite notification prompt was still "
+            "present",
+            artifact,
+        )
+        self.assertNotIn("# enable failed:", artifact)
+        self.assertNotIn("# speech failed:", artifact)
+
+    def test_a_screenshot_failure_in_the_speech_pass_names_the_speech_gate(self) -> None:
+        # The only SampleError the speech pass itself raises is a blank/missing screenshot, after
+        # the target's window decided; it must not be blamed on an earlier gate.
+        artifact = self._drive(
+            windows=[_probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,))],
+            screenshot_error="screenshot talkback-presentation-home-cmd-1 is missing or blank",
+            target_screenshots=True,
+        )
+        self.assertIn("# enable: success", artifact)
+        self.assertIn(
+            "# speech failed: screenshot talkback-presentation-home-cmd-1 is missing or blank",
+            artifact,
+        )
+        self.assertNotIn("# enable failed:", artifact)
+        self.assertNotIn("# notification-prompt failed:", artifact)
+
+
 class TalkbackRetryPredicates(unittest.TestCase):
     """The retry predicates are decisions about the artifact, not about elapsed time.
 
-    Four shapes, four outcomes:
+    Five shapes, five outcomes:
     - focus-refused + a named transient -> reissue (`focus_retry_reason`);
     - completed, accepted, no utterance -> reissue (`talkback_silent_retry_reason`);
     - no probe `command` stage at all -> reissue (`talkback_lost_command_retry_reason`);
-    - began but never ended, or an inconsistent stage sequence -> red as it stands.
+    - opened and never ended -> reissue (`talkback_never_ended_retry_reason`, D-369 E2g);
+    - an inconsistent stage sequence inside a COMPLETED window -> red as it stands.
     """
 
     TARGET = "日用品"
@@ -1423,7 +1753,7 @@ class TalkbackRetryPredicates(unittest.TestCase):
             "",
             talkback_silent_retry_reason(self._window(problem="command id=1 began more than one window")),
         )
-        # A window that began but never ended is deterministic, not this transient.
+        # A window that began but never ended owns its own transient (D-369 E2g), not this one.
         self.assertEqual(
             "",
             talkback_silent_retry_reason(self._window(stopped="focus-result")),
@@ -1438,7 +1768,7 @@ class TalkbackRetryPredicates(unittest.TestCase):
             "",
             talkback_lost_command_retry_reason(self._window()),
         )
-        # Began but never ended: deterministic, not a lost delivery.
+        # Began but never ended: its own transient (D-369 E2g), not a lost delivery.
         self.assertEqual(
             "",
             talkback_lost_command_retry_reason(self._window(stopped="focus-result")),
@@ -1450,6 +1780,61 @@ class TalkbackRetryPredicates(unittest.TestCase):
                 self._window(problem="command id=1 began more than one window")
             ),
         )
+
+
+class TalkbackNeverEndedRetry(unittest.TestCase):
+    """D-369 E2g: an opened-but-never-closed window is its own transient, derived from the rows.
+
+    The predicate reads the probe's own `speech-window-begin`/`speech-window-end` stages for the
+    command id (the same scan the isolator uses), so a target-not-found window that never opened a
+    speech window stays outside it, and a completed window can never trip it.
+    """
+
+    def test_the_sweep5_window_is_an_opened_never_closed_transient(self):
+        window, problem = isolate_talkback_window(_artifact(*_SWEEP5_NEVER_ENDED), 15)
+        self.assertEqual(list(_SWEEP5_NEVER_ENDED), window)
+        self.assertEqual("command id=15's speech window never ended", problem)
+        self.assertTrue(talkback_window_began(window, 15))
+        fixture = {
+            "id": 15,
+            "began": True,
+            "completed": False,
+            "accepted": True,
+            "problem": problem,
+            "lines": window,
+        }
+        self.assertTrue(talkback_window_never_ended(fixture))
+        self.assertIn("began but never ended", talkback_never_ended_retry_reason(fixture))
+
+    def test_a_completed_window_is_not_this_transient(self):
+        fixture = _probe_window(command_id=1, target="日用品")
+        self.assertFalse(talkback_window_never_ended(fixture))
+        self.assertEqual("", talkback_never_ended_retry_reason(fixture))
+
+    def test_a_target_not_found_window_never_opened_its_speech_window(self):
+        # No begin stage: the probe stopped at `target ... found=false`. The reissue is for an
+        # OPENED window only; this stays a red target rather than a cold-start transient.
+        encoded = base64.b64encode("日用品".encode("utf-8")).decode("ascii")
+        rows = (
+            f'I/ULA11Y  ( 4733): command action=focus id=9 needle64={encoded} target="日用品"',
+            "I/ULA11Y  ( 4733): target id=9 found=false root=null",
+        )
+        window, problem = isolate_talkback_window(_artifact(*rows), 9)
+        self.assertEqual("command id=9 carries no begin stage", problem)
+        fixture = {
+            "id": 9,
+            "began": True,
+            "completed": False,
+            "accepted": False,
+            "problem": problem,
+            "lines": window,
+        }
+        self.assertFalse(talkback_window_never_ended(fixture))
+        self.assertEqual("", talkback_never_ended_retry_reason(fixture))
+
+    def test_the_never_ended_budget_bounds_the_command_cap(self):
+        self.assertEqual(1, TALKBACK_NEVER_ENDED_RETRY_BUDGET)
+        self.assertEqual(5, TALKBACK_COMMAND_ATTEMPTS)
 
 
 class TalkbackWindowBegan(unittest.TestCase):
@@ -1508,6 +1893,81 @@ class TalkbackWindowBegan(unittest.TestCase):
         lost_window, lost_problem = isolate_talkback_window(_artifact(*lost["lines"]), 1)
         self.assertEqual([], lost_window)
         self.assertEqual(lost["problem"], lost_problem)
+
+
+class UiModeApplyWiring(unittest.TestCase):
+    """`Sampler.apply_ui_mode` must DELEGATE the bounded retry, not read back once itself.
+
+    The `ui_mode_apply_and_readback` tests drive the retry through injected callbacks, so they stay
+    green if this method inlines a single write/read and stops calling the helper. This test drives
+    the method on a sampler whose `adb` answers the readback, and pins the write, the app restart
+    and the readback per attempt plus the unchanged final message.
+    """
+
+    class _ReadbackSampler(Sampler):
+        def __init__(self, evidence: Path, readbacks: list[str]) -> None:
+            super().__init__(
+                adb_serial=None,
+                evidence=evidence,
+                font_scale=1.3,
+                avd_name="ul-presentation",
+                ui_mode="light",
+            )
+            self.readbacks = list(readbacks)
+            self.calls: list[tuple[str, ...]] = []
+
+        def adb(self, *args: str, timeout: int = 60, best_effort: bool = False) -> str:
+            self.calls.append(args)
+            if args[:4] == ("shell", "cmd", "uimode", "night"):
+                return self.readbacks.pop(0) if len(args) == 4 else ""
+            return ""
+
+    def _drive(
+        self, readbacks: list[str]
+    ) -> tuple[str, SampleError | None, list[tuple[str, ...]]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._ReadbackSampler(Path(tmp), readbacks)
+            try:
+                with mock.patch("android_fontscale.sampler.time.sleep"):
+                    mode = sampler.apply_ui_mode()
+            except SampleError as caught:
+                return "", caught, sampler.calls
+        return mode, None, sampler.calls
+
+    @staticmethod
+    def _shape(calls: list[tuple[str, ...]]) -> list[str]:
+        shape: list[str] = []
+        for call in calls:
+            if call == ("shell", "cmd", "uimode", "night", "no"):
+                shape.append("write")
+            elif call[:4] == ("shell", "am", "force-stop", APP_PACKAGE):
+                shape.append("restart")
+            elif call == ("shell", "cmd", "uimode", "night"):
+                shape.append("read")
+            else:
+                shape.append("other")
+        return shape
+
+    def test_three_bad_readbacks_reissue_the_write_and_readback_three_times(self) -> None:
+        _, error, calls = self._drive(["", "Unknown command: uimode", "Night mode: yes\n"])
+        self.assertIsInstance(error, SampleError)
+        # Each attempt repeats the WHOLE sequence — write, restart, read — so dropping the
+        # delegation and reading back once leaves one `write` here.
+        self.assertEqual(3, UI_MODE_READBACK_ATTEMPTS)
+        self.assertEqual(
+            ["write", "restart", "read"] * UI_MODE_READBACK_ATTEMPTS, self._shape(calls)
+        )
+        self.assertEqual(
+            "ui_mode 'light' did not take effect: "
+            + ui_mode_readback_problem("Night mode: yes\n", "light"),
+            str(error),
+        )
+
+    def test_a_good_readback_writes_and_reads_once(self) -> None:
+        mode, error, calls = self._drive(["Night mode: no\n"])
+        self.assertIsNone(error)
+        self.assertEqual("light", mode)
+        self.assertEqual(["write", "restart", "read"], self._shape(calls))
 
 
 if __name__ == "__main__":
