@@ -76,7 +76,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 APP_PACKAGE = "com.unifiedledger.android"
 MAIN_ACTIVITY = f"{APP_PACKAGE}/.MainActivity"
@@ -437,6 +437,46 @@ def ui_mode_readback_problem(output: str, ui_mode: str) -> str | None:
     )
 
 
+# D-369 E2g (run 46088630336): the first combination began 6.3 s after the AVD booted and died in
+# this readback — `cmd uimode night` had not settled yet, so its answer carried no standalone
+# `Night mode: no` line. The write AND its readback are therefore attempted up to
+# `UI_MODE_READBACK_ATTEMPTS` times, `UI_MODE_READBACK_INTERVAL_S` apart: the setting is re-issued
+# each time (a booting system service can lose the write too), and only the LAST readback's problem
+# is reported, in the exact message the single attempt produced. The bound is two 2 s gaps plus
+# three adb round-trips per attempt (the app restart before the first launch frame stays as it was).
+UI_MODE_READBACK_ATTEMPTS = 3
+UI_MODE_READBACK_INTERVAL_S = 2.0
+
+
+def ui_mode_apply_and_readback(
+    apply: Callable[[], None],
+    readback: Callable[[], str],
+    ui_mode: str,
+    *,
+    attempts: int = UI_MODE_READBACK_ATTEMPTS,
+    interval_s: float = UI_MODE_READBACK_INTERVAL_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """Apply the requested platform mode and read it back, bounded, on a booting AVD.
+
+    `apply` writes the mode (and restarts the app so the next launch frame renders it); `readback`
+    returns the raw `cmd uimode night` answer. A raw answer that does not carry exactly one matching
+    `Night mode:` line is a transient below the attempt bound — run 46088630336's `light-1.0` was
+    answered that way 6.3 s into the combination — while the LAST failure keeps the
+    single-attempt message unchanged. The callbacks keep this retry host-testable without an
+    emulator.
+    """
+    problem = ""
+    for attempt in range(1, attempts + 1):
+        apply()
+        problem = ui_mode_readback_problem(readback(), ui_mode)
+        if problem is None:
+            return ui_mode
+        if attempt < attempts:
+            sleep(interval_s)
+    raise SampleError(f"ui_mode {ui_mode!r} did not take effect: {problem}")
+
+
 def gate_ui_mode_problems(host: dict[str, object], requested: str) -> list[str]:
     """The gate's ui_mode consistency check, re-derived from host.json alone."""
     recorded = host.get("ui_mode")
@@ -497,20 +537,40 @@ TALKBACK_READY_TAIL_LINES = 60
 #   46074246784's `light-1.0` home is this shape (a seven-line artifact with no probe row at all),
 #   while the SAME command id on the other three combinations completed accepted and succeeded, so
 #   it is a transient rather than a verdict; a new id is the natural remedy.
-# A window that DID begin but never ended — no `speech-window-end`, a target the probe never found,
-# or an inconsistent stage sequence (a duplicated or reordered stage, an interleaved command) — is
-# deterministic: the target is not on the screen, or the probe's own stages disagree. It is reported
-# red without another 75 s poll. The middle capture's `refused -> silent` sequence can spend the first
-# two budgets; the total stays bounded by `TALKBACK_COMMAND_ATTEMPTS`.
+# - opened-but-never-closed: the probe logged its `command` and `speech-window-begin` stages, then
+#   no `speech-window-end` arrived inside the 75 s poll (run 46088630336's `light-1.3` carries 15
+#   such screens; the probe also re-logs the same command after a mid-window
+#   rebind, which `isolate_talkback_window` reports as "began more than one window" while it stays
+#   unclosed). D-369 E2g supersedes the earlier "never ended is deterministic" ruling: on that
+#   evidence it is a startup/TTS warm-up transient, so it earns ONE whole reissue under a fresh id
+#   (`TALKBACK_NEVER_ENDED_RETRY_BUDGET`). The final window alone still decides.
+# A window that carries no begin stage at all (the target was not found) or whose stages are
+# inconsistent inside a COMPLETED window stays deterministic and is reported red without another
+# poll. The total stays bounded by `TALKBACK_COMMAND_ATTEMPTS`; with each command's own 75 s poll
+# that bounds one target at 5 x 75 s = 375 s.
 TALKBACK_FOCUS_RETRY_BUDGET = 1
 TALKBACK_SILENT_RETRY_BUDGET = 1
 TALKBACK_LOST_COMMAND_RETRY_BUDGET = 1
+TALKBACK_NEVER_ENDED_RETRY_BUDGET = 1
 TALKBACK_COMMAND_ATTEMPTS = (
     1
     + TALKBACK_FOCUS_RETRY_BUDGET
     + TALKBACK_SILENT_RETRY_BUDGET
     + TALKBACK_LOST_COMMAND_RETRY_BUDGET
+    + TALKBACK_NEVER_ENDED_RETRY_BUDGET
 )
+# D-369 E2g (run 46088630336): the presentation combination's FIRST speech screen opens with one
+# warm-up command on that screen's first speech target, after the prompt settle and before any
+# graded command, so the TTS/engine cold start of the combination is paid for there instead of
+# inside a graded window. "Real speech" means the target's own required values inside the warm-up
+# window's begin/end slice: TalkBack's startup announcement ("TalkBack on") is a fragment the
+# parser already counts, so it cannot pass this check. A warm-up that cannot produce that speech
+# inside the same 75 s window poll fails the screen closed (`# speech failed:`). The warm-up runs
+# ONLY on the profile's first speech screen — once per combination — because the later screens'
+# failures in that run are mostly the probe's own mid-window rebind shape (a second `command …` row
+# for the same id, no end), which the never-ended reissue below owns; one warm-up per screen would
+# not address that race and would add 17 more commands. Its rows are raw evidence (`# warmup-…`) and
+# are never recorded as a check, so no graded verdict can be satisfied or weakened by them.
 # P8-07 batch D r4 (T2): the prompt arrives AFTER that announcement, so one clear at the enable
 # boundary cannot cover it. The panel is re-read in bounded rounds, spaced further apart, until
 # NOTIFICATION_DIALOG_QUIET_READS consecutive reads render no prompt at all.
@@ -1443,10 +1503,11 @@ def talkback_window_began(window: list[str], command_id: int) -> bool:
 
     The probe logs that stage before doing any work, so its absence is the lost-command shape: the
     command never reached the probe and may be reissued under a fresh id. A window that HAS the
-    stage but never ends is a different, deterministic failure. The scan uses the same recognized
-    event line and the same id attribution as `isolate_talkback_window`, so stage one cannot drift
-    between the isolator and this fact. A `ULA11Y` string embedded inside a host header comment (the
-    service-info line of a real artifact) is not at the logcat brief column and is never a stage.
+    stage but never ends is a different transient, not a lost delivery (D-369 E2g). The scan uses
+    the same recognized event line and the same id attribution as `isolate_talkback_window`, so
+    stage one cannot drift between the isolator and this fact. A `ULA11Y` string embedded inside a
+    host header comment (the service-info line of a real artifact) is not at the logcat brief column
+    and is never a stage.
     """
     return any(
         event is not None and event[0] == "command" and event[1] == str(command_id)
@@ -1471,7 +1532,8 @@ def talkback_silent_retry_reason(window: dict[str, object]) -> str:
     more whole command under a fresh id; the budget lives in the caller
     (`TALKBACK_SILENT_RETRY_BUDGET`). This predicate covers ONLY that shape: a refused focus has its
     own named transient (`focus_retry_reason`), a lost command its own
-    (`talkback_lost_command_retry_reason`), and a window that began but never ended or is
+    (`talkback_lost_command_retry_reason`), a window that began but never ended its own
+    (`talkback_never_ended_retry_reason`, D-369 E2g), and a window whose COMPLETED stage sequence is
     structurally broken is deterministic and must be reported red as it stands. A window that
     carries any utterance also stands even when a required value is missing: re-issuing it would not
     be a transient, it would re-roll the device's own reading.
@@ -1497,13 +1559,56 @@ def talkback_lost_command_retry_reason(window: dict[str, object]) -> str:
     means the command never reached it — the `settings put global` delivery was probably lost, which
     costs nothing to retry under a fresh id. Run 46074246784's `light-1.0` home command is this
     shape; the same command id was accepted and spoken on the other three combinations. This is
-    deliberately NOT the "began but never ended" shape: a window with a command stage but no end
-    stage, or with an inconsistent stage sequence, is a deterministic failure and is reported red
-    without another poll.
+    deliberately NOT the "began but never ended" shape: that shape owns its own transient
+    (`talkback_never_ended_retry_reason`, D-369 E2g). A COMPLETED window whose stage sequence is
+    inconsistent (a duplicated or reordered stage, an interleaved command) is deterministic and is
+    reported red without another poll.
     """
     if window.get("completed") or window.get("began"):
         return ""
     return "the command never reached the probe (the settings write may have been lost)"
+
+
+def talkback_window_never_ended(window: dict[str, object]) -> bool:
+    """True when this command opened its speech window and never closed it.
+
+    "Opened" means the probe's own `speech-window-begin` stage for this id is in the window's rows
+    (the same `_ula11y_event` scan `isolate_talkback_window` uses); "closed" means no
+    `speech-window-end` for the same id is. A window with no begin stage (the target was not found,
+    or the probe never got that far) is NOT this shape, and a window whose end arrived is complete
+    even when `isolate_talkback_window` reports a duplicated stage sequence.
+    """
+    command_id = window.get("id")
+    if not isinstance(command_id, int) or window.get("completed"):
+        return False
+    own = [
+        event
+        for event in map(_ula11y_event, (str(line) for line in window.get("lines") or []))
+        if event is not None and event[1] == str(command_id)
+    ]
+    opened = any(kind == "begin" for kind, _ident in own)
+    closed = any(kind == "end" for kind, _ident in own)
+    return opened and not closed
+
+
+def talkback_never_ended_retry_reason(window: dict[str, object]) -> str:
+    """The opened-but-never-closed transient, or "" when it is not this shape (D-369 E2g).
+
+    Run 46088630336's `light-1.3` captures (15 of its 18 screens) log the command, the found target
+    and the speech-window begin, then only TalkBack's own startup announcement inside the window and
+    no end stage inside the 75 s poll. The warmed `dark-1.3` combination spoke the same targets, so
+    this is a startup/TTS warm-up transient rather than a missing screen: it earns ONE whole reissue
+    under a fresh id (`TALKBACK_NEVER_ENDED_RETRY_BUDGET`). This supersedes the earlier E2f ruling
+    that such a window was deterministic. The reissue never changes the judgement: the LAST window's
+    own fragments and stages are still the only verdict, and every non-success class keeps its exact
+    meaning.
+    """
+    if not talkback_window_never_ended(window):
+        return ""
+    return (
+        "the speech window began but never ended (the probe or the TTS engine had not finished; "
+        "the target may only have heard the startup announcement)"
+    )
 
 
 def talkback_check_verdict(
@@ -2590,6 +2695,20 @@ def records_talkback_evidence(profile: Profile) -> bool:
     return profile.talkback and profile.name not in DYNAMIC_PROFILES
 
 
+def speech_warmup_screen(profile: Profile) -> str:
+    """The one screen whose speech pass opens with the TTS warm-up, or "" (D-369 E2g).
+
+    Only the presentation profile warms up, and only its FIRST speech screen: that is where the
+    combination meets a cold TTS engine, while most of the later screens' cold windows in run
+    46088630336 are the probe's mid-window rebind shape the never-ended reissue owns. Every other
+    profile keeps the exact device-call contract its own frozen evidence was produced against
+    (D-369.7).
+    """
+    if profile.name != PRESENTATION_PROFILE_NAME:
+        return ""
+    return next((screen.stem for screen in profile.screens if screen.speech), "")
+
+
 def profile_screens(profile: Profile, seed: str) -> tuple[Screen, ...]:
     """The profile's screens; dynamic profiles build them from the seed they will push."""
     if profile.name not in DYNAMIC_PROFILES:
@@ -3377,7 +3496,7 @@ class Sampler:
         }
 
     def p806_talkback_screen(
-        self, screen: Screen, *, target_screenshots: bool
+        self, screen: Screen, *, target_screenshots: bool, warmup: bool = False
     ) -> dict[str, object]:
         """Drive one screen's ordered speech checks, each bound to its own command window.
 
@@ -3400,11 +3519,18 @@ class Sampler:
         (D4), from the same logcat read that proved this bind, so a `seen=0` transcript can separate
         a missing event mask from a platform that posted nothing. It is a comment and nothing else:
         no stage, fragment or verdict reads it.
+
+        With `warmup` (D-369 E2g, only the presentation profile's first speech screen) ONE extra
+        command runs on the screen's first speech target after the settle and before any graded
+        command, so the combination's cold TTS start happens there instead of inside a graded
+        window. Its raw rows stay in the artifact under `# warmup-command:`, are never recorded as a
+        check and can never satisfy one; a warm-up window that does not carry the target's own
+        required speech inside the same 75 s poll fails this screen closed.
         """
         artifact_name = f"talkback-{screen.stem}.txt"
         # The `#` header lines stay their own block so D4's connect-time `service-info` comment can
         # sit after them on EVERY outcome — including the failure paths, whose last header line is
-        # `# enable failed:`. A comment there can never be a stage: `_ULA11Y_LINE` anchors on the
+        # `# <stage> failed:`. A comment there can never be a stage: `_ULA11Y_LINE` anchors on the
         # logcat brief column, so the window is derived from the probe's own lines only.
         header: list[str] = [f"# stem: {screen.stem}"]
         lines: list[str] = []
@@ -3418,6 +3544,10 @@ class Sampler:
             "enabled_services_file": f"talkback-enabled-{screen.stem}.txt",
         }
         driven: list[tuple[SpeechCheck, dict[str, object] | None, str]] = []
+        # The failure label names the stage that actually failed: an enable failure keeps the old
+        # `# enable failed:` contract, while a warm-up or a command/screenshot failure after a
+        # successful enable is not an enable failure and must not be recorded as one.
+        failure_stage = "enable"
         try:
             enabled = self.enable_talkback(screen.stem)
             header.append(
@@ -3464,18 +3594,52 @@ class Sampler:
                 )
             polls = ready.get("polls")
             readiness_delayed = isinstance(polls, int) and polls > 1
+            failure_stage = "speech"
+            if warmup and screen.speech:
+                # D-369 E2g: move the TTS cold start out of the first graded window. The warm-up
+                # command uses the same probe channel and the same four-stage window, but it is
+                # recorded as its own `# warmup-…` rows and is never one of the ordered checks, so
+                # it cannot satisfy or weaken any of them.
+                first = screen.speech[0]
+                self.talkback_sequence += 1
+                warmup_id = self.talkback_sequence
+                warmup_window = self.talkback_focus(first.target, warmup_id)
+                lines.append(f"# warmup-target: {first.target}")
+                lines.append(f"# warmup-command: {warmup_id}")
+                lines.extend(str(line) for line in warmup_window["lines"])
+                warmup_status, warmup_fragments, _missing, warmup_reason = talkback_check_verdict(
+                    "\n".join(header + [service_info_comment(self.probe_connection_log)] + lines)
+                    + "\n",
+                    warmup_id,
+                    first.target,
+                    first.required,
+                )
+                lines.append(
+                    f"# warmup-result: {warmup_status}"
+                    + (f" reason: {warmup_reason}" if warmup_reason else "")
+                )
+                if warmup_status != "success":
+                    raise SampleError(
+                        "the TalkBack speech warm-up before this screen's first graded command "
+                        f"produced no real speech for {first.target!r} (status "
+                        f"{warmup_status} after {len(warmup_fragments)} fragment(s): "
+                        f"{warmup_reason or 'its required values are absent from the window'})"
+                    )
             for index, check in enumerate(screen.speech):
                 # D-369 E2f: a command is a WHOLE four-stage window under one fresh id, and a reissue
                 # re-runs all of it. One budget per transient, so the observed `refused -> silent`
                 # sequence can use both, and the total stays bounded by `TALKBACK_COMMAND_ATTEMPTS`:
                 # - a refused focus retries only inside `focus_retry_reason`'s named transient;
                 # - a completed accepted window with no utterance is the TTS-not-ready transient;
-                # - a window with no probe `command` stage is a lost command (no delivery).
-                # A window that began but never ended, or whose stages are inconsistent, is
-                # deterministic and falls through to the verdict without a reissue.
+                # - a window with no probe `command` stage is a lost command (no delivery);
+                # - a window that opened and never ended (also when a mid-window rebind re-logs the
+                #   command) is the warm-up transient (D-369 E2g).
+                # A window with no begin stage, or a COMPLETED window whose stages are inconsistent,
+                # falls through to the verdict without a reissue.
                 focus_retries_left = TALKBACK_FOCUS_RETRY_BUDGET
                 silent_retries_left = TALKBACK_SILENT_RETRY_BUDGET
                 lost_retries_left = TALKBACK_LOST_COMMAND_RETRY_BUDGET
+                never_ended_retries_left = TALKBACK_NEVER_ENDED_RETRY_BUDGET
                 commands = 0
                 retries = 0
                 while True:
@@ -3508,6 +3672,10 @@ class Sampler:
                         retry_reason = talkback_lost_command_retry_reason(window)
                         if retry_reason:
                             lost_retries_left -= 1
+                    if not retry_reason and never_ended_retries_left:
+                        retry_reason = talkback_never_ended_retry_reason(window)
+                        if retry_reason:
+                            never_ended_retries_left -= 1
                     if not retry_reason or commands >= TALKBACK_COMMAND_ATTEMPTS:
                         break
                     retries += 1
@@ -3532,7 +3700,7 @@ class Sampler:
                 ),
                 "talkback_bound": bool(enabled.get("talkback_bound")),
             }
-            header.append(f"# enable failed: {error}")
+            header.append(f"# {failure_stage} failed: {error}")
         finally:
             self.disable_talkback_accessibility()
             self.wait_accessibility_disabled()
@@ -3596,16 +3764,19 @@ class Sampler:
     def apply_ui_mode(self) -> str:
         """Apply and read back the requested light/dark platform mode (D-369 A)."""
         value = ui_mode_night_value(self.ui_mode)
-        self.adb("shell", "cmd", "uimode", "night", value)
-        # The platform re-reads the mode on the next configuration change; restart the app so the
-        # first launch frame already renders the requested scheme.
-        self.adb("shell", "am", "force-stop", APP_PACKAGE)
-        time.sleep(2)
-        raw = self.adb("shell", "cmd", "uimode", "night")
-        problem = ui_mode_readback_problem(raw, self.ui_mode)
-        if problem is not None:
-            raise SampleError(f"ui_mode {self.ui_mode!r} did not take effect: {problem}")
-        return self.ui_mode
+
+        def apply() -> None:
+            self.adb("shell", "cmd", "uimode", "night", value)
+            # The platform re-reads the mode on the next configuration change; restart the app so
+            # the first launch frame already renders the requested scheme.
+            self.adb("shell", "am", "force-stop", APP_PACKAGE)
+            time.sleep(2)
+
+        return ui_mode_apply_and_readback(
+            apply,
+            lambda: self.adb("shell", "cmd", "uimode", "night"),
+            self.ui_mode,
+        )
 
     def seed(self, seed_path: str) -> str:
         """Replace the app's ledger with the prepared database (the seeded profile only).
@@ -4060,6 +4231,9 @@ def run(args: argparse.Namespace) -> int:
     # top-level record; p806 keeps its own block under host["p806"].
     talkback = profile.talkback
     target_screenshots = records_talkback_evidence(profile)
+    # D-369 E2g: the TTS warm-up runs on this profile's FIRST speech screen only, before any of its
+    # graded commands; every other screen keeps the graded-only device-call contract.
+    warmup_stem = speech_warmup_screen(profile)
     evidence = Path(args.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
     # D4 read-only diagnostic: the presentation sweep records how long one combination actually
@@ -4157,7 +4331,9 @@ def run(args: argparse.Namespace) -> int:
         # whether the pass exists at all, and the screen's own tuple decides whether it speaks.
         if talkback and screen.speech:
             talkback_screens[screen.stem] = sampler.p806_talkback_screen(
-                screen, target_screenshots=target_screenshots
+                screen,
+                target_screenshots=target_screenshots,
+                warmup=screen.stem == warmup_stem,
             )
 
     if talkback:
