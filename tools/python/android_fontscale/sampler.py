@@ -1438,6 +1438,22 @@ def focus_retry_reason(
     return ""
 
 
+def talkback_window_began(window: list[str], command_id: int) -> bool:
+    """True when the probe's own `command …` stage for `command_id` is present in `window`.
+
+    The probe logs that stage before doing any work, so its absence is the lost-command shape: the
+    command never reached the probe and may be reissued under a fresh id. A window that HAS the
+    stage but never ends is a different, deterministic failure. The scan uses the same recognized
+    event line and the same id attribution as `isolate_talkback_window`, so stage one cannot drift
+    between the isolator and this fact. A `ULA11Y` string embedded inside a host header comment (the
+    service-info line of a real artifact) is not at the logcat brief column and is never a stage.
+    """
+    return any(
+        event is not None and event[0] == "command" and event[1] == str(command_id)
+        for event in map(_ula11y_event, window)
+    )
+
+
 def talkback_window_fragments(window: list[str], command_id: int) -> list[str]:
     """This command's own utterances: only the lines strictly between begin and end.
 
@@ -3346,10 +3362,7 @@ class Sampler:
         # The probe logs its own `command …` stage before any work. Its absence is the lost-command
         # shape (no delivery), which `talkback_lost_command_retry_reason` is allowed to reissue; a
         # window that has the stage but never ends is a different, deterministic failure.
-        began = any(
-            event is not None and event[0] == "command" and event[1] == str(command_id)
-            for event in map(_ula11y_event, window)
-        )
+        began = talkback_window_began(window, command_id)
         return {
             "id": command_id,
             "target": needle,

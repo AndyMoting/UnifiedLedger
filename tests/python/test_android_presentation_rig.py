@@ -78,6 +78,7 @@ from android_fontscale.sampler import (
     gate_evidence_plan_problems,
     gate_profile_problems,
     gate_ui_mode_problems,
+    isolate_talkback_window,
     marker_problems,
     screen_problems,
     speech_fragments,
@@ -85,6 +86,7 @@ from android_fontscale.sampler import (
     talkback_lost_command_retry_reason,
     talkback_readiness,
     talkback_silent_retry_reason,
+    talkback_window_began,
     ui_mode_night_value,
     ui_mode_readback_problem,
     visible_absent_problems,
@@ -825,6 +827,21 @@ _SPEAKING_STARTUP = (
     'V/talkback: SpeechControllerImpl(28258): Speaking fragment text="TalkBack on", '
     "utteranceId=talkback_0, TtsSpan=null, locale=null, event=null"
 )
+# Verbatim, all seven lines of local/artifacts/sweep4/light-1.0/talkback-presentation-home.txt
+# (run 46074246784): the host headers and no probe row at all, which is the lost-command shape. The
+# `# service-info:` line quotes a real `I/ULA11Y  ( 4733): service-info …` row inside a comment, so
+# the fixture also pins that a ULA11Y string embedded in a header is not a command stage.
+_LOST_COMMAND_ARTIFACT = (
+    "# stem: presentation-home",
+    "# enable: success components=['com.unifiedledger.android.test/"
+    "com.unifiedledger.android.A11yFocusProbeService', "
+    "'com.google.android.marvin.talkback/.TalkBackService'] bound=True",
+    "# ready: waited=1.1s polls=2 fragments=1",
+    "# notification-prompt: clears=1 quiet_after_round=3",
+    "# service-info: I/ULA11Y  ( 4733): service-info eventTypes=0x8820 flags=0x2",
+    "# target: 对账样本转账",
+    "# command: 1",
+)
 # `dark-1.0/talkback-presentation-catalog-categories-middle.txt` (cmd 16): the green window. The
 # group name is a non-focusable Text whose action buttons are siblings, so the probe logs
 # `target=none` for EVERY group row — and still answers accepted from the action it sends to the
@@ -893,46 +910,62 @@ def _probe_window(
     fragments: tuple[str, ...] = (),
     pre_begin: tuple[str, ...] = (),
     accepted: bool = True,
-    completed: bool = True,
-    began: bool | None = None,
-    problem: str = "",
+    stopped: str = "end",
+    problem: str | None = None,
 ) -> dict[str, object]:
     """A command window in the probe's own shape, for driving `p806_talkback_screen`.
 
-    `began` is the probe's own stage-1 fact: a lost command has no `command …` row at all, while a
-    window that began but never ended has one. It defaults to whether the window completed.
+    `stopped` names how far the probe's own stage rows got: `"end"` is a complete window,
+    `"focus-result"` is a window that began and never ended, and `"nothing"` is a lost command (no
+    probe row at all). `began` is DERIVED from those rows with the production
+    `talkback_window_began`, and an incomplete shape carries the production
+    `isolate_talkback_window` message unless `problem` overrides it for a deliberately corrupted
+    fixture. A fixture therefore cannot claim a stage its own rows do not show.
     """
+    if stopped not in ("end", "focus-result", "nothing"):
+        raise AssertionError(f"unknown stop {stopped!r}")
     encoded = base64.b64encode(target.encode("utf-8")).decode("ascii")
-    if began is None:
-        began = completed
-    lines = [
-        f'I/ULA11Y  ( 4733): command action=focus id={command_id} needle64={encoded} target="{target}"',
+    command_row = (
+        f'I/ULA11Y  ( 4733): command action=focus id={command_id} needle64={encoded} '
+        f'target="{target}"'
+    )
+    target_row = (
         f"I/ULA11Y  ( 4733): target id={command_id} found=true visible=true "
         f'bounds=[42,1857][172,1920] text="{target}" desc="" text64="{encoded}" desc64="" '
-        "actions=0x20380 clickable=false scrollable=false",
-        *pre_begin,
-        f"I/ULA11Y  ( 4733): speech-window-begin id={command_id}",
+        "actions=0x20380 clickable=false scrollable=false"
+    )
+    begin_row = f"I/ULA11Y  ( 4733): speech-window-begin id={command_id}"
+    focus_row = (
         f"I/ULA11Y  ( 4733): focus-result id={command_id} found=true "
-        f"accepted={'true' if accepted else 'false'} source=action",
-        *(_spoken(fragment) for fragment in fragments),
-        f"I/ULA11Y  ( 4733): speech-window-end id={command_id}",
-    ]
-    if not completed:
-        # A window that never ended still carries the probe's stage-1 row unless the command was
-        # lost; the fragment/begin/end rows are the ones it lacks.
+        f"accepted={'true' if accepted else 'false'} source=action"
+    )
+    end_row = f"I/ULA11Y  ( 4733): speech-window-end id={command_id}"
+    completed = stopped == "end"
+    if stopped == "nothing":
+        lines: list[str] = []
+        problem = (
+            f"command id={command_id} never began a speech window" if problem is None else problem
+        )
+    elif stopped == "focus-result":
+        lines = [command_row, target_row, begin_row, focus_row]
+        problem = (
+            f"command id={command_id}'s speech window never ended" if problem is None else problem
+        )
+    else:
         lines = [
-            f"I/ULA11Y  ( 4733): target id={command_id} found=false candidates=0 visible=0"
+            command_row,
+            target_row,
+            *pre_begin,
+            begin_row,
+            focus_row,
+            *(_spoken(fragment) for fragment in fragments),
+            end_row,
         ]
-        if began:
-            lines.insert(
-                0,
-                f'I/ULA11Y  ( 4733): command action=focus id={command_id} needle64={encoded} '
-                f'target="{target}"',
-            )
+        problem = "" if problem is None else problem
     return {
         "id": command_id,
         "target": target,
-        "began": began,
+        "began": talkback_window_began(lines, command_id),
         "completed": completed,
         "accepted": accepted and completed,
         "problem": problem,
@@ -1229,7 +1262,7 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         # Lost -> refused -> silent -> spoken uses one reissue per transient and proves the total cap
         # admits all three while still deriving the verdict from the last window.
         windows = [
-            _probe_window(command_id=1, target=self.TARGET, completed=False, began=False),
+            _probe_window(command_id=1, target=self.TARGET, stopped="nothing"),
             _probe_window(command_id=2, target=self.TARGET, accepted=False),
             _probe_window(command_id=3, target=self.TARGET),
             _probe_window(command_id=4, target=self.TARGET, fragments=(self.TARGET,)),
@@ -1295,7 +1328,7 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         # never began. The same command id completed and succeeded on the other three combinations,
         # so the delivery was lost and a fresh id is the natural remedy.
         windows = [
-            _probe_window(command_id=1, target=self.TARGET, completed=False, began=False),
+            _probe_window(command_id=1, target=self.TARGET, stopped="nothing"),
             _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
         ]
         record, focus_ids, artifact = self._drive(windows)
@@ -1310,8 +1343,8 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
 
     def test_a_second_lost_command_is_not_reissued(self) -> None:
         windows = [
-            _probe_window(command_id=1, target=self.TARGET, completed=False, began=False),
-            _probe_window(command_id=2, target=self.TARGET, completed=False, began=False),
+            _probe_window(command_id=1, target=self.TARGET, stopped="nothing"),
+            _probe_window(command_id=2, target=self.TARGET, stopped="nothing"),
         ]
         record, focus_ids, artifact = self._drive(windows)
         self.assertEqual(1 + TALKBACK_LOST_COMMAND_RETRY_BUDGET, len(focus_ids))
@@ -1324,15 +1357,7 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         # The probe logged its command and its found target, then the window never closed. That is
         # deterministic (the target is not on the screen or the window is broken), so it gets no
         # further 75 s poll.
-        windows = [
-            _probe_window(
-                command_id=1,
-                target=self.TARGET,
-                completed=False,
-                began=True,
-                problem="command id=1's speech window never ended",
-            )
-        ]
+        windows = [_probe_window(command_id=1, target=self.TARGET, stopped="focus-result")]
         record, focus_ids, artifact = self._drive(windows)
         self.assertEqual([1], focus_ids)
         self.assertNotIn("# retry=", artifact)
@@ -1401,38 +1426,22 @@ class TalkbackRetryPredicates(unittest.TestCase):
         # A window that began but never ended is deterministic, not this transient.
         self.assertEqual(
             "",
-            talkback_silent_retry_reason(
-                self._window(
-                    completed=False,
-                    began=True,
-                    problem="command id=1's speech window never ended",
-                )
-            ),
+            talkback_silent_retry_reason(self._window(stopped="focus-result")),
         )
 
     def test_only_a_window_without_the_probe_command_stage_is_lost(self) -> None:
         self.assertIn(
             "never reached the probe",
-            talkback_lost_command_retry_reason(
-                self._window(completed=False, began=False)
-            ),
+            talkback_lost_command_retry_reason(self._window(stopped="nothing")),
         )
         self.assertEqual(
             "",
-            talkback_lost_command_retry_reason(
-                self._window(completed=True)
-            ),
+            talkback_lost_command_retry_reason(self._window()),
         )
         # Began but never ended: deterministic, not a lost delivery.
         self.assertEqual(
             "",
-            talkback_lost_command_retry_reason(
-                self._window(
-                    completed=False,
-                    began=True,
-                    problem="command id=1's speech window never ended",
-                )
-            ),
+            talkback_lost_command_retry_reason(self._window(stopped="focus-result")),
         )
         # A completed window with an inconsistent stage sequence is deterministic too.
         self.assertEqual(
@@ -1441,6 +1450,64 @@ class TalkbackRetryPredicates(unittest.TestCase):
                 self._window(problem="command id=1 began more than one window")
             ),
         )
+
+
+class TalkbackWindowBegan(unittest.TestCase):
+    """The probe's stage-1 fact is DERIVED from the window rows, never supplied by the caller.
+
+    Both real and fixture windows are checked here: the seven-line lost artifact has no probe row at
+    all, while a window that logs its `command …` row and then never ends still began. This is the
+    fact `talkback_lost_command_retry_reason` discriminates on, so a future change that assumes the
+    fact (or drops its derivation) reds here and on the reissue tests.
+    """
+
+    def test_the_real_lost_command_artifact_has_no_command_stage(self) -> None:
+        self.assertEqual(7, len(_LOST_COMMAND_ARTIFACT))
+        self.assertEqual("# command: 1", _LOST_COMMAND_ARTIFACT[-1])
+        self.assertFalse(
+            any(
+                line.startswith(("V/", "D/", "I/", "E/", "W/", "F/"))
+                for line in _LOST_COMMAND_ARTIFACT
+            )
+        )
+        self.assertFalse(talkback_window_began(list(_LOST_COMMAND_ARTIFACT), 1))
+        window, problem = isolate_talkback_window(_artifact(*_LOST_COMMAND_ARTIFACT), 1)
+        self.assertEqual([], window)
+        self.assertEqual("command id=1 never began a speech window", problem)
+
+    def test_a_command_stage_without_a_window_end_still_began(self) -> None:
+        fixture = _probe_window(command_id=7, target="日用品", stopped="focus-result")
+        self.assertTrue(talkback_window_began(fixture["lines"], 7))
+        self.assertEqual("command id=7's speech window never ended", fixture["problem"])
+        self.assertEqual("", talkback_lost_command_retry_reason(fixture))
+
+    def test_a_command_stage_for_another_id_is_not_this_window(self) -> None:
+        fixture = _probe_window(command_id=2, target="日用品", stopped="focus-result")
+        self.assertFalse(talkback_window_began(fixture["lines"], 3))
+
+    def test_the_lost_reissue_depends_on_the_derived_began_fact(self) -> None:
+        lost = _probe_window(command_id=1, target="日用品", stopped="nothing")
+        self.assertFalse(lost["began"])
+        self.assertIn("never reached the probe", talkback_lost_command_retry_reason(lost))
+        # Force the fact and the lost transient disappears: this is what a "began is always true"
+        # change does to the reissue test below.
+        self.assertEqual(
+            "", talkback_lost_command_retry_reason(dict(lost, began=True))
+        )
+
+    def test_the_fixture_shape_matches_the_production_isolator(self) -> None:
+        # The fixtures must carry production's own window slice and problem text; a fixture with an
+        # empty problem is what let a `problem`-based regression pass unnoticed.
+        never_ended = _probe_window(command_id=1, target="日用品", stopped="focus-result")
+        window, problem = isolate_talkback_window(
+            _artifact(*never_ended["lines"]), 1
+        )
+        self.assertEqual(never_ended["lines"], window)
+        self.assertEqual(never_ended["problem"], problem)
+        lost = _probe_window(command_id=1, target="日用品", stopped="nothing")
+        lost_window, lost_problem = isolate_talkback_window(_artifact(*lost["lines"]), 1)
+        self.assertEqual([], lost_window)
+        self.assertEqual(lost["problem"], lost_problem)
 
 
 if __name__ == "__main__":
