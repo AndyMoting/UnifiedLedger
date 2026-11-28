@@ -485,19 +485,32 @@ TALKBACK_READY_TIMEOUT_S = 90
 TALKBACK_READY_POLL_INTERVAL_S = 1.0
 # The window tail the readiness artifact keeps, so a red run is diagnosable from the evidence alone.
 TALKBACK_READY_TAIL_LINES = 60
-# D-369 E2f (run 46074246784): a command whose window carries no utterance is re-issued once, as a
-# WHOLE command under a fresh id, because the observed cause is the TTS engine still initialising.
-# The budget is per TRANSIENT, not per check: the middle management capture's shape is
-# `cmd 16 refused (TalkBack only finished starting) -> cmd 17 accepted but silent -> ...`, so a
-# single shared budget would let the refusal retry spend the reissue the silent window needs. Each
-# transient therefore owns one reissue and the total stays bounded at three commands.
-# A refused focus is only retried inside `focus_retry_reason`'s named transients; a silent window
-# only when it completed, is structurally sound and was accepted. A window that never began or never
-# ended is a deterministic failure (the probe never saw the command, or the target is not on the
-# screen) and is reported red instead of being re-rolled.
+# D-369 E2f (run 46074246784): a command is reissued once per TRANSIENT, as a WHOLE command under a
+# fresh id. The observed transients are independent, so each owns its own budget:
+# - focus-refused: the window completed and its `focus-result` was refused, inside
+#   `focus_retry_reason`'s named transient (the notification prompt was just cleared, or TalkBack
+#   only finished starting inside this pass) — `TALKBACK_FOCUS_RETRY_BUDGET`;
+# - accepted-but-silent: the window completed and was accepted but carries no utterance, because
+#   the TTS engine had not spoken yet — `TALKBACK_SILENT_RETRY_BUDGET`;
+# - lost command: the probe never logged this command's own stage-1 `command …` line, so the
+#   settings write was probably lost in transit — `TALKBACK_LOST_COMMAND_RETRY_BUDGET`. Run
+#   46074246784's `light-1.0` home is this shape (a seven-line artifact with no probe row at all),
+#   while the SAME command id on the other three combinations completed accepted and succeeded, so
+#   it is a transient rather than a verdict; a new id is the natural remedy.
+# A window that DID begin but never ended — no `speech-window-end`, a target the probe never found,
+# or an inconsistent stage sequence (a duplicated or reordered stage, an interleaved command) — is
+# deterministic: the target is not on the screen, or the probe's own stages disagree. It is reported
+# red without another 75 s poll. The middle capture's `refused -> silent` sequence can spend the first
+# two budgets; the total stays bounded by `TALKBACK_COMMAND_ATTEMPTS`.
 TALKBACK_FOCUS_RETRY_BUDGET = 1
 TALKBACK_SILENT_RETRY_BUDGET = 1
-TALKBACK_COMMAND_ATTEMPTS = 1 + TALKBACK_FOCUS_RETRY_BUDGET + TALKBACK_SILENT_RETRY_BUDGET
+TALKBACK_LOST_COMMAND_RETRY_BUDGET = 1
+TALKBACK_COMMAND_ATTEMPTS = (
+    1
+    + TALKBACK_FOCUS_RETRY_BUDGET
+    + TALKBACK_SILENT_RETRY_BUDGET
+    + TALKBACK_LOST_COMMAND_RETRY_BUDGET
+)
 # P8-07 batch D r4 (T2): the prompt arrives AFTER that announcement, so one clear at the enable
 # boundary cannot cover it. The panel is re-read in bounded rounds, spaced further apart, until
 # NOTIFICATION_DIALOG_QUIET_READS consecutive reads render no prompt at all.
@@ -1435,17 +1448,17 @@ def talkback_window_fragments(window: list[str], command_id: int) -> list[str]:
 
 
 def talkback_silent_retry_reason(window: dict[str, object]) -> str:
-    """The transient a silent window may be retried in, or "" when it must stand.
+    """The accepted-but-silent transient, or "" when this window is not it.
 
-    D-369 E2f, from run 46074246784's `light-1.0` middle window: a command that COMPLETED and whose
-    focus was ACCEPTED can still carry no utterance, because the TTS engine had not spoken yet. That
-    shape earns one more whole command under a fresh id; the budget lives in the caller
-    (`TALKBACK_SILENT_RETRY_BUDGET`). A window that never began or never ended is a deterministic
-    failure — the probe never saw the command, or the target is not on the screen — so it is
-    reported red instead of being re-rolled. A refused focus has its own named transient
-    (`focus_retry_reason`), and a window that carries any utterance stands even when a required
-    value is missing: re-issuing that would not be a transient, it would re-roll the device's own
-    reading.
+    A command that COMPLETED and whose focus was ACCEPTED can still carry no utterance, because the
+    TTS engine had not spoken yet (run 46074246784's `light-1.0` middle window). That shape earns one
+    more whole command under a fresh id; the budget lives in the caller
+    (`TALKBACK_SILENT_RETRY_BUDGET`). This predicate covers ONLY that shape: a refused focus has its
+    own named transient (`focus_retry_reason`), a lost command its own
+    (`talkback_lost_command_retry_reason`), and a window that began but never ended or is
+    structurally broken is deterministic and must be reported red as it stands. A window that
+    carries any utterance also stands even when a required value is missing: re-issuing it would not
+    be a transient, it would re-roll the device's own reading.
     """
     if not window.get("completed") or window.get("problem"):
         return ""
@@ -1459,6 +1472,22 @@ def talkback_silent_retry_reason(window: dict[str, object]) -> str:
     ):
         return ""
     return "the accepted window produced no utterance (the TTS engine was not ready)"
+
+
+def talkback_lost_command_retry_reason(window: dict[str, object]) -> str:
+    """The lost-command transient, or "" when the probe saw this command begin.
+
+    The probe logs its own `command …` stage before doing any work, so a window with NO command stage
+    means the command never reached it — the `settings put global` delivery was probably lost, which
+    costs nothing to retry under a fresh id. Run 46074246784's `light-1.0` home command is this
+    shape; the same command id was accepted and spoken on the other three combinations. This is
+    deliberately NOT the "began but never ended" shape: a window with a command stage but no end
+    stage, or with an inconsistent stage sequence, is a deterministic failure and is reported red
+    without another poll.
+    """
+    if window.get("completed") or window.get("began"):
+        return ""
+    return "the command never reached the probe (the settings write may have been lost)"
 
 
 def talkback_check_verdict(
@@ -3314,9 +3343,17 @@ class Sampler:
             time.sleep(1)
         window, problem = isolate_talkback_window(log_text, command_id)
         token_sets = [tokens for tokens in map(_ula11y_tokens, window) if tokens]
+        # The probe logs its own `command …` stage before any work. Its absence is the lost-command
+        # shape (no delivery), which `talkback_lost_command_retry_reason` is allowed to reissue; a
+        # window that has the stage but never ends is a different, deterministic failure.
+        began = any(
+            event is not None and event[0] == "command" and event[1] == str(command_id)
+            for event in map(_ula11y_event, window)
+        )
         return {
             "id": command_id,
             "target": needle,
+            "began": began,
             "completed": any(
                 "speech-window-end" in tokens and f"id={command_id}" in tokens
                 for tokens in token_sets
@@ -3416,12 +3453,16 @@ class Sampler:
             readiness_delayed = isinstance(polls, int) and polls > 1
             for index, check in enumerate(screen.speech):
                 # D-369 E2f: a command is a WHOLE four-stage window under one fresh id, and a reissue
-                # re-runs all of it. The budgets are PER TRANSIENT (`TALKBACK_FOCUS_RETRY_BUDGET`,
-                # `TALKBACK_SILENT_RETRY_BUDGET`), so the observed refusal-then-silent shape can use
-                # both, while the total stays bounded by `TALKBACK_COMMAND_ATTEMPTS`. The LAST window
-                # is the one recorded, so the verdict is always derived from it.
+                # re-runs all of it. One budget per transient, so the observed `refused -> silent`
+                # sequence can use both, and the total stays bounded by `TALKBACK_COMMAND_ATTEMPTS`:
+                # - a refused focus retries only inside `focus_retry_reason`'s named transient;
+                # - a completed accepted window with no utterance is the TTS-not-ready transient;
+                # - a window with no probe `command` stage is a lost command (no delivery).
+                # A window that began but never ended, or whose stages are inconsistent, is
+                # deterministic and falls through to the verdict without a reissue.
                 focus_retries_left = TALKBACK_FOCUS_RETRY_BUDGET
                 silent_retries_left = TALKBACK_SILENT_RETRY_BUDGET
+                lost_retries_left = TALKBACK_LOST_COMMAND_RETRY_BUDGET
                 commands = 0
                 retries = 0
                 while True:
@@ -3450,6 +3491,10 @@ class Sampler:
                         retry_reason = talkback_silent_retry_reason(window)
                         if retry_reason:
                             silent_retries_left -= 1
+                    if not retry_reason and lost_retries_left:
+                        retry_reason = talkback_lost_command_retry_reason(window)
+                        if retry_reason:
+                            lost_retries_left -= 1
                     if not retry_reason or commands >= TALKBACK_COMMAND_ATTEMPTS:
                         break
                     retries += 1
