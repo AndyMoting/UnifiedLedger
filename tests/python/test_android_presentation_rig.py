@@ -10,6 +10,7 @@ from unittest import mock
 
 from android_fontscale.sampler import (
     ACCOUNT_FLOW_HEADER,
+    APP_PACKAGE,
     BACK,
     BackStep,
     DEFAULT_UI_MODE,
@@ -86,7 +87,6 @@ from android_fontscale.sampler import (
     profile_by_name,
     screen_problems,
     speech_fragments,
-    speech_warmup_screen,
     talkback_check_verdict,
     talkback_lost_command_retry_reason,
     talkback_never_ended_retry_reason,
@@ -1329,16 +1329,13 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         self,
         windows: list[dict[str, object]],
         *,
-        warmup: bool = False,
         start_sequence: int = 0,
     ) -> tuple[dict[str, object], list[int], str]:
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp)
             sampler = self._RetrySampler(evidence, windows)
             sampler.talkback_sequence = start_sequence
-            record = sampler.p806_talkback_screen(
-                self._screen(), target_screenshots=False, warmup=warmup
-            )
+            record = sampler.p806_talkback_screen(self._screen(), target_screenshots=False)
             artifact = (evidence / "talkback-presentation-catalog-categories-middle.txt").read_text(
                 encoding="utf-8"
             )
@@ -1576,110 +1573,146 @@ class TalkbackSilentWindowRetry(unittest.TestCase):
         self.assertEqual("success", record["status"])
 
 
-class TalkbackSpeechWarmup(unittest.TestCase):
-    """D-369 E2g: the presentation combination's first speech screen opens with one warm-up command.
+class TalkbackFailureStage(unittest.TestCase):
+    """The `# <stage> failed:` line names the gate that actually failed.
 
-    Run 46088630336's light-1.3 windows opened, carried only TalkBack's own startup announcement,
-    and never ended. The warm-up pays the combination's cold TTS start there — before that screen's
-    graded commands — and its rows are `# warmup-…` (never a `# command:` check): it can never
-    satisfy one, and the graded verdict still comes from the last graded window alone.
+    An enable failure keeps the old `# enable failed:` label, while the readiness wait, the prompt
+    settle and the speech pass each name their own stage: a failure AFTER a successful enable is
+    never recorded as an enable failure.
     """
 
     TARGET = "日用品"
 
-    def _drive(self, windows, *, warmup=True):
+    class _StageSampler(TalkbackSilentWindowRetry._RetrySampler):
+        def __init__(
+            self,
+            evidence: Path,
+            *,
+            enable: dict[str, object] | None = None,
+            ready_error: str = "",
+            settle: dict[str, object] | None = None,
+            windows: list[dict[str, object]] | None = None,
+            screenshot_error: str = "",
+        ) -> None:
+            super().__init__(evidence, windows or [])
+            self.enable = (
+                dict(enable)
+                if enable is not None
+                else {
+                    "status": "success",
+                    "enabled_components": ["component"],
+                    "enabled_services_file": "talkback-enabled-presentation-home.txt",
+                    "talkback_bound": True,
+                    "reason": "",
+                }
+            )
+            self.ready_error = ready_error
+            self.settle = (
+                dict(settle)
+                if settle is not None
+                else {"clears": 0, "quiet_after_round": 2}
+            )
+            self.screenshot_error = screenshot_error
+
+        def enable_talkback(self, stem: str) -> dict[str, object]:
+            return dict(self.enable)
+
+        def wait_talkback_ready(self, stem: str) -> dict[str, object]:
+            if self.ready_error:
+                raise SampleError(self.ready_error)
+            return {"status": "ready", "waited_s": 0.0, "polls": 1, "fragments": 1}
+
+        def settle_notification_permission_dialog(self, stem: str) -> dict[str, object]:
+            return dict(self.settle)
+
+        def screenshot(self, stem: str) -> Path:
+            raise SampleError(self.screenshot_error)
+
+    def _drive(
+        self,
+        *,
+        enable: dict[str, object] | None = None,
+        ready_error: str = "",
+        settle: dict[str, object] | None = None,
+        windows: list[dict[str, object]] | None = None,
+        screenshot_error: str = "",
+        target_screenshots: bool = False,
+    ) -> str:
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp)
-            sampler = TalkbackSilentWindowRetry._RetrySampler(evidence, windows)
-            record = sampler.p806_talkback_screen(
-                TalkbackSilentWindowRetry()._screen(),
-                target_screenshots=False,
-                warmup=warmup,
+            sampler = self._StageSampler(
+                evidence,
+                enable=enable,
+                ready_error=ready_error,
+                settle=settle,
+                windows=windows,
+                screenshot_error=screenshot_error,
             )
-            artifact = (evidence / "talkback-presentation-catalog-categories-middle.txt").read_text(
-                encoding="utf-8"
+            sampler.p806_talkback_screen(
+                Screen(
+                    "presentation-home",
+                    (),
+                    PRESENTATION_CATEGORY_DAILY,
+                    speech=(SpeechCheck(self.TARGET, (self.TARGET,)),),
+                ),
+                target_screenshots=target_screenshots,
             )
-        return record, sampler.focus_ids, artifact
+            return (evidence / "talkback-presentation-home.txt").read_text(encoding="utf-8")
 
-    def test_the_warmup_command_precedes_the_graded_command(self):
-        windows = [
-            _probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,)),
-            _probe_window(command_id=2, target=self.TARGET, fragments=(self.TARGET,)),
-        ]
-        record, focus_ids, artifact = self._drive(windows)
-        self.assertEqual([1, 2], focus_ids)
-        self.assertIn("# warmup-target: 日用品", artifact)
-        self.assertIn("# warmup-command: 1", artifact)
-        self.assertIn("# warmup-result: success", artifact)
-        self.assertLess(artifact.index("# warmup-command: 1"), artifact.index("# command: 2"))
-        # The warm-up is evidence, never a check: exactly one `# command:` header exists and the
-        # gate's own header binding (`# target:` immediately before it) still points at only that id.
-        self.assertEqual(1, artifact.count("# command:"))
-        lines = artifact.splitlines()
-        index = lines.index("# command: 2")
-        self.assertEqual("# target: 日用品", lines[index - 1])
-        self.assertEqual("success", record["status"])
-        self.assertEqual(2, record["checks"][0]["command_id"])
-        self.assertEqual(
-            "success", talkback_check_verdict(artifact, 2, self.TARGET, (self.TARGET,))[0]
+    def test_a_failed_enable_keeps_the_enable_label(self) -> None:
+        artifact = self._drive(
+            enable={
+                "status": "not-obtained",
+                "enabled_components": [],
+                "enabled_services_file": "talkback-enabled-presentation-home.txt",
+                "talkback_bound": False,
+                "reason": "the device ships no TalkBack service",
+            }
         )
+        self.assertIn("# enable failed: the device ships no TalkBack service", artifact)
+        self.assertNotIn("# readiness failed:", artifact)
+        self.assertNotIn("# speech failed:", artifact)
 
-    def test_a_warmup_that_only_speaks_the_startup_announcement_reds_the_screen(self):
-        # "TalkBack on" IS a fragment by the parser's definition, so the warm-up cannot be "any
-        # fragment"; it must carry the target's own required speech. This is the sweep5 cold-start
-        # shape, and it fails the screen closed before a graded command is driven.
-        windows = [
-            _probe_window(command_id=1, target=self.TARGET, fragments=("TalkBack on",)),
-        ]
-        record, focus_ids, artifact = self._drive(windows)
-        self.assertEqual([1], focus_ids)
-        self.assertIn("# warmup-result: amount-wrong", artifact)
-        self.assertIn("# speech failed:", artifact)
-        self.assertNotIn("# command:", artifact)
-        self.assertEqual("not-obtained", record["status"])
-        self.assertIn("speech warm-up", record["checks"][0]["reason"])
-        self.assertIn("日用品", record["checks"][0]["reason"])
+    def test_a_readiness_timeout_is_a_readiness_failure_not_an_enable_failure(self) -> None:
+        artifact = self._drive(ready_error="TalkBack never spoke inside 90s")
+        self.assertIn("# enable: success", artifact)
+        self.assertIn("# readiness failed: TalkBack never spoke inside 90s", artifact)
+        self.assertNotIn("# enable failed:", artifact)
+        self.assertNotIn("# speech failed:", artifact)
 
-    def test_a_warmup_window_that_never_ends_reds_the_screen(self):
-        windows = [_probe_window(command_id=1, target=self.TARGET, stopped="focus-result")]
-        record, focus_ids, artifact = self._drive(windows)
-        self.assertEqual([1], focus_ids)
-        self.assertIn("# warmup-result: not-obtained", artifact)
-        self.assertEqual("not-obtained", record["status"])
-        self.assertIn("never ended", record["checks"][0]["reason"])
-
-    def test_the_warmup_is_scoped_to_the_presentation_first_speech_screen(self):
-        self.assertEqual(
-            "presentation-home",
-            speech_warmup_screen(profile_by_name(PRESENTATION_PROFILE_NAME)),
+    def test_a_prompt_that_outlives_the_settle_names_its_own_gate(self) -> None:
+        artifact = self._drive(
+            settle={
+                "clears": 0,
+                "quiet_after_round": None,
+                "reason": "the last round still rendered the prompt",
+                "artifact": "notification-dialog-presentation-home.txt",
+            }
         )
-        # The presentation table's own order is what "first" means; pin it so a reorder that puts
-        # an unscrollable or unlaunched screen first is visible here.
-        self.assertEqual(
-            "presentation-home",
-            next(screen.stem for screen in PRESENTATION_SCREENS if screen.speech),
+        self.assertIn("# enable: success", artifact)
+        self.assertIn(
+            "# notification-prompt failed: the Accessibility Suite notification prompt was still "
+            "present",
+            artifact,
         )
-        for name in ("empty", "seeded", "refund", "p806"):
-            self.assertEqual("", speech_warmup_screen(profile_by_name(name)), name)
-        # Exactly one screen carries the warm-up: the comparison in `run()` can therefore match
-        # only that stem, even if a later screen is added.
-        self.assertEqual(
-            1,
-            sum(
-                1
-                for screen in PRESENTATION_SCREENS
-                if screen.speech
-                and screen.stem == speech_warmup_screen(profile_by_name(PRESENTATION_PROFILE_NAME))
-            ),
-        )
+        self.assertNotIn("# enable failed:", artifact)
+        self.assertNotIn("# speech failed:", artifact)
 
-    def test_a_non_warmup_drive_starts_with_the_graded_command(self):
-        windows = [_probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,))]
-        record, focus_ids, artifact = self._drive(windows, warmup=False)
-        self.assertEqual([1], focus_ids)
-        self.assertNotIn("# warmup", artifact)
-        self.assertEqual("success", record["status"])
-        self.assertEqual(1, record["checks"][0]["command_id"])
+    def test_a_screenshot_failure_in_the_speech_pass_names_the_speech_gate(self) -> None:
+        # The only SampleError the speech pass itself raises is a blank/missing screenshot, after
+        # the target's window decided; it must not be blamed on an earlier gate.
+        artifact = self._drive(
+            windows=[_probe_window(command_id=1, target=self.TARGET, fragments=(self.TARGET,))],
+            screenshot_error="screenshot talkback-presentation-home-cmd-1 is missing or blank",
+            target_screenshots=True,
+        )
+        self.assertIn("# enable: success", artifact)
+        self.assertIn(
+            "# speech failed: screenshot talkback-presentation-home-cmd-1 is missing or blank",
+            artifact,
+        )
+        self.assertNotIn("# enable failed:", artifact)
+        self.assertNotIn("# notification-prompt failed:", artifact)
 
 
 class TalkbackRetryPredicates(unittest.TestCase):
@@ -1859,6 +1892,81 @@ class TalkbackWindowBegan(unittest.TestCase):
         lost_window, lost_problem = isolate_talkback_window(_artifact(*lost["lines"]), 1)
         self.assertEqual([], lost_window)
         self.assertEqual(lost["problem"], lost_problem)
+
+
+class UiModeApplyWiring(unittest.TestCase):
+    """`Sampler.apply_ui_mode` must DELEGATE the bounded retry, not read back once itself.
+
+    The `ui_mode_apply_and_readback` tests drive the retry through injected callbacks, so they stay
+    green if this method inlines a single write/read and stops calling the helper. This test drives
+    the method on a sampler whose `adb` answers the readback, and pins the write, the app restart
+    and the readback per attempt plus the unchanged final message.
+    """
+
+    class _ReadbackSampler(Sampler):
+        def __init__(self, evidence: Path, readbacks: list[str]) -> None:
+            super().__init__(
+                adb_serial=None,
+                evidence=evidence,
+                font_scale=1.3,
+                avd_name="ul-presentation",
+                ui_mode="light",
+            )
+            self.readbacks = list(readbacks)
+            self.calls: list[tuple[str, ...]] = []
+
+        def adb(self, *args: str, timeout: int = 60, best_effort: bool = False) -> str:
+            self.calls.append(args)
+            if args[:4] == ("shell", "cmd", "uimode", "night"):
+                return self.readbacks.pop(0) if len(args) == 4 else ""
+            return ""
+
+    def _drive(
+        self, readbacks: list[str]
+    ) -> tuple[str, SampleError | None, list[tuple[str, ...]]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            sampler = self._ReadbackSampler(Path(tmp), readbacks)
+            try:
+                with mock.patch("android_fontscale.sampler.time.sleep"):
+                    mode = sampler.apply_ui_mode()
+            except SampleError as caught:
+                return "", caught, sampler.calls
+        return mode, None, sampler.calls
+
+    @staticmethod
+    def _shape(calls: list[tuple[str, ...]]) -> list[str]:
+        shape: list[str] = []
+        for call in calls:
+            if call == ("shell", "cmd", "uimode", "night", "no"):
+                shape.append("write")
+            elif call[:4] == ("shell", "am", "force-stop", APP_PACKAGE):
+                shape.append("restart")
+            elif call == ("shell", "cmd", "uimode", "night"):
+                shape.append("read")
+            else:
+                shape.append("other")
+        return shape
+
+    def test_three_bad_readbacks_reissue_the_write_and_readback_three_times(self) -> None:
+        _, error, calls = self._drive(["", "Unknown command: uimode", "Night mode: yes\n"])
+        self.assertIsInstance(error, SampleError)
+        # Each attempt repeats the WHOLE sequence — write, restart, read — so dropping the
+        # delegation and reading back once leaves one `write` here.
+        self.assertEqual(3, UI_MODE_READBACK_ATTEMPTS)
+        self.assertEqual(
+            ["write", "restart", "read"] * UI_MODE_READBACK_ATTEMPTS, self._shape(calls)
+        )
+        self.assertEqual(
+            "ui_mode 'light' did not take effect: "
+            + ui_mode_readback_problem("Night mode: yes\n", "light"),
+            str(error),
+        )
+
+    def test_a_good_readback_writes_and_reads_once(self) -> None:
+        mode, error, calls = self._drive(["Night mode: no\n"])
+        self.assertIsNone(error)
+        self.assertEqual("light", mode)
+        self.assertEqual(["write", "restart", "read"], self._shape(calls))
 
 
 if __name__ == "__main__":
